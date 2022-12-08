@@ -1,8 +1,7 @@
 {
   "name": "exnatonhub",
   "version": "1.0.0",
-  "dependencies": {
-  },
+
   "scripts": {
     "dev": "vite",
     "start": "vite",
