@@ -149,6 +149,16 @@
          "opacity":1,
          "properties":[
                 {
+                 "name":"jitsiConfig",
+                 "type":"string",
+                 "value":"{\n  \"startWithAudioMuted\": true}"
+                }, 
+                {
+                 "name":"jitsiInterfaceConfig",
+                 "type":"string",
+                 "value":"{\n  \"DEFAULT_BACKGROUND\": \"#2BB29F\"\n}"
+                }, 
+                {
                  "name":"jitsiRoom",
                  "type":"string",
                  "value":"xntn_whiteboard_1"
@@ -223,6 +233,16 @@
          "name":"jitsi_whiteboard_2",
          "opacity":1,
          "properties":[
+                {
+                 "name":"jitsiConfig",
+                 "type":"string",
+                 "value":"{\n  \"startWithAudioMuted\": true}"
+                }, 
+                {
+                 "name":"jitsiInterfaceConfig",
+                 "type":"string",
+                 "value":"{\n  \"DEFAULT_BACKGROUND\": \"#2BB29F\"\n}"
+                }, 
                 {
                  "name":"jitsiRoom",
                  "type":"string",
@@ -299,6 +319,16 @@
          "opacity":1,
          "properties":[
                 {
+                 "name":"jitsiConfig",
+                 "type":"string",
+                 "value":"{\n  \"startWithAudioMuted\": true}"
+                }, 
+                {
+                 "name":"jitsiInterfaceConfig",
+                 "type":"string",
+                 "value":"{\n  \"DEFAULT_BACKGROUND\": \"#2BB29F\"\n}"
+                }, 
+                {
                  "name":"jitsiRoom",
                  "type":"string",
                  "value":"xntn_whiteboard_4"
@@ -373,6 +403,16 @@
          "name":"jitsi_whiteboard_4",
          "opacity":1,
          "properties":[
+                {
+                 "name":"jitsiConfig",
+                 "type":"string",
+                 "value":"{\n  \"startWithAudioMuted\": true}"
+                }, 
+                {
+                 "name":"jitsiInterfaceConfig",
+                 "type":"string",
+                 "value":"{\n  \"DEFAULT_BACKGROUND\": \"#2BB29F\"\n}"
+                }, 
                 {
                  "name":"jitsiRoom",
                  "type":"string",
