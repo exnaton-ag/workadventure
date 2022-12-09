@@ -8,6 +8,17 @@ let currentPopup: any = undefined;
 
 // Waiting for the API to be ready
 WA.onInit().then(() => {
+
+    // action-bars
+    WA.ui.actionBar.addButton({
+        id: 'register-btn',
+        label: 'Register',
+        callback: (event) => {
+            console.log('Button clicked', event);
+            // When a user clicks on the action bar button 'Register', we remove it.
+            WA.ui.actionBar.removeButton('register-btn');
+        }
+    });
     console.log('Scripting API ready');
     console.log('Player tags: ',WA.player.tags)
 
