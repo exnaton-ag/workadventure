@@ -28,7 +28,15 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
-      - uses: rlespinasse/github-slug-action@3.1.0
+      - name: Inject slugshort variables
+        uses: rlespinasse/github-slug-action@v4
+      
+      - name: Set "latest" tag for each branch
+        if: ${{ github.event_name != 'release' }}
+        run: echo "image_name_latest=exnaton/workadventure-play:${{ env.GITHUB_REF_SLUG }}-latest" >> $GITHUB_ENV
+
+      - name: Set immutable image tag
+        run: echo "image_immutable_tag=exnaton/workadventure-play:${{ env.GITHUB_REF_SLUG }}-$(date +%F.%H%M%S)-${{ env.GITHUB_SHA_SHORT }}" >> $GITHUB_ENV
 
       - name: Docker meta
         id: meta
@@ -44,4 +52,4 @@ jobs:
           file: play/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: exnaton/workadventure-play:${{ env.GITHUB_REF_SLUG }}
+          tags: ${{ env.image_name_latest }},${{ env.image_immutable_tag }}
