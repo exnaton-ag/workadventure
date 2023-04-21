@@ -7,7 +7,6 @@ import {
     SendUserMessage,
     ServerToClientMessage,
     CompanionMessage,
-    PingMessage,
 } from "../../messages/generated/messages_pb";
 import type {
     UserMovesMessage,
@@ -27,6 +26,7 @@ import type {
     AvailabilityStatus,
     QueryMessage,
     EditMapCommandMessage,
+    PingMessage,
 } from "../../messages/generated/messages_pb";
 import qs from "qs";
 import type { AdminSocketTokenData } from "../services/JWTTokenManager";
@@ -48,7 +48,6 @@ import type { AdminMessageInterface } from "../models/Websocket/Admin/AdminMessa
 import Axios from "axios";
 import { InvalidTokenError } from "./InvalidTokenError";
 import type HyperExpress from "hyper-express";
-import type { WebSocket } from "uWebSockets.js";
 import { z } from "zod";
 import { adminService } from "../services/AdminService";
 import {
@@ -61,6 +60,8 @@ import {
 import Jwt from "jsonwebtoken";
 import { v4 as uuid } from "uuid";
 import { JID } from "stanza";
+
+type WebSocket = HyperExpress.compressors.WebSocket;
 
 /**
  * The object passed between the "open" and the "upgrade" methods when opening a websocket
@@ -91,6 +92,7 @@ interface UpgradeData {
     mucRooms: Array<MucRoomDefinitionInterface> | undefined;
     activatedInviteUser: boolean | undefined;
     isLogged: boolean;
+    canEdit: boolean;
 }
 
 interface UpgradeFailedInvalidData {
@@ -107,11 +109,6 @@ interface UpgradeFailedErrorData {
 }
 
 type UpgradeFailedData = UpgradeFailedErrorData | UpgradeFailedInvalidData;
-
-// Maximum time to wait for a pong answer to a ping before closing connection.
-// Note: PONG_TIMEOUT must be less than PING_INTERVAL
-const PONG_TIMEOUT = 70000; // PONG_TIMEOUT is > 1 minute because of Chrome heavy throttling. See: https://docs.google.com/document/d/11FhKHRcABGS4SWPFGwoL6g0ALMqrFKapCk5ZTKKupEk/edit#
-const PING_INTERVAL = 80000;
 
 export class IoSocketController {
     private nextUserId = 1;
@@ -290,6 +287,7 @@ export class IoSocketController {
                         const right = Number(query.right);
                         const name = query.name;
                         const availabilityStatus = Number(query.availabilityStatus);
+                        const lastCommandId = query.lastCommandId;
                         const version = query.version;
 
                         if (version !== apiVersionHash) {
@@ -381,6 +379,7 @@ export class IoSocketController {
                             jabberPassword: null,
                             mucRooms: [],
                             activatedInviteUser: true,
+                            canEdit: false,
                         };
 
                         let characterLayerObjs: WokaDetail[];
@@ -403,6 +402,13 @@ export class IoSocketController {
                                             // If the response points to nowhere, don't attempt an upgrade
                                             return;
                                         }
+
+                                        console.error(
+                                            "Axios error on room connection",
+                                            err?.response?.status,
+                                            errorType.data
+                                        );
+
                                         return res.upgrade(
                                             {
                                                 rejected: true,
@@ -416,6 +422,7 @@ export class IoSocketController {
                                             context
                                         );
                                     } else {
+                                        console.error("Unknown error on room connection", err);
                                         if (upgradeAborted.aborted) {
                                             // If the response points to nowhere, don't attempt an upgrade
                                             return;
@@ -494,6 +501,7 @@ export class IoSocketController {
                                 name,
                                 companion,
                                 availabilityStatus,
+                                lastCommandId,
                                 characterLayers: characterLayerObjs,
                                 messages: memberMessages,
                                 tags: memberTags,
@@ -504,6 +512,7 @@ export class IoSocketController {
                                 jabberPassword: userData.jabberPassword,
                                 mucRooms: userData.mucRooms,
                                 activatedInviteUser: userData.activatedInviteUser,
+                                canEdit: userData.canEdit ?? false,
                                 applications: userData.applications,
                                 position: {
                                     x: x,
@@ -613,35 +622,6 @@ export class IoSocketController {
                             }
                         });
                     }
-
-                    const pingMessage = new PingMessage();
-                    const pingSubMessage = new SubMessage();
-                    pingSubMessage.setPingmessage(pingMessage);
-
-                    client.pingIntervalId = setInterval(() => {
-                        client.emitInBatch(pingSubMessage);
-
-                        if (client.pongTimeoutId) {
-                            console.warn(
-                                "Warning, emitting a new ping message before previous pong message was received."
-                            );
-                            client.resetPongTimeout();
-                        }
-
-                        client.pongTimeoutId = setTimeout(() => {
-                            console.log(
-                                "Connection lost with user ",
-                                client.userUuid,
-                                client.name,
-                                client.userJid,
-                                "in room",
-                                client.roomId
-                            );
-                            client.close();
-                        }, PONG_TIMEOUT);
-                    }, PING_INTERVAL);
-
-                    client.resetPongTimeout();
                 })().catch((e) => console.error(e));
             },
             message: (ws, arrayBuffer): void => {
@@ -710,7 +690,7 @@ export class IoSocketController {
                             message.getLockgrouppromptmessage() as LockGroupPromptMessage
                         );
                     } else if (message.hasPingmessage()) {
-                        client.resetPongTimeout();
+                        socketManager.handlePingMessage(client, message.getPingmessage() as PingMessage);
                     } else if (message.hasEditmapcommandmessage()) {
                         socketManager.handleEditMapCommandMessage(
                             client,
@@ -765,12 +745,6 @@ export class IoSocketController {
         client.emitInBatch = (payload: SubMessage): void => {
             emitInBatch(client, payload);
         };
-        client.resetPongTimeout = (): void => {
-            if (client.pongTimeoutId) {
-                clearTimeout(client.pongTimeoutId);
-                client.pongTimeoutId = undefined;
-            }
-        };
         client.disconnecting = false;
 
         client.messages = ws.messages;
@@ -781,14 +755,22 @@ export class IoSocketController {
         client.characterLayers = ws.characterLayers;
         client.companion = ws.companion;
         client.availabilityStatus = ws.availabilityStatus;
+        client.lastCommandId = ws.lastCommandId;
         client.roomId = ws.roomId;
         client.listenedZones = new Set<Zone>();
         client.jabberId = ws.jabberId;
         client.jabberPassword = ws.jabberPassword;
         client.mucRooms = ws.mucRooms;
         client.activatedInviteUser = ws.activatedInviteUser;
+        client.canEdit = ws.canEdit;
         client.isLogged = ws.isLogged;
         client.applications = ws.applications;
+        client.customJsonReplacer = (key: unknown, value: unknown): string | undefined => {
+            if (key === "listenedZones") {
+                return (value as Set<Zone>).size + " listened zone(s)";
+            }
+            return undefined;
+        };
         return client;
     }
 }

@@ -278,7 +278,6 @@ You can close a website with the close function on the `UIWebsite` object
 ```ts
 myWebsite.close();
 ```
-
 ### Get all UI websites
 You can get all websites with the `WA.ui.website.getAll()` method. It returns an `Promise<UIWebsite[]>` instance.
 
@@ -286,6 +285,13 @@ You can get all websites with the `WA.ui.website.getAll()` method. It returns an
 WA.ui.website.getAll();
 ```
 
+### Get UI website by ID
+You can get a specific website with the `WA.ui.website.getById()` method. It returns an `Promise<UIWebsite>` instance.
+If your code is running inside a UIWebsite iframe, you can use `WA.iframeId` to obtain the id of the current iframe.
+
+```ts
+const websiteId = WA.iframeId;
+const website = await WA.ui.website.getById(websiteId);
 ## The modal iframe API
 ### Open the modal iframe
 
@@ -377,30 +383,69 @@ If the user is in mobile definition, the modal will open in full screen:
 
 ### Add a button in the action bar
 
+#### Classic button
 ```ts
 WA.ui.actionBar.addButton(descriptor: {
-    id: string, 
+    id: string,
     label: string,
+    clickCallback: (buttonActionBar: AddButtonActionBar) => void
+}): void
+```
+
+#### Action button
+```ts
+WA.ui.actionBar.addButton(descriptor: {
+    id: string,
+    type: 'action',
+    imageSrc: string,
+    toolTip: string,
     clickCallback: (buttonActionBar: AddButtonActionBar) => void
 }): void
 ```
 
 - id: the id of the button action bar defined.
 - label: the label to display in the button.
+- type: the type of button ('button' / 'action'). By default is 'button'.
+- imageSrc: image of button associated.
+- toolTip: label displayed above the action button.
 - clickCallback: function called when the user clicks on the button. The callback is passed a `AddButtonActionBar` instance in parameter.
 
 With `AddButtonActionBar` defined as:
 ```ts
+/**
+ * Ennum of button type
+ */
+const ActionBarButtonType = {
+    button: "button",
+    action: "action",
+} as const;
+type ActionBarButtonType = typeof ActionBarButtonType[keyof typeof ActionBarButtonType];
+
 interface AddButtonActionBar {
-    /* 
+    /*
     *   the id of the button action bar defined.
     */
     id: string,
 
-    /* 
+    /*
     *   the label to display in button action bar.
     */
     label: string
+
+    /*
+    *   the type of button ('button' / 'action'). By default is 'button'.
+    */
+    type: ActionBarButtonType,
+
+    /*
+    *  the image of button associated, This parameter is nullable.
+    */
+    imageSrc: string
+
+    /*
+    *   the label displayed above the action button. This parameter is nullable.
+    */
+    toolTip: string
 }
 ```
 
@@ -415,7 +460,7 @@ interface AddButtonActionBar {
     // Add action bar button 'Register'.
     WA.ui.actionBar.addButton({
         id: 'register-btn',
-        label: 'Register', 
+        label: 'Register',
         callback: (event) => {
             console.log('Button clicked', event);
             // When a user clicks on the action bar button 'Register', we remove it.
@@ -429,3 +474,89 @@ interface AddButtonActionBar {
         <img src="images/action_bar/button_action_bar.png" class="figure-img img-fluid rounded" alt="" />
     </div>
 </div>
+
+### Example of an action bar for action button
+```ts
+    // Add action bar button 'Register'.
+    WA.ui.actionBar.addButton({
+        id: 'register-btn',
+        type: 'action',
+        imageSrc: '<Your image url>',
+        toolTip: 'Register',
+        callback: (event) => {
+            console.log('Button clicked', event);
+            // When a user clicks on the action bar button 'Register', we remove it.
+            WA.ui.actionBar.removeButton('register-btn');
+        }
+    });
+```
+
+<div class="row">
+    <div class="col text-center">
+        <img src="images/action_bar/action_button_action_bar.png" class="figure-img img-fluid rounded" alt="" />
+    </div>
+</div>
+
+## Open / Close banner
+
+{.alert.alert-warning}
+The open/close banner API is **experimental**. It means the compatibility with future versions of WorkAdventure is not 
+guaranteed and we might break the signature of these methods at any moment. Use at your own risk.
+
+### Open the banner
+```ts
+    WA.ui.banner.openBanner({
+        id: string,
+        text: string,
+        bgColor?: string,
+        textColor?: string,
+        closable?: boolean,
+        link?: {
+            url: string,
+            label: string
+        }
+    });
+```
+
+- id: Id of the banner component,
+- text: dexcription displyed in the banner,
+- bgColor (optional): background color of your banner,
+- textColor (optional): text color into the banner,
+- closable (optional): let the possoibility for user to close the banner. By default is `true`,
+- link (optional): link added into the banner. The link has two mandatory parameter `url` and `label`:
+    - url: Url link,
+    - label: text dsiplayed for the banner link.
+
+
+### Close the banner
+```ts
+    WA.ui.banner.closeBanner();
+```
+
+### Example of banner opened
+```ts
+WA.ui.banner.openBanner({
+    id: "banner-test",
+    text: "Banner test",
+    bgColor: "#000000",
+    textColor: "#ffffff",
+    closable: false,
+    link: {
+        label: "Test",
+        url: "https://workadventu.re"
+    }
+});
+```
+
+<div class="row">
+    <div class="col text-center">
+        <img src="images/banner/open-banner.png" class="figure-img img-fluid rounded" alt="" />
+    </div>
+</div>
+
+
+### Example of banner closed
+```ts
+WA.ui.banner.closeBanner();
+```
+

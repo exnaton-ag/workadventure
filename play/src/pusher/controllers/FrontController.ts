@@ -1,10 +1,14 @@
 import type { Request, Response, Server } from "hyper-express";
 import fs from "fs";
 import { BaseHttpController } from "./BaseHttpController";
-import { FRONT_ENVIRONMENT_VARIABLES, VITE_URL } from "../enums/EnvironmentVariable";
+import { FRONT_ENVIRONMENT_VARIABLES, VITE_URL, LOGROCKET_ID } from "../enums/EnvironmentVariable";
 import { MetaTagsBuilder } from "../services/MetaTagsBuilder";
 import Mustache from "mustache";
 import type { LiveDirectory } from "../models/LiveDirectory";
+import { adminService } from "../services/AdminService";
+import { notWaHost } from "../middlewares/NotWaHost";
+import { version } from "../../../package.json";
+import { uuid } from "stanza/Utils";
 
 export class FrontController extends BaseHttpController {
     private indexFile: string;
@@ -51,8 +55,20 @@ export class FrontController extends BaseHttpController {
              */
             return this.displayFront(req, res, this.getFullUrl(req));
         });
+        this.app.post("/_/*", (req: Request, res: Response) => {
+            /**
+             * get infos from map file details
+             */
+            return this.displayFront(req, res, this.getFullUrl(req));
+        });
 
         this.app.get("/*/*", (req: Request, res: Response) => {
+            /**
+             * get infos from map file details
+             */
+            return this.displayFront(req, res, this.getFullUrl(req));
+        });
+        this.app.post("/*/*", (req: Request, res: Response) => {
             /**
              * get infos from map file details
              */
@@ -65,8 +81,20 @@ export class FrontController extends BaseHttpController {
              */
             return this.displayFront(req, res, this.getFullUrl(req));
         });
+        this.app.post("/@/*", (req: Request, res: Response) => {
+            /**
+             * get infos from admin else map file details
+             */
+            return this.displayFront(req, res, this.getFullUrl(req));
+        });
 
         this.app.get("/~/*", (req: Request, res: Response) => {
+            /**
+             * get infos from map file details
+             */
+            return this.displayFront(req, res, this.getFullUrl(req));
+        });
+        this.app.post("/~/*", (req: Request, res: Response) => {
             /**
              * get infos from map file details
              */
@@ -84,7 +112,7 @@ export class FrontController extends BaseHttpController {
 
         this.app.get("/static/images/favicons/manifest.json", (req: Request, res: Response) => {
             if (req.query.url == undefined) {
-                return res.status(500).send("playUrl is empty in query pramater of the request");
+                return res.status(500).send("playUrl is empty in query parameter of the request");
             }
             return this.displayManifestJson(req, res, req.query.url.toString());
         });
@@ -103,12 +131,32 @@ export class FrontController extends BaseHttpController {
             return this.displayFront(req, res, this.getFullUrl(req));
         });
 
-        // this.app.get("/static/images/favicons/manifest.json", (req: Request, res: Response) => {
-        //     return res.status(303).redirect("/");
-        // });
+        this.app.get(
+            "/.well-known/cf-custom-hostname-challenge/*",
+            [notWaHost],
+            async (req: Request, res: Response) => {
+                try {
+                    const response = await adminService.fetchWellKnownChallenge(req.hostname);
+                    return res.status(200).send(response);
+                } catch (e) {
+                    console.error(e);
+                    return res.status(526).send("Fail on challenging hostname");
+                }
+            }
+        );
+
+        this.app.get("/server.json", (req: Request, res: Response) => {
+            return res.json({
+                domain: process.env.PUSHER_URL,
+                name: process.env.SERVER_NAME || "WorkAdventure Server",
+                motd: process.env.SERVER_MOTD || "A WorkAdventure Server",
+                icon: process.env.SERVER_ICON || process.env.PUSHER_URL + "/static/images/favicons/icon-512x512.png",
+                version: version + (process.env.NODE_ENV !== "production" ? "-dev" : ""),
+            });
+        });
 
         this.app.get("/*", (req: Request, res: Response) => {
-            if (req.path.startsWith("/src") || req.path.startsWith("/node_modules")) {
+            if (req.path.startsWith("/src") || req.path.startsWith("/node_modules") || req.path.startsWith("/@fs/")) {
                 res.status(303).redirect(`${VITE_URL}${decodeURI(req.path)}`);
                 return;
             }
@@ -156,13 +204,27 @@ export class FrontController extends BaseHttpController {
             return res.redirect(redirectUrl);
         }
 
+        // get auth token from post /authToken
+        const { authToken } = await req.urlencoded();
+
         try {
             const metaTagsData = await builder.getMeta(req.header("User-Agent"));
+            let option = {};
+            if (req.query.logrocket === "true" && LOGROCKET_ID != undefined) {
+                option = {
+                    ...option,
+                    /* TODO change it to push data from admin */
+                    logRocketId: LOGROCKET_ID,
+                    userId: uuid(),
+                };
+            }
             html = Mustache.render(this.indexFile, {
                 ...metaTagsData,
                 msApplicationTileImage: metaTagsData.favIcons[metaTagsData.favIcons.length - 1].src,
                 url,
                 script: this.script,
+                authToken: authToken,
+                ...option,
             });
         } catch (e) {
             console.log(`Cannot render metatags on ${url}`, e);
@@ -180,7 +242,7 @@ export class FrontController extends BaseHttpController {
             short_name: metaTagsData.title,
             name: metaTagsData.title,
             icons: metaTagsData.manifestIcons,
-            start_url: "/",
+            start_url: url.replace(`${req.protocol}://${req.hostname}`, ""),
             background_color: metaTagsData.themeColor,
             display_override: ["window-control-overlay", "minimal-ui"],
             display: "standalone",

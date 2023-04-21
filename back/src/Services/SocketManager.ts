@@ -50,6 +50,9 @@ import {
     EditMapCommandWithKeyMessage,
     EditMapCommandMessage,
     ChatMessagePrompt,
+    UpdateMapToNewestWithKeyMessage,
+    EditMapCommandsArrayMessage,
+    UpdateMapToNewestMessage,
 } from "../Messages/generated/messages_pb";
 import { User, UserSocket } from "../Model/User";
 import { ProtobufUtils } from "../Model/Websocket/ProtobufUtils";
@@ -105,6 +108,31 @@ export class SocketManager {
     ): Promise<{ room: GameRoom; user: User }> {
         //join new previous room
         const { room, user } = await this.joinRoom(socket, joinRoomMessage);
+        const lastCommandId = joinRoomMessage.getLastcommandid();
+        let commandsToApply: EditMapCommandMessage[] | undefined = undefined;
+
+        if (lastCommandId) {
+            const updateMapToNewestMessage = new UpdateMapToNewestMessage();
+            updateMapToNewestMessage.setCommandid(lastCommandId);
+
+            const updateMapToNewestWithKeyMessage = new UpdateMapToNewestWithKeyMessage();
+            updateMapToNewestWithKeyMessage.setMapkey(room.mapUrl);
+            updateMapToNewestWithKeyMessage.setUpdatemaptonewestmessage(updateMapToNewestMessage);
+
+            commandsToApply = await new Promise<EditMapCommandMessage[]>((resolve, reject) => {
+                getMapStorageClient().handleUpdateMapToNewestMessage(
+                    updateMapToNewestWithKeyMessage,
+                    (err: unknown, message: EditMapCommandsArrayMessage) => {
+                        if (err) {
+                            emitError(user.socket, err);
+                            reject(err);
+                            return;
+                        }
+                        resolve(message.getEditmapcommandsList());
+                    }
+                );
+            });
+        }
 
         if (!socket.writable) {
             console.warn("Socket was aborted");
@@ -118,6 +146,13 @@ export class SocketManager {
         roomJoinedMessage.setTagList(joinRoomMessage.getTagList());
         roomJoinedMessage.setUserroomtoken(joinRoomMessage.getUserroomtoken());
         roomJoinedMessage.setCharacterlayerList(joinRoomMessage.getCharacterlayerList());
+        roomJoinedMessage.setCanedit(joinRoomMessage.getCanedit());
+
+        if (commandsToApply) {
+            const editMapCommandsArrayMessage = new EditMapCommandsArrayMessage();
+            editMapCommandsArrayMessage.setEditmapcommandsList(commandsToApply);
+            roomJoinedMessage.setEditmapcommandsarraymessage(editMapCommandsArrayMessage);
+        }
 
         for (const [itemId, item] of room.getItemsState().entries()) {
             const itemStateMessage = new ItemStateMessage();
@@ -155,6 +190,11 @@ export class SocketManager {
             roomJoinedMessage.addPlayervariable(variableMessage);
         }
 
+        if (TURN_STATIC_AUTH_SECRET) {
+            const { username, password } = this.getTURNCredentials(user.id.toString(), TURN_STATIC_AUTH_SECRET);
+            roomJoinedMessage.setWebrtcusername(username);
+            roomJoinedMessage.setWebrtcpassword(password);
+        }
         const serverToClientMessage = new ServerToClientMessage();
         serverToClientMessage.setRoomjoinedmessage(roomJoinedMessage);
         socket.write(serverToClientMessage);
@@ -230,7 +270,7 @@ export class SocketManager {
         webrtcSignalToClient.setUserid(user.id);
         webrtcSignalToClient.setSignal(data.getSignal());
         // TODO: only compute credentials if data.signal.type === "offer"
-        if (TURN_STATIC_AUTH_SECRET !== "") {
+        if (TURN_STATIC_AUTH_SECRET) {
             const { username, password } = this.getTURNCredentials(user.id.toString(), TURN_STATIC_AUTH_SECRET);
             webrtcSignalToClient.setWebrtcusername(username);
             webrtcSignalToClient.setWebrtcpassword(password);
@@ -260,7 +300,7 @@ export class SocketManager {
         webrtcSignalToClient.setUserid(user.id);
         webrtcSignalToClient.setSignal(data.getSignal());
         // TODO: only compute credentials if data.signal.type === "offer"
-        if (TURN_STATIC_AUTH_SECRET !== "") {
+        if (TURN_STATIC_AUTH_SECRET) {
             const { username, password } = this.getTURNCredentials(user.id.toString(), TURN_STATIC_AUTH_SECRET);
             webrtcSignalToClient.setWebrtcusername(username);
             webrtcSignalToClient.setWebrtcpassword(password);
@@ -530,7 +570,7 @@ export class SocketManager {
             const webrtcStartMessage1 = new WebRtcStartMessage();
             webrtcStartMessage1.setUserid(otherUser.id);
             webrtcStartMessage1.setInitiator(true);
-            if (TURN_STATIC_AUTH_SECRET !== "") {
+            if (TURN_STATIC_AUTH_SECRET) {
                 const { username, password } = this.getTURNCredentials(
                     otherUser.id.toString(),
                     TURN_STATIC_AUTH_SECRET
@@ -547,7 +587,7 @@ export class SocketManager {
             const webrtcStartMessage2 = new WebRtcStartMessage();
             webrtcStartMessage2.setUserid(user.id);
             webrtcStartMessage2.setInitiator(false);
-            if (TURN_STATIC_AUTH_SECRET !== "") {
+            if (TURN_STATIC_AUTH_SECRET) {
                 const { username, password } = this.getTURNCredentials(user.id.toString(), TURN_STATIC_AUTH_SECRET);
                 webrtcStartMessage2.setWebrtcusername(username);
                 webrtcStartMessage2.setWebrtcpassword(password);
@@ -574,8 +614,8 @@ export class SocketManager {
         hmac.end();
         const password = hmac.read() as string;
         return {
-            username: username,
-            password: password,
+            username,
+            password,
         };
     }
 
@@ -689,6 +729,16 @@ export class SocketManager {
         const jwt = Jwt.sign(
             {
                 aud: "jitsi",
+                context: {
+                    user: {
+                        id: user.id,
+                        name: user.name,
+                    },
+                    features: {
+                        livestreaming: isAdmin,
+                        recording: isAdmin,
+                    },
+                },
                 iss: jitsiSettings.iss,
                 sub: jitsiSettings.url,
                 room: jitsiRoom,
@@ -892,6 +942,7 @@ export class SocketManager {
 
     private cleanupRoomIfEmpty(room: GameRoom): void {
         if (room.isEmpty()) {
+            room.destroy();
             this.roomsPromises.delete(room.roomUrl);
             const deleted = this.resolvedRooms.delete(room.roomUrl);
             if (deleted) {
@@ -1086,17 +1137,39 @@ export class SocketManager {
         room.emitLockGroupEvent(user, group.getId());
     }
 
-    handleEditMapCommandWithKeyMessage(room: GameRoom, user: User, message: EditMapCommandWithKeyMessage) {
+    handleEditMapCommandMessage(room: GameRoom, user: User, message: EditMapCommandMessage) {
+        const messageWithKey = new EditMapCommandWithKeyMessage();
+        messageWithKey.setEditmapcommandmessage(message);
+        messageWithKey.setMapkey(room.mapUrl);
+
         getMapStorageClient().handleEditMapCommandWithKeyMessage(
-            message,
+            messageWithKey,
             (err: unknown, editMapMessage: EditMapCommandMessage) => {
                 if (err) {
                     emitError(user.socket, err);
-                    throw err;
+                    return;
                 }
                 const subMessage = new SubToPusherRoomMessage();
                 subMessage.setEditmapcommandmessage(editMapMessage);
                 room.dispatchRoomMessage(subMessage);
+            }
+        );
+    }
+
+    handleUpdateMapToNewestMessage(room: GameRoom, user: User, message: UpdateMapToNewestWithKeyMessage) {
+        getMapStorageClient().handleUpdateMapToNewestMessage(
+            message,
+            (err: unknown, message: EditMapCommandsArrayMessage) => {
+                if (err) {
+                    emitError(user.socket, err);
+                    throw err;
+                }
+                const commands = message.getEditmapcommandsList();
+                for (const editMapCommandMessage of commands) {
+                    const subMessage = new SubMessage();
+                    subMessage.setEditmapcommandmessage(editMapCommandMessage);
+                    user.emitInBatch(subMessage);
+                }
             }
         );
     }

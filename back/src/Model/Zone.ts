@@ -8,6 +8,7 @@ import {
     SetPlayerDetailsMessage,
     PlayerDetailsUpdatedMessage,
 } from "../Messages/generated/messages_pb";
+import { CustomJsonReplacerInterface } from "./CustomJsonReplacerInterface";
 
 export type EntersCallback = (thing: Movable, fromZone: Zone | null, listener: ZoneSocket) => void;
 export type MovesCallback = (thing: Movable, position: PositionInterface, listener: ZoneSocket) => void;
@@ -19,7 +20,7 @@ export type PlayerDetailsUpdatedCallback = (
     listener: ZoneSocket
 ) => void;
 
-export class Zone {
+export class Zone implements CustomJsonReplacerInterface {
     private things: Set<Movable> = new Set<Movable>();
     private listeners: Set<ZoneSocket> = new Set<ZoneSocket>();
 
@@ -40,6 +41,7 @@ export class Zone {
     public leave(thing: Movable, newZone: Zone | null) {
         const result = this.things.delete(thing);
         if (!result) {
+            // if the user socket end event was emitted, the connection is already closed
             if (thing instanceof User) {
                 throw new Error(`Could not find user in zone ${thing.id}`);
             }
@@ -131,5 +133,12 @@ export class Zone {
         for (const listener of this.listeners) {
             this.onPlayerDetailsUpdated(playerDetailsUpdatedMessage, listener);
         }
+    }
+
+    public customJsonReplacer(key: unknown, value: unknown): string | undefined {
+        if (key === "listeners") {
+            return `${(value as Set<ZoneSocket>).size} listener(s) registered`;
+        }
+        return undefined;
     }
 }

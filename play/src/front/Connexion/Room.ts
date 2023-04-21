@@ -1,9 +1,9 @@
 import {
     CONTACT_URL,
-    PUSHER_URL,
     DISABLE_ANONYMOUS,
     OPID_LOGOUT_REDIRECT_URL,
     OPID_WOKA_NAME_POLICY,
+    PUSHER_URL,
 } from "../Enum/EnvironmentVariable";
 import { localUserStore } from "./LocalUserStore";
 import axios from "axios";
@@ -19,6 +19,8 @@ export interface RoomRedirect {
     redirectUrl: string;
 }
 
+console.log("pusher url !", PUSHER_URL);
+
 export class Room {
     public readonly id: string;
     private _authenticationMandatory: boolean = DISABLE_ANONYMOUS;
@@ -31,7 +33,6 @@ export class Room {
     private _group: string | null = null;
     private _expireOn: Date | undefined;
     private _canReport = false;
-    private _canEditMap = false;
     private _miniLogo: string | undefined;
     private _loadingCowebsiteLogo: string | undefined;
     private _loadingLogo: string | undefined;
@@ -54,6 +55,8 @@ export class Room {
     private _iconEyes: string | undefined;
     private _iconBody: string | undefined;
     private _iconTurn: string | undefined;
+    private _reportIssuesUrl: string | undefined;
+    private _entityCollectionsUrls: string[] | undefined;
 
     private constructor(private roomUrl: URL) {
         this.id = roomUrl.pathname;
@@ -115,12 +118,15 @@ export class Room {
 
     private async getMapDetail(): Promise<MapDetail | RoomRedirect> {
         try {
-            const result = await axiosWithRetry.get<unknown>(`${PUSHER_URL}/map`, {
-                params: {
-                    playUri: this.roomUrl.toString(),
-                    authToken: localUserStore.getAuthToken(),
-                },
-            });
+            const result = await axiosWithRetry.get<unknown>(
+                new URL("/map", new URL(PUSHER_URL, window.location.href)).toString(),
+                {
+                    params: {
+                        playUri: this.roomUrl.toString(),
+                        authToken: localUserStore.getAuthToken(),
+                    },
+                }
+            );
 
             const data = result.data;
 
@@ -154,7 +160,6 @@ export class Room {
                 }
                 this._opidWokaNamePolicy = data.opidWokaNamePolicy ?? OPID_WOKA_NAME_POLICY;
                 this._canReport = data.canReport ?? false;
-                this._canEditMap = data.canEdit ?? false;
                 this._miniLogo = data.miniLogo ?? undefined;
                 this._loadingCowebsiteLogo = data.loadingCowebsiteLogo ?? undefined;
                 this._loadingLogo = data.loadingLogo ?? undefined;
@@ -181,6 +186,9 @@ export class Room {
                 this._iconHair = data.customizeWokaScene?.hairIcon ?? undefined;
                 this._iconHat = data.customizeWokaScene?.hatIcon ?? undefined;
                 this._iconTurn = data.customizeWokaScene?.turnIcon ?? undefined;
+                this._reportIssuesUrl = data.reportIssuesUrl ?? undefined;
+
+                this._entityCollectionsUrls = data.entityCollectionsUrls ?? undefined;
 
                 return new MapDetail(data.mapUrl);
             } else if (errorApiDataChecking.success) {
@@ -274,10 +282,6 @@ export class Room {
 
     get canReport(): boolean {
         return this._canReport;
-    }
-
-    get canEditMap(): boolean {
-        return this._canEditMap;
     }
 
     get loadingCowebsiteLogo(): string | undefined {
@@ -382,5 +386,13 @@ export class Room {
 
     get iconTurn(): string | undefined {
         return this._iconTurn;
+    }
+
+    get reportIssuesUrl(): string | undefined {
+        return this._reportIssuesUrl;
+    }
+
+    get entityCollectionsUrls(): string[] | undefined {
+        return this._entityCollectionsUrls;
     }
 }

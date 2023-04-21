@@ -31,8 +31,11 @@ import {
     RoomsList,
     PingMessage,
     QueryMessage,
-    EditMapCommandWithKeyMessage,
+    EditMapCommandMessage,
     ChatMessagePrompt,
+    ServerToClientMessage,
+    BatchMessage,
+    SubMessage,
 } from "./Messages/generated/messages_pb";
 import {
     sendUnaryData,
@@ -52,6 +55,7 @@ import { User, UserSocket } from "./Model/User";
 import { GameRoom } from "./Model/GameRoom";
 import Debug from "debug";
 import { Admin } from "./Model/Admin";
+import { clearInterval } from "timers";
 
 const debug = Debug("roommanager");
 
@@ -59,14 +63,26 @@ export type AdminSocket = ServerDuplexStream<AdminPusherToBackMessage, ServerToA
 export type ZoneSocket = ServerWritableStream<ZoneMessage, BatchToPusherMessage>;
 export type RoomSocket = ServerWritableStream<RoomMessage, BatchToPusherRoomMessage>;
 
+// Maximum time to wait for a pong answer to a ping before closing connection.
+// Note: PONG_TIMEOUT must be less than PING_INTERVAL
+const PONG_TIMEOUT = 70000; // PONG_TIMEOUT is > 1 minute because of Chrome heavy throttling. See: https://docs.google.com/document/d/11FhKHRcABGS4SWPFGwoL6g0ALMqrFKapCk5ZTKKupEk/edit#
+const PING_INTERVAL = 80000;
+
 const roomManager: IRoomManagerServer = {
     joinRoom: (call: UserSocket): void => {
         console.log("joinRoom called");
 
         let room: GameRoom | null = null;
         let user: User | null = null;
+        let pongTimeoutId: NodeJS.Timer | undefined;
 
         call.on("data", (message: PusherToBackMessage) => {
+            // On each message, let's reset the pong timeout
+            if (pongTimeoutId) {
+                clearTimeout(pongTimeoutId);
+                pongTimeoutId = undefined;
+            }
+
             (async () => {
                 try {
                     if (room === null || user === null) {
@@ -78,11 +94,19 @@ const roomManager: IRoomManagerServer = {
                                         room = gameRoom;
                                         user = myUser;
                                     } else {
-                                        //Connection may have been closed before the init was finished, so we have to manually disconnect the user.
+                                        // Connection may have been closed before the init was finished, so we have to manually disconnect the user.
+                                        // TODO: Remove this debug line
+                                        console.info(
+                                            "message handleJoinRoom connection have been closed before. Check 'call.writable': ",
+                                            call.writable
+                                        );
                                         socketManager.leaveRoom(gameRoom, myUser);
                                     }
                                 })
-                                .catch((e) => emitError(call, e));
+                                .catch((e) => {
+                                    console.error("message handleJoinRoom error: ", e);
+                                    emitError(call, e);
+                                });
                         } else {
                             throw new Error("The first message sent MUST be of type JoinRoomMessage");
                         }
@@ -155,12 +179,12 @@ const roomManager: IRoomManagerServer = {
                                 user,
                                 message.getLockgrouppromptmessage() as LockGroupPromptMessage
                             );
-                        } else if (message.hasEditmapcommandwithkeymessage()) {
-                            if (message.getEditmapcommandwithkeymessage())
-                                socketManager.handleEditMapCommandWithKeyMessage(
+                        } else if (message.hasEditmapcommandmessage()) {
+                            if (message.getEditmapcommandmessage())
+                                socketManager.handleEditMapCommandMessage(
                                     room,
                                     user,
-                                    message.getEditmapcommandwithkeymessage() as EditMapCommandWithKeyMessage
+                                    message.getEditmapcommandmessage() as EditMapCommandMessage
                                 );
                         } else if (message.hasSendusermessage()) {
                             const sendUserMessage = message.getSendusermessage();
@@ -175,6 +199,8 @@ const roomManager: IRoomManagerServer = {
                                 user,
                                 setPlayerDetailsMessage as SetPlayerDetailsMessage
                             );
+                        } else if (message.hasPingmessage()) {
+                            // Do nothing
                         } else if (message.hasAskpositionmessage()) {
                             socketManager.handleAskPositionMessage(
                                 room,
@@ -197,19 +223,64 @@ const roomManager: IRoomManagerServer = {
             })().catch((e) => console.error(e));
         });
 
-        call.on("end", () => {
-            debug("joinRoom ended");
+        const closeConnection = () => {
             if (user !== null && room !== null) {
                 socketManager.leaveRoom(room, user);
+            }
+            if (pingIntervalId) {
+                clearInterval(pingIntervalId);
+            }
+            if (pongTimeoutId) {
+                clearTimeout(pongTimeoutId);
+                pongTimeoutId = undefined;
             }
             call.end();
             room = null;
             user = null;
+        };
+
+        call.on("end", () => {
+            debug("joinRoom ended for user %s", user?.name);
+            closeConnection();
         });
 
         call.on("error", (err: Error) => {
-            console.error("An error occurred in joinRoom stream:", err);
+            console.error("An error occurred in joinRoom stream for user", user?.name, ":", err);
+            closeConnection();
         });
+
+        // Let's set up a ping mechanism
+        const pingMessage = new PingMessage();
+        const pingSubMessage = new SubMessage();
+        pingSubMessage.setPingmessage(pingMessage);
+
+        const batchMessage = new BatchMessage();
+        batchMessage.addPayload(pingSubMessage);
+
+        const serverToClientMessage = new ServerToClientMessage();
+        serverToClientMessage.setBatchmessage(batchMessage);
+
+        // Ping requests are sent from the server because the setTimeout on the browser is unreliable when the tab is hidden.
+        const pingIntervalId = setInterval(() => {
+            call.write(serverToClientMessage);
+
+            if (pongTimeoutId) {
+                console.warn("Warning, emitting a new ping message before previous pong message was received.");
+                clearTimeout(pongTimeoutId);
+            }
+
+            pongTimeoutId = setTimeout(() => {
+                console.log(
+                    "Connection lost with user ",
+                    user?.uuid,
+                    user?.name,
+                    user?.userJid,
+                    "in room",
+                    room?.roomUrl
+                );
+                closeConnection();
+            }, PONG_TIMEOUT);
+        }, PING_INTERVAL);
     },
 
     listenZone(call: ZoneSocket): void {

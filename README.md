@@ -29,7 +29,11 @@ We provide a production ready `docker-compose` file that you can use as a good s
 > These installation instructions are for local development only. They will not work on
 > remote servers as local environments do not have HTTPS certificates.
 
-Install Docker.
+Install Docker and clone this repository.
+
+> **Warning**
+> If you are using Windows, make sure the End-Of-Line character is not modified by the cloning process by setting
+> the `core.autocrlf` setting to false: `git config --global core.autocrlf false`
 
 Run:
 
@@ -41,7 +45,7 @@ docker-compose up
 The environment will start.
 
 You should now be able to browse to http://play.workadventure.localhost/ and see the application.
-You can view the Traefik dashboard at http://localhost:8080/
+You can view the Traefik dashboard at http://traefik.workadventure.localhost
 
 Note: on some OSes, you will need to add this line to your `/etc/hosts` file:
 
@@ -61,36 +65,4 @@ $ docker-compose -f docker-compose.yaml -f docker-compose-oidc.yaml up
 
 ### Troubleshooting
 
-#### MacOS users
-
-Unlike with Windows and Linux, MacOS developers need to configure an amount of RAM dedicated
-to Docker. If some containers are "Killed", you will need to increase the amount of RAM given
-to Docker. At least 6GB of RAM is needed.
-
-If the performance is poor, you can also try to [run WorkAdventure inside Vagrant](docs/dev/vagrant.md).
-
-#### Windows users
-
-If you find errors in the docker logs that contain the string "\r", you have an issue with your Git configuration.
-On Windows, Git can be configured to change the carriage return from "\n" to "\r\n" on the fly. Since the code
-is running in Linux containers, you absolutely want to be sure the Git won't do that. For this, you need to
-disable the `core.autocrlf` settings.
-
-If you run into this issue, please run the command:
-
-```console
-git config --global core.autocrlf false
-```
-
-Then, delete the WorkAdventure directory and check it out again.
-
-#### CORS error / HTTP 502 error
-
-If you see a CORS error or an HTTP 502 error when trying to load WorkAdventure, check the logs from the `play`
-and from the `back` container. If you see an error, you can simply try to restart them.
-Sometimes, a rare race condition prevents those containers from starting correctly in dev.
-
-```console
-docker-compose restart play
-docker-compose restart back
-```
+See our [troubleshooting guide](docs/dev/troubleshooting.md).

@@ -1,5 +1,5 @@
 import { OpidWokaNamePolicy } from "@workadventure/messages";
-import { z, ZodError } from "zod";
+import { z } from "zod";
 import type { FrontConfigurationInterface } from "../../common/FrontConfigurationInterface";
 
 const BoolAsString = z.union([z.literal("true"), z.literal("false"), z.literal("0"), z.literal("1"), z.literal("")]);
@@ -8,12 +8,14 @@ type BoolAsString = z.infer<typeof BoolAsString>;
 const PositiveIntAsString = z.string().regex(/^\d*$/, { message: "Must be a positive integer number" });
 type PositiveIntAsString = z.infer<typeof PositiveIntAsString>;
 
+const AbsoluteOrRelativeUrl = z.string().url().or(z.string().startsWith("/"));
+
 const EnvironmentVariables = z.object({
     // Pusher related environment variables
     SECRET_KEY: z.string().min(1),
     API_URL: z.string().min(1),
-    ADMIN_API_URL: z.string().url().optional(),
-    ADMIN_URL: z.string().url().optional(),
+    ADMIN_API_URL: AbsoluteOrRelativeUrl.optional(),
+    ADMIN_URL: AbsoluteOrRelativeUrl.optional(),
     ADMIN_API_TOKEN: z.string().optional(),
     ADMIN_SOCKETS_TOKEN: z.string().optional(),
     CPU_OVERHEAT_THRESHOLD: PositiveIntAsString.optional(),
@@ -24,8 +26,8 @@ const EnvironmentVariables = z.object({
     VITE_URL: z.string().url().optional(),
     // Use "*" to allow any domain
     ALLOWED_CORS_ORIGIN: z.string().url().or(z.literal("*")).optional(),
-    PUSHER_URL: z.string().url().optional(),
-    PUBLIC_MAP_STORAGE_URL: z.string().url().optional(),
+    PUSHER_URL: AbsoluteOrRelativeUrl.optional(),
+    PUBLIC_MAP_STORAGE_URL: AbsoluteOrRelativeUrl.optional(),
     OPID_CLIENT_ID: z.string().optional(),
     OPID_CLIENT_SECRET: z.string().optional(),
     OPID_CLIENT_ISSUER: z.string().optional(),
@@ -50,8 +52,8 @@ const EnvironmentVariables = z.object({
 
     // Front related environment variables
     DEBUG_MODE: BoolAsString.optional(),
-    UPLOADER_URL: z.string().url(),
-    ICON_URL: z.string().url(),
+    UPLOADER_URL: AbsoluteOrRelativeUrl,
+    ICON_URL: AbsoluteOrRelativeUrl,
     STUN_SERVER: z.string().optional(),
     TURN_SERVER: z.string().optional(),
     SKIP_RENDER_OPTIMIZATIONS: BoolAsString.optional(),
@@ -61,33 +63,49 @@ const EnvironmentVariables = z.object({
     JITSI_URL: z.string().optional(),
     JITSI_PRIVATE_MODE: BoolAsString.optional(),
     ENABLE_FEATURE_MAP_EDITOR: BoolAsString.optional(),
+    ENABLE_MAP_EDITOR_AREAS_TOOL: BoolAsString.optional(),
     MAX_USERNAME_LENGTH: PositiveIntAsString.optional(),
     MAX_PER_GROUP: PositiveIntAsString.optional(),
     NODE_ENV: z.string().optional(),
-    CONTACT_URL: z.string().url().optional(),
+    CONTACT_URL: AbsoluteOrRelativeUrl.optional(),
     POSTHOG_API_KEY: z.string().optional(),
     POSTHOG_URL: z.string().url().optional().or(z.literal("")),
     FALLBACK_LOCALE: z.string().optional(),
-    CHAT_URL: z.string().url(),
+    CHAT_URL: AbsoluteOrRelativeUrl,
     OPID_WOKA_NAME_POLICY: OpidWokaNamePolicy.optional(),
+    ENABLE_REPORT_ISSUES_MENU: BoolAsString.optional(),
+    REPORT_ISSUES_URL: z.string().url().optional().or(z.literal("")),
+    LOGROCKET_ID: z.string().optional(),
 });
 
 type EnvironmentVariables = z.infer<typeof EnvironmentVariables>;
 
-let env: EnvironmentVariables;
-try {
-    env = EnvironmentVariables.parse(process.env);
-} catch (e) {
-    if (e instanceof ZodError) {
-        console.error("Errors found in environment variables:");
-        for (const issue of e.issues) {
-            console.error(`For variable "${issue.path[0]}": ${issue.message}`);
+const envChecking = EnvironmentVariables.safeParse(process.env);
+
+// Will break the process if an error happens
+if (!envChecking.success) {
+    console.error("\n\n\n-----------------------------------------");
+    console.error("FATAL ERRORS FOUND IN ENVIRONMENT VARIABLES!!!");
+    console.error("-----------------------------------------\n");
+
+    const formattedError = envChecking.error.format();
+
+    for (const [name, value] of Object.entries(formattedError)) {
+        if (Array.isArray(value)) {
+            continue;
         }
 
-        process.exit(1);
+        for (const error of value._errors) {
+            console.error(`For variable "${name}": ${error}`);
+        }
     }
-    throw e;
+
+    console.error("\n-----------------------------------------\n\n\n");
+
+    process.exit(1);
 }
+
+const env = envChecking.data;
 
 function toNumber(value: string | undefined, defaultValue: number): number {
     if (value === undefined || value === "") {
@@ -137,7 +155,7 @@ export const EJABBERD_DOMAIN: string = env.EJABBERD_DOMAIN || "";
 export const EJABBERD_JWT_SECRET: string = env.EJABBERD_JWT_SECRET || "";
 export const ENABLE_CHAT: boolean = toBool(env.ENABLE_CHAT, true);
 export const ENABLE_CHAT_UPLOAD: boolean = toBool(env.ENABLE_CHAT_UPLOAD, true);
-export const ENABLE_CHAT_ONLINE_LIST: boolean = toBool(env.ENABLE_CHAT_UPLOAD, true);
+export const ENABLE_CHAT_ONLINE_LIST: boolean = toBool(env.ENABLE_CHAT_ONLINE_LIST, true);
 export const ENABLE_CHAT_DISCONNECTED_LIST: boolean = toBool(env.ENABLE_CHAT_DISCONNECTED_LIST, true);
 export const DEBUG_ERROR_MESSAGES = toBool(env.DEBUG_ERROR_MESSAGES, false);
 
@@ -148,11 +166,14 @@ export const ENABLE_OPENAPI_ENDPOINT = toBool(env.ENABLE_OPENAPI_ENDPOINT, false
 export const START_ROOM_URL: string = env.START_ROOM_URL || "/_/global/maps.workadventu.re/starter/map.json";
 export const FALLBACK_LOCALE: string | undefined = env.FALLBACK_LOCALE;
 
+// Logrocket id
+export const LOGROCKET_ID: string | undefined = env.LOGROCKET_ID;
+
 // Front container:
 export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
     DEBUG_MODE: toBool(env.DEBUG_MODE, false),
-    PUSHER_URL: env.PUSHER_URL || "/",
-    ADMIN_URL: env.ADMIN_URL,
+    PUSHER_URL,
+    ADMIN_URL,
     UPLOADER_URL: env.UPLOADER_URL,
     ICON_URL: env.ICON_URL,
     STUN_SERVER: env.STUN_SERVER,
@@ -164,18 +185,21 @@ export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
     JITSI_URL: env.JITSI_URL,
     JITSI_PRIVATE_MODE: toBool(env.JITSI_PRIVATE_MODE, false),
     ENABLE_FEATURE_MAP_EDITOR: toBool(env.ENABLE_FEATURE_MAP_EDITOR, false),
+    ENABLE_MAP_EDITOR_AREAS_TOOL: toBool(env.ENABLE_MAP_EDITOR_AREAS_TOOL, false),
     MAX_USERNAME_LENGTH: toNumber(env.MAX_USERNAME_LENGTH, 10),
     MAX_PER_GROUP: toNumber(env.MAX_PER_GROUP, 4),
     NODE_ENV: env.NODE_ENV || "development",
     CONTACT_URL: env.CONTACT_URL,
     POSTHOG_API_KEY: env.POSTHOG_API_KEY,
     POSTHOG_URL: env.POSTHOG_URL,
-    DISABLE_ANONYMOUS: toBool(env.DISABLE_ANONYMOUS, false),
+    DISABLE_ANONYMOUS,
     ENABLE_OPENID: !!env.OPID_CLIENT_ID,
     OPID_PROFILE_SCREEN_PROVIDER: env.OPID_PROFILE_SCREEN_PROVIDER,
     OPID_LOGOUT_REDIRECT_URL: env.OPID_LOGOUT_REDIRECT_URL,
     CHAT_URL: env.CHAT_URL,
-    ENABLE_CHAT_UPLOAD: toBool(env.ENABLE_CHAT_UPLOAD, true),
-    FALLBACK_LOCALE: env.FALLBACK_LOCALE,
-    OPID_WOKA_NAME_POLICY: env.OPID_WOKA_NAME_POLICY,
+    ENABLE_CHAT_UPLOAD,
+    FALLBACK_LOCALE,
+    OPID_WOKA_NAME_POLICY,
+    ENABLE_REPORT_ISSUES_MENU: toBool(env.ENABLE_REPORT_ISSUES_MENU, false),
+    REPORT_ISSUES_URL: env.REPORT_ISSUES_URL,
 };

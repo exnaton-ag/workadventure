@@ -1,3 +1,4 @@
+import { warningContainerStore } from "./../Stores/MenuStore";
 import { Subject } from "rxjs";
 import { HtmlUtils } from "../WebRtc/HtmlUtils";
 import type { EnterLeaveEvent } from "./Events/EnterLeaveEvent";
@@ -27,7 +28,7 @@ import type { AddActionsMenuKeyToRemotePlayerEvent } from "./Events/AddActionsMe
 import type { ActionsMenuActionClickedEvent } from "./Events/ActionsMenuActionClickedEvent";
 import type { RemoveActionsMenuKeyFromRemotePlayerEvent } from "./Events/RemoveActionsMenuKeyFromRemotePlayerEvent";
 import type { SetAreaPropertyEvent } from "./Events/SetAreaPropertyEvent";
-import type { ModifyUIWebsiteEvent } from "./Events/Ui/UIWebsite";
+import type { ModifyUIWebsiteEvent } from "./Events/Ui/UIWebsiteEvent";
 import type { ModifyAreaEvent } from "./Events/CreateAreaEvent";
 import type { AskPositionEvent } from "./Events/AskPositionEvent";
 import type { PlayerInterface } from "../Phaser/Game/PlayerInterface";
@@ -37,16 +38,15 @@ import type { HasPlayerMovedInterface } from "./Events/HasPlayerMovedInterface";
 import type { JoinProximityMeetingEvent } from "./Events/ProximityMeeting/JoinProximityMeetingEvent";
 import type { ParticipantProximityMeetingEvent } from "./Events/ProximityMeeting/ParticipantProximityMeetingEvent";
 import type { MessageUserJoined } from "../Connexion/ConnexionModels";
-import { availabilityStatusToJSON } from "@workadventure/messages";
+import { availabilityStatusToJSON, XmppSettingsMessage } from "@workadventure/messages";
 import type { AddPlayerEvent } from "./Events/AddPlayerEvent";
 import { localUserStore } from "../Connexion/LocalUserStore";
 import { mediaManager, NotificationType } from "../WebRtc/MediaManager";
 import { analyticsClient } from "../Administration/AnalyticsClient";
 import type { ChatMessage } from "./Events/ChatEvent";
-import { requestVisitCardsStore } from "../Stores/GameStore";
+import { bannerStore, requestVisitCardsStore } from "../Stores/GameStore";
 import { modalIframeStore, modalVisibilityStore } from "../Stores/ModalStore";
 import { connectionManager } from "../Connexion/ConnectionManager";
-import { gameManager } from "../Phaser/Game/GameManager";
 import { ModalEvent } from "./Events/ModalEvent";
 import { AddButtonActionBarEvent } from "./Events/Ui/ButtonActionBarEvent";
 
@@ -183,11 +183,13 @@ class IframeListener {
     private readonly _addButtonActionBarStream: Subject<AddActionsMenuKeyToRemotePlayerEvent> = new Subject();
     public readonly addButtonActionBarStream = this._addButtonActionBarStream.asObservable();
 
-    private readonly iframes = new Set<HTMLIFrameElement>();
+    private readonly iframes = new Map<HTMLIFrameElement, string | undefined>();
     private readonly iframeCloseCallbacks = new Map<MessageEventSource, Set<() => void>>();
     private readonly scripts = new Map<string, HTMLIFrameElement>();
 
     private chatIframe: HTMLIFrameElement | null = null;
+
+    private chatReady = false;
 
     private sendPlayerMove = false;
 
@@ -196,7 +198,17 @@ class IframeListener {
         [str in keyof IframeQueryMap]?: unknown;
     } = {};
 
-    private messagesToChatQueue = new Map<number, IframeResponseEvent>();
+    // Note: Message Queue used to store message who can't be sent to the Chat because it's not ready yet
+    private messagesToChatQueue = new Array<IframeResponseEvent>();
+
+    public getUIWebsiteIframeIdFromSource(source: MessageEventSource): string | undefined {
+        for (const [iframe, id] of this.iframes.entries()) {
+            if (iframe.contentWindow === source) {
+                return id;
+            }
+        }
+        return undefined;
+    }
 
     init() {
         window.addEventListener(
@@ -208,7 +220,7 @@ class IframeListener {
                 let foundSrc: string | undefined;
 
                 let iframe: HTMLIFrameElement | undefined;
-                for (iframe of this.iframes) {
+                for (iframe of this.iframes.keys()) {
                     if (iframe.contentWindow === message.source) {
                         foundSrc = iframe.src;
                         break;
@@ -437,6 +449,20 @@ class IframeListener {
                         additionnalButtonsMenu.addAdditionnalButtonActionBar(iframeEvent.data);
                     } else if (iframeEvent.type == "removeButtonActionBar") {
                         additionnalButtonsMenu.removeAdditionnalButtonActionBar(iframeEvent.data);
+                    } else if (iframeEvent.type == "chatReady") {
+                        this.chatReady = true;
+                        if (this.messagesToChatQueue.length > 0) {
+                            for (const message of this.messagesToChatQueue) {
+                                this.postMessageToChat(message);
+                            }
+                            this.messagesToChatQueue = [];
+                        }
+                    } else if (iframeEvent.type == "openBanner") {
+                        warningContainerStore.activateWarningContainer();
+                        bannerStore.set(iframeEvent.data);
+                    } else if (iframeEvent.type == "closeBanner") {
+                        warningContainerStore.set(false);
+                        bannerStore.set(null);
                     } else {
                         // Keep the line below. It will throw an error if we forget to handle one of the possible values.
                         const _exhaustiveCheck: never = iframeEvent;
@@ -450,8 +476,8 @@ class IframeListener {
     /**
      * Allows the passed iFrame to send/receive messages via the API.
      */
-    registerIframe(iframe: HTMLIFrameElement): void {
-        this.iframes.add(iframe);
+    registerIframe(iframe: HTMLIFrameElement, id?: string): void {
+        this.iframes.set(iframe, id);
         iframe.addEventListener("load", () => {
             if (iframe.contentWindow) {
                 this.iframeCloseCallbacks.set(iframe.contentWindow, new Set());
@@ -464,12 +490,6 @@ class IframeListener {
     registerChatIframe(iframe: HTMLIFrameElement): void {
         this.registerIframe(iframe);
         this.chatIframe = iframe;
-        if (this.messagesToChatQueue.size > 0) {
-            this.messagesToChatQueue.forEach((message, time) => {
-                this.postMessageToChat(message);
-                this.messagesToChatQueue.delete(time);
-            });
-        }
     }
 
     unregisterIframe(iframe: HTMLIFrameElement): void {
@@ -552,7 +572,7 @@ class IframeListener {
         let foundSrc: string | undefined;
         let iframe: HTMLIFrameElement | undefined;
 
-        for (iframe of this.iframes) {
+        for (iframe of this.iframes.keys()) {
             if (iframe.contentWindow === source) {
                 foundSrc = iframe.src;
                 break;
@@ -576,6 +596,14 @@ class IframeListener {
         iframe.remove();
 
         this.scripts.delete(scriptUrl);
+    }
+
+    cleanup() {
+        this.chatReady = false;
+        if (this.chatIframe) {
+            this.unregisterIframe(this.chatIframe);
+            this.chatIframe = null;
+        }
     }
 
     /**
@@ -800,13 +828,7 @@ class IframeListener {
         if (!connectionManager.currentRoom) {
             throw new Error("Race condition : Current room is not defined yet");
         }
-        const xmppSettingsMessage = gameManager.getCurrentGameScene().connection?.xmppSettingsMessage;
-        if (xmppSettingsMessage) {
-            this.postMessageToChat({
-                type: "xmppSettingsMessage",
-                data: xmppSettingsMessage,
-            });
-        }
+
         this.postMessageToChat({
             type: "settings",
             data: {
@@ -817,6 +839,13 @@ class IframeListener {
                 enableChatOnlineList: connectionManager.currentRoom?.enableChatOnlineList,
                 enableChatDisconnectedList: connectionManager.currentRoom?.enableChatDisconnectedList,
             },
+        });
+    }
+
+    sendXmppSettingsToChatIframe(xmppSettingsMessage: XmppSettingsMessage) {
+        this.postMessageToChat({
+            type: "xmppSettingsMessage",
+            data: xmppSettingsMessage,
         });
     }
 
@@ -908,15 +937,10 @@ class IframeListener {
         if (!this.chatIframe) {
             this.chatIframe = document.getElementById("chatWorkAdventure") as HTMLIFrameElement | null;
         }
-        try {
-            if (!this.chatIframe || !this.chatIframe.contentWindow || !this.chatIframe.contentWindow.postMessage) {
-                throw new Error("No chat iFrame registered");
-            } else {
-                this.chatIframe.contentWindow?.postMessage(message, this.chatIframe?.src);
-            }
-        } catch (err) {
-            console.error("postMessageToChat Error => ", err);
-            this.messagesToChatQueue.set(Date.now(), message);
+        if (!this.chatReady || !this.chatIframe) {
+            this.messagesToChatQueue.push(message);
+        } else {
+            this.chatIframe.contentWindow?.postMessage(message, this.chatIframe?.src);
         }
     }
 
@@ -924,7 +948,7 @@ class IframeListener {
      * Sends the message... to all allowed iframes and not the chat.
      */
     public postMessage(message: IframeResponseEvent, exceptOrigin?: MessageEventSource) {
-        for (const iframe of this.iframes) {
+        for (const iframe of this.iframes.keys()) {
             if (exceptOrigin === iframe.contentWindow || iframe.src === this.chatIframe?.src) {
                 continue;
             }
@@ -946,6 +970,12 @@ class IframeListener {
 
     public unregisterAnswerer(key: keyof IframeQueryMap): void {
         delete this.answerers[key];
+    }
+
+    public hideIFrames(hide = true): void {
+        for (const iframe of this.iframes.keys()) {
+            iframe.hidden = hide;
+        }
     }
 
     dispatchVariableToOtherIframes(key: string, value: unknown, source: MessageEventSource | null) {

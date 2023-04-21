@@ -27,6 +27,12 @@ class LocalAdmin implements AdminInterface {
         characterLayers: string[],
         locale?: string
     ): Promise<FetchMemberDataByUuidResponse> {
+        let canEdit = false;
+        const roomUrl = new URL(playUri);
+        const match = /\/~\/(.+)/.exec(roomUrl.pathname);
+        if (match) {
+            canEdit = true;
+        }
         const mucRooms = [{ name: "Connected users", url: playUri, type: "default", subscribe: false }];
         if (ENABLE_CHAT) {
             mucRooms.push({ name: "Welcome", url: `${playUri}/forum/welcome`, type: "forum", subscribe: false });
@@ -41,6 +47,7 @@ class LocalAdmin implements AdminInterface {
             userRoomToken: undefined,
             mucRooms,
             activatedInviteUser: true,
+            canEdit,
         };
     }
 
@@ -59,11 +66,11 @@ class LocalAdmin implements AdminInterface {
         }
 
         let mapUrl = "";
-        let canEdit = false;
+        const entityCollectionsUrls = [];
         let match = /\/~\/(.+)/.exec(roomUrl.pathname);
         if (match) {
             mapUrl = `${PUBLIC_MAP_STORAGE_URL}/${match[1]}`;
-            canEdit = true;
+            entityCollectionsUrls.push(`${PUBLIC_MAP_STORAGE_URL}/entityCollections`);
         } else {
             match = /\/_\/[^/]+\/(.+)/.exec(roomUrl.pathname);
             if (!match) {
@@ -83,7 +90,7 @@ class LocalAdmin implements AdminInterface {
 
         return Promise.resolve({
             mapUrl,
-            canEdit,
+            entityCollectionsUrls,
             authenticationMandatory: DISABLE_ANONYMOUS,
             contactPage: null,
             mucRooms: null,
@@ -111,6 +118,10 @@ class LocalAdmin implements AdminInterface {
         playUri: string | null,
         locale?: string
     ): Promise<AdminApiData> {
+        return Promise.reject(new Error("No admin backoffice set!"));
+    }
+
+    fetchWellKnownChallenge(host: string): Promise<string> {
         return Promise.reject(new Error("No admin backoffice set!"));
     }
 

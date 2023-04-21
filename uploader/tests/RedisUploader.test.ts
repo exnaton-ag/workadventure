@@ -11,6 +11,7 @@ import isPortReachable from "./utils/isPortReachable";
 import startTestServer from "./startTestServer";
 import {createClient} from "redis";
 import {CHAT_URL} from "../src/Enum/EnvironmentVariable";
+import {describe, expect, jest, it, beforeAll, afterAll} from '@jest/globals';
 
 const APP_PORT = 7373
 
@@ -42,19 +43,23 @@ describe("Redis Uploader tests", () => {
     })
 
     afterAll(async ()=> {
-        server?.kill()
-        await new Promise(resolve => {
-            server?.on("close", ()=> {
-                resolve(0)
-            })
-        })
+        if (server) {
+            const serverToKill = server;
+            const promise = new Promise(resolve => {
+                serverToKill.on("exit", ()=> {
+                    resolve(0)
+                })
+            });
+            serverToKill.kill("SIGKILL")
+            await promise;
+        }
         await redisContainer?.stop()
     })
 
-    it("should reply options with 200", async ()=> {
+    it("should reply options with 204", async ()=> {
         const response = await axios.options(`${UPLOADER_URL}/upload-file`)
 
-        expect(response.status).toBe(200)
+        expect(response.status).toBe(204)
         verifyResponseHeaders(response);
     })
 

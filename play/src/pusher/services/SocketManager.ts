@@ -1,6 +1,6 @@
 import { PusherRoom } from "../models/PusherRoom";
 import type { ExSocketInterface } from "../models/Websocket/ExSocketInterface";
-import type {
+import {
     EmoteEventMessage,
     EmotePromptMessage,
     FollowRequestMessage,
@@ -26,8 +26,6 @@ import type {
     AskPositionMessage,
     BanUserByUuidMessage,
     EditMapCommandMessage,
-} from "../../messages/generated/messages_pb";
-import {
     AdminMessage,
     AdminPusherToBackMessage,
     AdminRoomMessage,
@@ -45,10 +43,11 @@ import {
     InvalidTextureMessage,
     ErrorScreenMessage,
     ApplicationMessage,
-    EditMapCommandWithKeyMessage,
     XmppSettingsMessage,
     MucRoomDefinitionMessage,
+    PingMessage,
 } from "../../messages/generated/messages_pb";
+
 import { ProtobufUtils } from "../models/Websocket/ProtobufUtils";
 import { emitInBatch } from "./IoSocketHelpers";
 import { clientEventsEmitter } from "./ClientEventsEmitter";
@@ -57,7 +56,7 @@ import { apiClientRepository } from "./ApiClientRepository";
 import type { GroupDescriptor, UserDescriptor } from "../models/Zone";
 import type { ZoneEventListener } from "../models/Zone";
 import Debug from "debug";
-import type { ExAdminSocketInterface } from "../models/Websocket/ExAdminSocketInterface";
+import type { AdminConnection, ExAdminSocketInterface } from "../models/Websocket/ExAdminSocketInterface";
 import type { compressors } from "hyper-express";
 import { adminService } from "./AdminService";
 import { ErrorApiData, MucRoomDefinitionInterface } from "@workadventure/messages";
@@ -94,7 +93,13 @@ export class SocketManager implements ZoneEventListener {
     async handleAdminRoom(client: ExAdminSocketInterface, roomId: string): Promise<void> {
         const apiClient = await apiClientRepository.getClient(roomId);
         const adminRoomStream = apiClient.adminRoom();
-        client.adminConnection = adminRoomStream;
+        if (!client.adminConnections) {
+            client.adminConnections = new Map<string, AdminConnection>();
+        }
+        if (client.adminConnections.has(roomId)) {
+            client.adminConnections.get(roomId)?.end();
+        }
+        client.adminConnections.set(roomId, adminRoomStream);
 
         adminRoomStream
             .on("data", (message: ServerToAdminClientMessage) => {
@@ -169,8 +174,8 @@ export class SocketManager implements ZoneEventListener {
     }
 
     leaveAdminRoom(socket: ExAdminSocketInterface): void {
-        if (socket.adminConnection) {
-            socket.adminConnection.end();
+        for (const adminConnection of socket.adminConnections?.values() ?? []) {
+            adminConnection.end();
         }
     }
 
@@ -199,6 +204,7 @@ export class SocketManager implements ZoneEventListener {
             joinRoomMessage.setActivatedinviteuser(
                 client.activatedInviteUser != undefined ? client.activatedInviteUser : true
             );
+            joinRoomMessage.setCanedit(client.canEdit);
 
             if (client.applications != undefined) {
                 for (const aplicationValue of client.applications) {
@@ -207,6 +213,10 @@ export class SocketManager implements ZoneEventListener {
                     application.setScript(aplicationValue.script);
                     joinRoomMessage.addApplications(application);
                 }
+            }
+
+            if (client.lastCommandId !== undefined) {
+                joinRoomMessage.setLastcommandid(client.lastCommandId);
             }
 
             for (const characterLayer of client.characterLayers) {
@@ -355,13 +365,14 @@ export class SocketManager implements ZoneEventListener {
         client.backConnection.write(pusherToBackMessage);
     }
 
-    handleEditMapCommandMessage(client: ExSocketInterface, message: EditMapCommandMessage): void {
-        const editWithMapKeyMessage = new EditMapCommandWithKeyMessage();
-        editWithMapKeyMessage.setEditmapcommandmessage(message);
-        editWithMapKeyMessage.setMapkey(client.roomId.split("~")[1]);
-
+    handlePingMessage(client: ExSocketInterface, message: PingMessage): void {
         const pusherToBackMessage = new PusherToBackMessage();
-        pusherToBackMessage.setEditmapcommandwithkeymessage(editWithMapKeyMessage);
+        pusherToBackMessage.setPingmessage(message);
+        client.backConnection.write(pusherToBackMessage);
+    }
+    handleEditMapCommandMessage(client: ExSocketInterface, message: EditMapCommandMessage): void {
+        const pusherToBackMessage = new PusherToBackMessage();
+        pusherToBackMessage.setEditmapcommandmessage(message);
         client.backConnection.write(pusherToBackMessage);
     }
 

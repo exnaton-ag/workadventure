@@ -47,8 +47,10 @@
         SubMenusInterface,
         subMenusStore,
         additionnalButtonsMenu,
+        addClassicButtonActionBarEvent,
+        addActionButtonActionBarEvent,
+        mapEditorActivated,
     } from "../../Stores/MenuStore";
-    import type { Emoji } from "../../Stores/EmoteStore";
     import {
         emoteDataStore,
         emoteDataStoreLoading,
@@ -73,6 +75,8 @@
     import { modalIframeStore, modalVisibilityStore } from "../../Stores/ModalStore";
     import { userHasAccessToBackOfficeStore } from "../../Stores/GameStore";
     import { AddButtonActionBarEvent } from "../../Api/Events/Ui/ButtonActionBarEvent";
+    import { localUserStore } from "../../Connexion/LocalUserStore";
+    import { Emoji } from "../../Stores/Utils/emojiSchema";
 
     const menuImg = gameManager.currentStartedRoom?.miniLogo ?? WorkAdventureImg;
 
@@ -322,6 +326,7 @@
     }
 
     function selectSpeaker(deviceId: string) {
+        localUserStore.setSpeakerDeviceId(deviceId);
         speakerSelectedStore.set(deviceId);
     }
 
@@ -478,7 +483,7 @@
             </div>
         {/if}
 
-        <div class="tw-flex tw-flex-row base-section animated">
+        <div class="tw-flex tw-flex-row base-section animated tw-flex-wrap tw-justify-center">
             <div class="bottom-action-section tw-flex tw-flex-initial">
                 {#if !$inExternalServiceStore && !$silentStore && $proximityMeetingStore}
                     {#if $myCameraStore}
@@ -532,6 +537,9 @@
                                     {#each $cameraListStore as camera}
                                         <span
                                             class="wa-dropdown-item tw-flex"
+                                            on:click={() => {
+                                                analyticsClient.selectCamera();
+                                            }}
                                             on:click|stopPropagation|preventDefault={() =>
                                                 selectCamera(camera.deviceId)}
                                         >
@@ -599,6 +607,9 @@
                                         {#each $microphoneListStore as microphone}
                                             <span
                                                 class="wa-dropdown-item"
+                                                on:click={() => {
+                                                    analyticsClient.selectMicrophone();
+                                                }}
                                                 on:click|stopPropagation|preventDefault={() =>
                                                     selectMicrophone(microphone.deviceId)}
                                             >
@@ -618,6 +629,9 @@
                                         {#each $speakerListStore as speaker}
                                             <span
                                                 class="wa-dropdown-item"
+                                                on:click={() => {
+                                                    analyticsClient.selectSpeaker();
+                                                }}
                                                 on:click|stopPropagation|preventDefault={() =>
                                                     selectSpeaker(speaker.deviceId)}
                                             >
@@ -687,13 +701,14 @@
                         <img draggable="false" src={menuImg} style="padding: 2px" alt={$LL.menu.icon.open.menu()} />
                     </button>
                 </div>
-                {#if gameManager.getCurrentGameScene().isMapEditorEnabled()}
+                {#if $mapEditorActivated}
                     <div
                         on:dragstart|preventDefault={noDrag}
                         on:click={toggleMapEditorMode}
                         class="bottom-action-button"
                     >
-                        <button id="mapEditorIcon" class:border-top-light={$menuVisiblilityStore}>
+                        <Tooltip text={$LL.actionbar.mapEditor()} />
+                        <button id="mapEditorIcon" class:border-top-light={$mapEditorModeStore}>
                             <img draggable="false" src={logoRegister} style="padding: 2px" alt="toggle-map-editor" />
                         </button>
                     </div>
@@ -707,12 +722,46 @@
                     >
                         <Tooltip text={$LL.actionbar.bo()} />
 
-                        <button id="mapEditorIcon">
+                        <button id="backOfficeIcon">
                             <img draggable="false" src={hammerImg} style="padding: 2px" alt="toggle-map-editor" />
                         </button>
                     </div>
                 {/if}
             </div>
+
+            {#if $addActionButtonActionBarEvent.length > 0}
+                <div class="bottom-action-section tw-flex tw-flex-initial">
+                    {#each $addActionButtonActionBarEvent as button}
+                        <div
+                            in:fly={{}}
+                            on:dragstart|preventDefault={noDrag}
+                            on:click={() =>
+                                analyticsClient.clickOnCustomButton(
+                                    button.id,
+                                    undefined,
+                                    button.toolTip,
+                                    button.imageSrc
+                                )}
+                            on:click={() => {
+                                buttonActionBarTrigger(button.id);
+                            }}
+                            class="bottom-action-button"
+                        >
+                            {#if button.toolTip}
+                                <Tooltip text={button.toolTip} />
+                            {/if}
+                            <button id={button.id}>
+                                <img
+                                    draggable="false"
+                                    src={button.imageSrc}
+                                    style="padding: 2px"
+                                    alt={button.toolTip}
+                                />
+                            </button>
+                        </div>
+                    {/each}
+                </div>
+            {/if}
 
             {#if $inviteUserActivated}
                 <div
@@ -752,11 +801,12 @@
                 </div>
             {/if}
             -->
-            {#each [...$additionnalButtonsMenu.values()] as button}
+            {#each $addClassicButtonActionBarEvent as button}
                 <div
                     class="bottom-action-section tw-flex tw-flex-initial"
                     in:fly={{}}
                     on:dragstart|preventDefault={noDrag}
+                    on:click={() => analyticsClient.clickOnCustomButton(button.id, button.label)}
                     on:click={() => {
                         buttonActionBarTrigger(button.id);
                     }}
@@ -787,14 +837,9 @@
                             class="emoji"
                             class:focus={$emoteMenuStore && $emoteMenuSubCurrentEmojiSelectedStore === key}
                         >
-                            <img
-                                class="emoji"
-                                style="padding: 2px"
-                                draggable="false"
-                                alt={$emoteDataStore.get(key)?.unicode}
-                                id={`icon-${$emoteDataStore.get(key)?.name}`}
-                                src={$emoteDataStore.get(key)?.url}
-                            />
+                            <span class="emoji" style="margin:auto" id={`icon-${$emoteDataStore.get(key)?.name}`}>
+                                {$emoteDataStore.get(key)?.emoji}
+                            </span>
                             {#if !isMobile}
                                 <span class="tw-text-white">{key}</span>
                             {/if}
@@ -837,11 +882,13 @@
         </div>
     </div>
 {/if}
-F
 
 <style lang="scss">
     @import "../../style/breakpoints.scss";
 
+    button {
+        justify-content: center;
+    }
     .animated {
         transition-property: transform;
         transition-duration: 0.5s;

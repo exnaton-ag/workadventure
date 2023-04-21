@@ -6,8 +6,8 @@ import type {
     UIWebsiteSize,
     ViewportPositionHorizontal,
     ViewportPositionVertical,
-    UIWebsite as UIWebsiteCore,
-} from "../../Events/Ui/UIWebsite";
+    UIWebsiteEvent,
+} from "../../Events/Ui/UIWebsiteEvent";
 import { IframeApiContribution, queryWorkadventure, sendToWorkadventure } from "../IframeApiContribution";
 
 class UIWebsitePositionInternal {
@@ -200,7 +200,7 @@ export class UIWebsite {
     private _size: UIWebsiteSizeInternal;
     private _margin: UIWebsiteMarginInternal;
 
-    constructor(config: UIWebsiteCore) {
+    constructor(config: UIWebsiteEvent) {
         this.id = config.id;
         this._url = config.url;
         this._visible = config.visible ?? true;
@@ -345,6 +345,21 @@ export class UIWebsiteCommands extends IframeApiContribution<UIWebsiteCommands> 
         });
 
         return result.map((current) => new UIWebsite(current));
+    }
+
+    /**
+     * Returns one UI website (iframe positionned on the viewport) by ID.
+     * {@link https://workadventu.re/map-building/api-ui.md#get-all-ui-websites | Website documentation}
+     * @param {string} id The id of the UIWebsite
+     * @returns {Promise<UIWebsite | undefined>} Promise to return UI website
+     */
+    async getById(id: string): Promise<UIWebsite | undefined> {
+        const result = await queryWorkadventure({
+            type: "getUIWebsiteById",
+            data: id,
+        });
+
+        return new UIWebsite(result);
     }
 }
 

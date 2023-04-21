@@ -9,6 +9,7 @@ import follow from "./follow";
 import login from "./login";
 import menu from "./menu";
 import report from "./report";
+import refreshPrompt from "./refreshPrompt";
 import warning from "./warning";
 import emoji from "./emoji";
 import trigger from "./trigger";
@@ -16,6 +17,7 @@ import muc from "./muc";
 import notification from "./notification";
 import cowebsite from "./cowebsite";
 import actionbar from "./actionbar";
+import mapEditor from "./mapEditor";
 
 const en_US: BaseTranslation = {
     audio,
@@ -28,6 +30,7 @@ const en_US: BaseTranslation = {
     login,
     menu,
     report,
+    refreshPrompt,
     warning,
     emoji,
     trigger,
@@ -35,6 +38,7 @@ const en_US: BaseTranslation = {
     notification,
     cowebsite,
     actionbar,
+    mapEditor,
 };
 
 export default en_US;

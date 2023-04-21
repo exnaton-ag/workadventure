@@ -28,6 +28,22 @@ import type { Popup } from "./front/Api/Iframe/Ui/Popup";
 import type { Sound } from "./front/Api/Iframe/Sound/Sound";
 import { answerPromises, queryWorkadventure } from "./front/Api/Iframe/IframeApiContribution";
 import camera from "./front/Api/Iframe/camera";
+export type {
+    CreateUIWebsiteEvent,
+    ModifyUIWebsiteEvent,
+    UIWebsiteEvent,
+    UIWebsiteCSSValue,
+    UIWebsiteMargin,
+    UIWebsitePosition,
+    UIWebsiteSize,
+    ViewportPositionHorizontal,
+    ViewportPositionVertical,
+} from "./front/Api/Events/Ui/UIWebsiteEvent";
+export type {
+    CreateEmbeddedWebsiteEvent,
+    ModifyEmbeddedWebsiteEvent,
+    Rectangle,
+} from "./front/Api/Events/EmbeddedWebsiteEvent";
 export type { UIWebsite } from "./front/Api/Iframe/Ui/UIWebsite";
 export type { Menu } from "./front/Api/Iframe/Ui/Menu";
 export type { ActionMessage } from "./front/Api/Iframe/Ui/ActionMessage";
@@ -38,9 +54,14 @@ export type { ActionsMenuAction } from "./front/Api/Iframe/ui";
 const globalState = createState();
 
 let _metadata: unknown | undefined;
+let _iframeId: string | undefined;
 
 const setMetadata = (data: unknown | undefined) => {
     _metadata = data;
+};
+
+const setIframeId = (data: string | undefined) => {
+    _iframeId = data;
 };
 
 // Notify WorkAdventure that we are ready to receive data
@@ -48,6 +69,7 @@ const initPromise = queryWorkadventure({
     type: "getState",
     data: undefined,
 }).then((gameState) => {
+    console.log({ gameState });
     setPlayerName(gameState.nickname);
     setPlayerLanguage(gameState.language);
     setRoomId(gameState.roomId);
@@ -56,6 +78,7 @@ const initPromise = queryWorkadventure({
     setUuid(gameState.uuid);
     setUserRoomToken(gameState.userRoomToken);
     setMetadata(gameState.metadata);
+    setIframeId(gameState.iframeId);
     globalState.initVariables(gameState.variables as Map<string, unknown>);
     player.state.initVariables(gameState.playerVariables as Map<string, unknown>);
     setIsLogged(gameState.isLogged);
@@ -96,6 +119,17 @@ const wa = {
      */
     get metadata(): unknown | undefined {
         return _metadata;
+    },
+
+    /**
+     * The iframeId (only set if the code is executed from a UIWebsite iframe)
+     * Important: You need to wait for the end of the initialization before accessing.
+     * {@link https://workadventu.re/map-building/api-ui.md#get-ui-website-by-id | Website documentation}
+     *
+     * @returns {string|undefined} IframeId
+     */
+    get iframeId(): string | undefined {
+        return _iframeId;
     },
 
     // All methods below are deprecated and should not be used anymore.

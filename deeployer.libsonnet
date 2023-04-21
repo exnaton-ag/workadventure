@@ -16,12 +16,14 @@
        },
        "ports": [8080, 50051],
        "env": {
+         "PLAY_URL": "https://play-"+url,
          "SECRET_KEY": "tempSecretKeyNeedsToChange",
          "JITSI_ISS": env.JITSI_ISS,
          "JITSI_URL": env.JITSI_URL,
          "SECRET_JITSI_KEY": env.SECRET_JITSI_KEY,
          "TURN_STATIC_AUTH_SECRET": env.TURN_STATIC_AUTH_SECRET,
          "REDIS_HOST": "redis",
+         "REDIS_PORT": "6379",
          "PROMETHEUS_AUTHORIZATION_TOKEN": "promToken",
          "BBB_URL": "https://test-install.blindsidenetworks.com/bigbluebutton/",
          "MAP_STORAGE_URL": "map-storage:50053",
@@ -29,12 +31,16 @@
          "BBB_SECRET": "8cd8ef52e8e101574e400365b55e11a6",
          "EJABBERD_USER": "admin",
          "EJABBERD_PASSWORD": "apideo",
+         "ENABLE_FEATURE_MAP_EDITOR":"true",
+         "ENABLE_MAP_EDITOR_AREAS_TOOL":"false",
        } + (if adminUrl != null then {
          "ADMIN_API_URL": adminUrl,
          "ADMIN_API_TOKEN": env.ADMIN_API_TOKEN,
-         "EJABBERD_API_URI": "http://xmpp-"+adminUrl+"/api/",
+         "EJABBERD_API_URI": "http://xmpp-"+std.strReplace(adminUrl, "https://", "")+"/api/",
+         "TELEMETRY_URL": adminUrl,
        } else {
          "EJABBERD_API_URI": "http://ejabberd:5443/api/",
+         "TELEMETRY_URL": "https://staging.workadventu.re",
        })
      },
      "back2": {
@@ -45,12 +51,14 @@
             },
             "ports": [8080, 50051],
             "env": {
+              "PLAY_URL": "https://play-"+url,
               "SECRET_KEY": "tempSecretKeyNeedsToChange",
               "JITSI_ISS": env.JITSI_ISS,
               "JITSI_URL": env.JITSI_URL,
               "SECRET_JITSI_KEY": env.SECRET_JITSI_KEY,
               "TURN_STATIC_AUTH_SECRET": env.TURN_STATIC_AUTH_SECRET,
               "REDIS_HOST": "redis",
+              "REDIS_PORT": "6379",
               "PROMETHEUS_AUTHORIZATION_TOKEN": "promToken",
               "BBB_URL": "https://test-install.blindsidenetworks.com/bigbluebutton/",
               "BBB_SECRET": "8cd8ef52e8e101574e400365b55e11a6",
@@ -58,12 +66,16 @@
               "PUBLIC_MAP_STORAGE_URL": "https://map-storage-"+url,
               "EJABBERD_USER": "admin",
               "EJABBERD_PASSWORD": "apideo",
+              "ENABLE_FEATURE_MAP_EDITOR":"true",
+              "ENABLE_MAP_EDITOR_AREAS_TOOL":"false",
             } + (if adminUrl != null then {
               "ADMIN_API_URL": adminUrl,
               "ADMIN_API_TOKEN": env.ADMIN_API_TOKEN,
-              "EJABBERD_API_URI": "http://xmpp-"+adminUrl+"/api/",
+              "EJABBERD_API_URI": "http://xmpp-"+std.strReplace(adminUrl, "https://", "")+"/api/",
+              "TELEMETRY_URL": adminUrl,
             } else {
               "EJABBERD_API_URI": "http://ejabberd:5443/api/",
+              "TELEMETRY_URL": "https://staging.workadventu.re",
             })
      },
      "play": {
@@ -88,11 +100,13 @@
           #POSTHOG
           "POSTHOG_API_KEY": if namespace == "master" then env.POSTHOG_API_KEY else "",
           "POSTHOG_URL": if namespace == "master" then env.POSTHOG_URL else "",
-          "TURN_SERVER": "turn:coturn.workadventu.re:443,turns:coturn.workadventu.re:443",
+          "TURN_SERVER": "turn:coturn.workadventure.fr:443,turns:coturn.workadventure.fr:443",
           "JITSI_PRIVATE_MODE": if env.SECRET_JITSI_KEY != '' then "true" else "false",
           "ENABLE_FEATURE_MAP_EDITOR":"true",
+          "ENABLE_MAP_EDITOR_AREAS_TOOL":"false",
           "ICON_URL": "https://icon-"+url,
           "CHAT_URL": "https://chat-"+url,
+          "LOGROCKET_ID": env.LOGROCKET_ID,
         } + (if adminUrl != null then {
           # Admin
           "ADMIN_URL": adminUrl,
@@ -137,6 +151,11 @@
            "ports": [3000, 50053],
            "env": {
              "PROMETHEUS_AUTHORIZATION_TOKEN": "promToken",
+             "AUTHENTICATION_STRATEGY": if (adminUrl == null) then "Basic" else "Bearer",
+             "AUTHENTICATION_USER": "john.doe",
+             "AUTHENTICATION_PASSWORD": "password",
+             "AUTHENTICATION_TOKEN": "SomeSecretToken",
+             "USE_DOMAIN_NAME_IN_PATH": if (adminUrl == null) then "false" else "true",
            }
          },
     "uploaderredis":{
@@ -288,6 +307,16 @@
               spec+: {
                 tls+: [{
                   hosts: ["maps-"+url],
+                  secretName: "certificate-tls"
+                }]
+              }
+             }
+          },
+          "map-storage"+: {
+            ingress+: {
+              spec+: {
+                tls+: [{
+                  hosts: ["map-storage-"+url],
                   secretName: "certificate-tls"
                 }]
               }

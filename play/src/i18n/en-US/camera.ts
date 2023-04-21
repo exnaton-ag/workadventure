@@ -18,6 +18,20 @@ const camera: BaseTranslation = {
             chrome: "/resources/help-setting-camera-permission/en-US-firefox.png",
         },
     },
+    webrtc: {
+        title: "Video relay server connection error",
+        titlePending: "Video relay server connection pending",
+        error: "TURN server isn't reachable",
+        content: "The video relay server cannot be reached. You may be unable to communicate with other users.",
+        solutionVpn:
+            "If you are <strong>connecting via a VPN</strong>, please disconnect from you VPN and refresh the web page.",
+        solutionHotspot:
+            "If you are on a restricted network (company network...), try switching network. For instance, create a <strong>Wifi hotspot</strong> with your phone and connect via your phone.",
+        solutionNetworkAdmin: "If you are a <strong>network administrator</strong>, review the ",
+        preparingYouNetworkGuide: '"Preparing your network" guide',
+        refresh: "Refresh",
+        continue: "Continue",
+    },
     my: {
         silentZone: "Silent zone",
         nameTag: "You",

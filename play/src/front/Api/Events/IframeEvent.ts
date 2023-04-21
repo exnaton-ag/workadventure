@@ -28,7 +28,7 @@ import { isMovePlayerToEventAnswer } from "./MovePlayerToEventAnswer";
 import { isAddActionsMenuKeyToRemotePlayerEvent } from "./AddActionsMenuKeyToRemotePlayerEvent";
 import { isRemoveActionsMenuKeyFromRemotePlayerEvent } from "./RemoveActionsMenuKeyFromRemotePlayerEvent";
 import { isSetAreaPropertyEvent } from "./SetAreaPropertyEvent";
-import { isCreateUIWebsiteEvent, isModifyUIWebsiteEvent, isUIWebsite } from "./Ui/UIWebsite";
+import { isCreateUIWebsiteEvent, isModifyUIWebsiteEvent, isUIWebsiteEvent } from "./Ui/UIWebsiteEvent";
 import { isAreaEvent, isCreateAreaEvent } from "./CreateAreaEvent";
 import { isUserInputChatEvent } from "./UserInputChatEvent";
 import { isEnterLeaveEvent } from "./EnterLeaveEvent";
@@ -55,6 +55,7 @@ import { isShowBusinessCardEvent } from "./ShowBusinessCardEvent";
 import { isModalEvent } from "./ModalEvent";
 import { isXmppSettingsMessageEvent } from "./XmppSettingsMessageEvent";
 import { isAddButtonActionBarEvent, isRemoveButtonActionBarEvent } from "./Ui/ButtonActionBarEvent";
+import { isBannerEvent } from "./Ui/BannerEvent";
 
 export interface TypedMessageEvent<T> extends MessageEvent {
     data: T;
@@ -276,6 +277,18 @@ export const isIframeEventWrapper = z.union([
     z.object({
         type: z.literal("removeButtonActionBar"),
         data: isRemoveButtonActionBarEvent,
+    }),
+    z.object({
+        type: z.literal("chatReady"),
+        data: z.undefined(),
+    }),
+    z.object({
+        type: z.literal("openBanner"),
+        data: isBannerEvent,
+    }),
+    z.object({
+        type: z.literal("closeBanner"),
+        data: z.undefined(),
     }),
 ]);
 
@@ -531,7 +544,7 @@ export const iframeQueryMapTypeGuards = {
     },
     openUIWebsite: {
         query: isCreateUIWebsiteEvent,
-        answer: isUIWebsite,
+        answer: isUIWebsiteEvent,
     },
     closeUIWebsite: {
         query: z.string(),
@@ -539,7 +552,11 @@ export const iframeQueryMapTypeGuards = {
     },
     getUIWebsites: {
         query: z.undefined(),
-        answer: z.array(isUIWebsite),
+        answer: z.array(isUIWebsiteEvent),
+    },
+    getUIWebsiteById: {
+        query: z.string(),
+        answer: isUIWebsiteEvent,
     },
     enablePlayersTracking: {
         query: isEnablePlayersTrackingEvent,
@@ -556,8 +573,8 @@ type UnknownToVoid<T> = undefined extends T ? void : T;
 
 export type IframeQueryMap = {
     [key in keyof IframeQueryMapTypeGuardsType]: {
-        query: z.infer<typeof iframeQueryMapTypeGuards[key]["query"]>;
-        answer: UnknownToVoid<z.infer<typeof iframeQueryMapTypeGuards[key]["answer"]>>;
+        query: z.infer<(typeof iframeQueryMapTypeGuards)[key]["query"]>;
+        answer: UnknownToVoid<z.infer<(typeof iframeQueryMapTypeGuards)[key]["answer"]>>;
     };
 };
 

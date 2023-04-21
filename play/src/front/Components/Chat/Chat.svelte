@@ -1,12 +1,18 @@
 <script lang="ts">
-    import { chatVisibilityStore, writingStatusMessageStore } from "../../Stores/ChatStore";
+    import {
+        chatVisibilityStore,
+        iframeLoadedStore,
+        wokaDefinedStore,
+        writingStatusMessageStore,
+    } from "../../Stores/ChatStore";
+    import { enableUserInputsStore } from "../../Stores/UserInputStore";
     import { onDestroy, onMount } from "svelte";
     import { iframeListener } from "../../Api/IframeListener";
     import { localUserStore } from "../../Connexion/LocalUserStore";
     import { getColorByString } from "../Video/utils";
     import { currentPlayerWokaStore } from "../../Stores/CurrentPlayerWokaStore";
     import type { Unsubscriber } from "svelte/store";
-    import { derived, get, writable } from "svelte/store";
+    import { derived, get } from "svelte/store";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { CHAT_URL } from "../../Enum/EnvironmentVariable";
     import { locale } from "../../../i18n/i18n-svelte";
@@ -17,14 +23,12 @@
     import { peerStore } from "../../Stores/PeerStore";
     import { connectionManager } from "../../Connexion/ConnectionManager";
     import { gameSceneIsLoadedStore } from "../../Stores/GameSceneStore";
+    import { Locales } from "../../../i18n/i18n-types";
 
     let chatIframe: HTMLIFrameElement;
 
     let subscribeListeners: Array<Unsubscriber> = [];
     let subscribeObservers: Array<Subscription> = [];
-
-    const wokaDefinedStore = writable<boolean>(false);
-    const iframeLoadedStore = writable<boolean>(false);
 
     export const canSendInitMessageStore = derived(
         [wokaDefinedStore, iframeLoadedStore, gameSceneIsLoadedStore],
@@ -55,7 +59,7 @@
             if (chatIframe && chatIframe.contentWindow && "postMessage" in chatIframe.contentWindow) {
                 iframeLoadedStore.set(true);
                 subscribeListeners.push(
-                    locale.subscribe((value) => {
+                    locale.subscribe((value: Locales) => {
                         chatIframe?.contentWindow?.postMessage(
                             {
                                 type: "setLocale",
@@ -163,6 +167,8 @@
         if (e.key === "Escape" && $chatVisibilityStore) {
             closeChat();
             chatIframe.blur();
+        } else if (e.key === "c" && !$chatVisibilityStore && $enableUserInputsStore) {
+            chatVisibilityStore.set(true);
         }
     }
 </script>
@@ -187,7 +193,7 @@
 
     @include media-breakpoint-up(sm) {
         #chatWindow {
-            width: calc(100% - 20px) !important;
+            width: 100% !important;
         }
     }
 
@@ -198,7 +204,7 @@
         top: 0;
         left: -100%;
         height: 100%;
-        width: 28%;
+        width: 22%;
         min-width: 335px;
         transition: all 0.2s ease-in-out;
         pointer-events: none;
@@ -222,6 +228,7 @@
                 height: 1.6rem;
                 width: 1.6rem;
                 position: initial;
+                cursor: pointer;
             }
         }
     }

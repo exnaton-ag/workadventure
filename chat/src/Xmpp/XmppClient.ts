@@ -1,4 +1,4 @@
-import { XmppSettingsMessage } from "../Messages/ts-proto-generated/protos/messages";
+import { XmppSettingsMessage } from "@workadventure/messages";
 import { EJABBERD_WS_URI } from "../Enum/EnvironmentVariable";
 import CancelablePromise from "cancelable-promise";
 import Debug from "debug";
@@ -13,8 +13,9 @@ import * as StanzaProtocol from "stanza/protocol";
 import { JSONData } from "stanza/jxt";
 import { ChatStateMessage, JID } from "stanza";
 import { ParsedJID } from "stanza/JID";
+import Timer = NodeJS.Timer;
 
-const debug = Debug("xmppClient");
+const debug = Debug("chat");
 
 export class XmppClient {
     private address!: ParsedJID;
@@ -28,6 +29,7 @@ export class XmppClient {
     private timeout: ReturnType<typeof setTimeout> | undefined;
     private xmppSocket: Stanza.Agent | undefined;
     private isAuthorized = true;
+    private ping: Timer | undefined;
 
     private status: "disconnected" | "connected" | "online" = "disconnected";
 
@@ -44,6 +46,7 @@ export class XmppClient {
         this.clientPassword = xmppSettingsMessages.jabberPassword;
         this.conferenceDomain = xmppSettingsMessages.conferenceDomain;
         void this.start();
+        this.ping = undefined;
     }
 
     private forwardToRoom(type: string, from: string, xml: JSONData) {
@@ -117,28 +120,21 @@ export class XmppClient {
 
         client.on("connected", () => {
             this.status = "connected";
+            this.ping = setInterval(() => {
+                async () => {
+                    try {
+                        await client.ping();
+                    } catch (e) {
+                        debug("client => onConnected => ping => error =>", e);
+                        this.restart();
+                    }
+                };
+            }, 25_000);
         });
-        client.on("disconnected", () => {
+        client.on("disconnected", (message) => {
             this.status = "disconnected";
-            console.log("disconnected");
-            xmppServerConnectionStatusStore.set(false);
-            mucRoomsStore.reset();
-            this.rooms.clear();
-
-            this.close();
-
-            // This can happen when the first connection failed for some reason.
-            // We should probably retry regularly (every 10 seconds)
-            if (this.timeout) {
-                clearTimeout(this.timeout);
-                this.timeout = undefined;
-            }
-
-            if (this.isAuthorized) {
-                this.timeout = setTimeout(() => {
-                    void this.start();
-                }, 10_000);
-            }
+            console.log("disconnected", message);
+            this.restart();
         });
         client.on("auth:success", () => {
             this.status = "online";
@@ -146,6 +142,7 @@ export class XmppClient {
 
         client.on("--transport-disconnected", () => {
             console.error("--transport-disconnected");
+            this.restart();
         });
 
         client.on("session:started", () => {
@@ -357,34 +354,13 @@ export class XmppClient {
          */
     }
 
-    /*sendMessage() {
-        return this.clientPromise.then((xmpp) => {
-            const message = xml("message", { type: "chat", to: this.address }, xml("body", {}, "hello world"));
-            return xmpp.send(message);
-        });
-    }
-
-    getRoster() {
-        return this.clientPromise.then((xmpp) => {
-            const from = "admin@" + this.address._domain + "/" + this.address._resource;
-            const message = xml("iq", { type: "get", from: from }, xml("query", { xmlns: "jabber:iq:roster" }));
-            console.log("my message", message);
-            return xmpp.send(message);
-        });
-    }*/
-
     start(): CancelablePromise {
         debug("xmppClient => start");
         return (this.clientPromise = new CancelablePromise((res, rej, onCancel) => {
             this.createClient(res, rej);
             onCancel(() => {
                 debug("clientPromise => onCancel => from xmppClient");
-                if (this.timeout) {
-                    clearTimeout(this.timeout);
-                    this.timeout = undefined;
-                }
-                this.xmppSocket?.disconnect();
-                this.isClosed = true;
+                this.restart();
             });
         }).catch((err) => {
             debug("clientPromise => receive => error", err);
@@ -561,6 +537,31 @@ export class XmppClient {
             mucRoomsStore.removeMucRoom(room);
         }
         this.clientPromise.cancel();
+    }
+
+    public restart() {
+        if (this.ping) {
+            clearInterval(this.ping);
+            this.ping = undefined;
+        }
+        xmppServerConnectionStatusStore.set(false);
+        mucRoomsStore.reset();
+        this.rooms.clear();
+
+        this.close();
+
+        // This can happen when the first connection failed for some reason.
+        // We should probably retry regularly (every 10 seconds)
+        if (this.timeout) {
+            clearTimeout(this.timeout);
+            this.timeout = undefined;
+        }
+
+        if (this.isAuthorized) {
+            this.timeout = setTimeout(() => {
+                void this.start();
+            }, 10_000);
+        }
     }
 
     public getPlayerName() {

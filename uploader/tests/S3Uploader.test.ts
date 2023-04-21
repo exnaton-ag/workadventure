@@ -6,6 +6,7 @@ import {uploadMultipleFilesTest, uploadSingleFileTest} from "./UploaderTestCommo
 import startTestServer from "./startTestServer";
 import {ChildProcess} from "child_process";
 import isPortReachable from "./utils/isPortReachable";
+import {describe, expect, jest, it, beforeAll, beforeEach, afterAll, afterEach} from '@jest/globals';
 
 
 jest.mock('../src/Enum/EnvironmentVariable', () => ({
@@ -48,7 +49,7 @@ describe("S3 Uploader tests", () => {
             UPLOADER_URL: UPLOADER_URL,
             CHAT_URL: CHAT_URL
          })
-        await isPortReachable(APP_PORT, {host: "localhost"})
+        await isPortReachable(APP_PORT, {host: "localhost"});
     })
 
     beforeEach(async () => {
@@ -61,20 +62,32 @@ describe("S3 Uploader tests", () => {
 
     afterEach(async ()=> {
         await new Promise(resolve => {
-            s3.deleteBucket({Bucket: testBucket}, ()=> {
+            s3?.deleteBucket({Bucket: testBucket}, ()=> {
                 resolve(0)
             })
         })
     })
 
     afterAll(async ()=> {
+        if (server) {
+            const serverToKill = server;
+            const promise = new Promise(resolve => {
+                serverToKill.on("exit", ()=> {
+                    resolve(0)
+                })
+            });
+            serverToKill.kill("SIGKILL")
+            await promise;
+        }
+        if (localStackContainer) {
+            const stream = await localStackContainer.logs();
+            stream
+                //.on("data", line => console.log(line))
+                .on("err", line => console.error(line))
+                .on("end", () => console.log("Stream closed"));
+        }
+
         await localStackContainer?.stop()
-        server?.kill()
-        await new Promise(resolve => {
-            server?.on("close", ()=> {
-                resolve(0)
-            })
-        })
     })
 
     it("should upload one file to s3", async ()=> {

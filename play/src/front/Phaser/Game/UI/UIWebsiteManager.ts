@@ -1,5 +1,5 @@
 import { get } from "svelte/store";
-import type { CreateUIWebsiteEvent, ModifyUIWebsiteEvent, UIWebsite } from "../../../Api/Events/Ui/UIWebsite";
+import type { CreateUIWebsiteEvent, ModifyUIWebsiteEvent, UIWebsiteEvent } from "../../../Api/Events/Ui/UIWebsiteEvent";
 import { iframeListener } from "../../../Api/IframeListener";
 import { v4 as uuidv4 } from "uuid";
 import { uiWebsitesStore } from "../../../Stores/UIWebsiteStore";
@@ -64,32 +64,40 @@ class UIWebsiteManager {
         });
     }
 
-    public open(websiteConfig: CreateUIWebsiteEvent): UIWebsite {
-        const newWebsite: UIWebsite = {
+    public open(websiteConfig: CreateUIWebsiteEvent): UIWebsiteEvent {
+        const newWebsite: UIWebsiteEvent = {
             ...websiteConfig,
             id: uuidv4(),
             visible: websiteConfig.visible ?? true,
             allowPolicy: websiteConfig.allowPolicy ?? "",
             allowApi: websiteConfig.allowApi ?? false,
         };
-
         uiWebsitesStore.add(newWebsite);
-
         return newWebsite;
     }
 
-    public getAll(): UIWebsite[] {
+    public getAll(): UIWebsiteEvent[] {
         return get(uiWebsitesStore);
     }
 
+    public getById(websiteId: string): UIWebsiteEvent | undefined {
+        return get(uiWebsitesStore).find((currentWebsite) => currentWebsite.id === websiteId);
+    }
+
     public close(websiteId: string) {
-        const uiWebsite = get(uiWebsitesStore).find((currentWebsite) => currentWebsite.id === websiteId);
+        const uiWebsite = this.getById(websiteId);
 
         if (!uiWebsite) {
             return;
         }
 
         uiWebsitesStore.remove(uiWebsite);
+    }
+
+    public closeAll() {
+        get(uiWebsitesStore).forEach((uiWebsite: UIWebsiteEvent) => {
+            uiWebsitesStore.remove(uiWebsite);
+        });
     }
 }
 

@@ -14,10 +14,11 @@ import type { Zone } from "../Zone";
 import type { compressors } from "hyper-express";
 import type { WokaDetail, MucRoomDefinitionInterface, ApplicationDefinitionInterface } from "@workadventure/messages";
 import type { PusherRoom } from "../PusherRoom";
+import { CustomJsonReplacerInterface } from "../CustomJsonReplacerInterface";
 
 export type BackConnection = ClientDuplexStream<PusherToBackMessage, ServerToClientMessage>;
 
-export interface ExSocketInterface extends compressors.WebSocket, Identificable {
+export interface ExSocketInterface extends compressors.WebSocket, Identificable, CustomJsonReplacerInterface {
     token: string;
     roomId: string;
     //userId: number;   // A temporary (autoincremented) identifier for this user
@@ -32,6 +33,7 @@ export interface ExSocketInterface extends compressors.WebSocket, Identificable 
     viewport: ViewportInterface;
     companion?: CompanionMessage;
     availabilityStatus: AvailabilityStatus;
+    lastCommandId?: string;
     /**
      * Pushes an event that will be sent in the next batch of events
      */
@@ -46,16 +48,11 @@ export interface ExSocketInterface extends compressors.WebSocket, Identificable 
     listenedZones: Set<Zone>;
     userRoomToken: string | undefined;
     maxHistoryChat: number;
-    // The ID of the timer that sends ping requests.
-    // Ping requests are sent from the server because the setTimeout on the browser is unreliable when the tab is hidden.
-    pingIntervalId: NodeJS.Timeout | undefined;
-    // When this timeout triggers, no pong has been received.
-    pongTimeoutId: NodeJS.Timeout | undefined;
-    resetPongTimeout: () => void;
     pusherRoom: PusherRoom | undefined;
     jabberId: string;
     jabberPassword: string;
     activatedInviteUser: boolean | undefined;
     mucRooms: Array<MucRoomDefinitionInterface>;
     applications: Array<ApplicationDefinitionInterface> | undefined;
+    canEdit: boolean;
 }

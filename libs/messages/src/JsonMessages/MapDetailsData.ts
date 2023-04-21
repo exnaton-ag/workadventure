@@ -167,9 +167,8 @@ export const isMapDetailsData = z.object({
         description: 'Whether the "report" feature is enabled or not on this room',
         example: true,
     }),
-    // Whether the "report" feature is enabled or not on this room
-    canEdit: extendApi(z.optional(z.boolean()), {
-        description: 'Whether the "map editor" feature is enabled or not on this room',
+    editable: extendApi(z.optional(z.boolean()), {
+        description: 'Whether the "map editor" feature is enabled or not on this room (true if the map comes from the map-storage)',
         example: true,
     }),
     loadingCowebsiteLogo: extendApi(z.string().nullable().optional(), {
@@ -234,6 +233,13 @@ export const isMapDetailsData = z.object({
     backgroundColor: extendApi(z.string().nullable().optional(), {
         description: "The background color used on configuration scenes (enter your name, select a woka, etc...) (WIP)",
         example: "#330033",
+    }),
+    reportIssuesUrl: extendApi(z.string().nullable().optional(), {
+        description: "The URL of the page to report issues (in the 'Report issues' menu). If this parameter is null, report issues menu is hidden",
+        example: "https://my-report-issues-form.com/issues",
+    }),
+    entityCollectionsUrls: extendApi(z.array(z.string()).optional().nullable(), {
+        description: "What entity collections are available for this map",
     }),
 });
 

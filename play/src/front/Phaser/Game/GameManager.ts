@@ -2,7 +2,7 @@ import { get } from "svelte/store";
 import { connectionManager } from "../../Connexion/ConnectionManager";
 import { localUserStore } from "../../Connexion/LocalUserStore";
 import type { Room } from "../../Connexion/Room";
-import { helpCameraSettingsVisibleStore } from "../../Stores/HelpCameraSettingsStore";
+import { helpCameraSettingsVisibleStore } from "../../Stores/HelpSettingsStore";
 import { requestedCameraState, requestedMicrophoneState } from "../../Stores/MediaStore";
 import { menuIconVisiblilityStore } from "../../Stores/MenuStore";
 import { EnableCameraSceneName } from "../Login/EnableCameraScene";
@@ -51,6 +51,8 @@ export class GameManager {
         if (!this.playerName || (this.startRoom.authenticationMandatory && !localUserStore.getAuthToken())) {
             return LoginSceneName;
         } else if (!this.characterLayers || !this.characterLayers.length) {
+            // TODO: Remove this debug line
+            console.info("Your Woka texture is invalid for this world, got to select Woka scene. Init game manager.");
             return SelectCharacterSceneName;
         } else if (this.cameraSetup == undefined) {
             return EnableCameraSceneName;
