@@ -35,6 +35,8 @@ export const COMPANION_RESOURCES: CompanionResourceDescriptionInterface[] = [
     { name: "dog5", img: "resources/customisation/companions/Dog 01-5.png", behaviour: "dog" },
     { name: "dog6", img: "resources/customisation/companions/Dog 01-6.png", behaviour: "dog" },
     { name: "dog7", img: "resources/customisation/companions/Dog 01-7.png", behaviour: "dog" },
+    { name: "dolphin1", img: "resources/customisation/companions/Dolphin 01-1.png", behaviour: "dog" },
+    { name: "dolphin2", img: "resources/customisation/companions/Dolphin 01-2.png", behaviour: "dog" },
     { name: "dragon1", img: "resources/customisation/companions/Dragon 01-1.png", behaviour: "dog" },
     { name: "dragon2", img: "resources/customisation/companions/Dragon 01-2.png", behaviour: "dog" },
     { name: "dragon3", img: "resources/customisation/companions/Dragon 01-3.png", behaviour: "dog" },
