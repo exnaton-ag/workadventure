@@ -18,6 +18,7 @@ export const COMPANION_RESOURCES: CompanionResourceDescriptionInterface[] = [
     { name: "bird1", img: "resources/customisation/companions/Bird 01-1.png", behaviour: "dog" },
     { name: "bird2", img: "resources/customisation/companions/Bird 01-2.png", behaviour: "dog" },
     { name: "bird3", img: "resources/customisation/companions/Bird 01-3.png", behaviour: "dog" },
+    { name: "blastoise1", img: "resources/customisation/companions/Blastoise 01-1.png", behaviour: "dog" },
     { name: "butterfly1", img: "resources/customisation/companions/Butterfly 01-1.png", behaviour: "dog" },
     { name: "butterfly2", img: "resources/customisation/companions/Butterfly 01-2.png", behaviour: "dog" },
     { name: "camel1", img: "resources/customisation/companions/Camel 01-1.png", behaviour: "dog" },
