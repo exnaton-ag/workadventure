@@ -1,97 +1,56 @@
-export interface CompanionResourceDescriptionInterface {
-    name: string;
-    img: string;
-    behaviour: "dog" | "cat";
+import { CompanionTextureCollection, CompanionTexture } from "@workadventure/messages";
+
+export interface CompanionTextureByIdList {
+    [key: string]: CompanionTexture;
 }
 
-export const COMPANION_RESOURCES: CompanionResourceDescriptionInterface[] = [
-    { name: "dog1", img: "resources/characters/pipoya/Dog 01-1.png", behaviour: "dog" },
-    { name: "dog2", img: "resources/characters/pipoya/Dog 01-2.png", behaviour: "dog" },
-    { name: "dog3", img: "resources/characters/pipoya/Dog 01-3.png", behaviour: "dog" },
-    { name: "cat1", img: "resources/characters/pipoya/Cat 01-1.png", behaviour: "cat" },
-    { name: "cat2", img: "resources/characters/pipoya/Cat 01-2.png", behaviour: "cat" },
-    { name: "cat3", img: "resources/characters/pipoya/Cat 01-3.png", behaviour: "cat" },
-    { name: "bear1", img: "resources/customisation/companions/Bear 01-1.png", behaviour: "dog" },
-    { name: "bear2", img: "resources/customisation/companions/Bear 01-2.png", behaviour: "dog" },
-    { name: "beaver1", img: "resources/customisation/companions/Beaver 01-1.png", behaviour: "dog" },
-    { name: "bee1", img: "resources/customisation/companions/Bee 01-1.png", behaviour: "dog" },
-    { name: "bird1", img: "resources/customisation/companions/Bird 01-1.png", behaviour: "dog" },
-    { name: "bird2", img: "resources/customisation/companions/Bird 01-2.png", behaviour: "dog" },
-    { name: "bird3", img: "resources/customisation/companions/Bird 01-3.png", behaviour: "dog" },
-    { name: "blastoise1", img: "resources/customisation/companions/Blastoise 01-1.png", behaviour: "dog" },
-    { name: "butterfly1", img: "resources/customisation/companions/Butterfly 01-1.png", behaviour: "dog" },
-    { name: "butterfly2", img: "resources/customisation/companions/Butterfly 01-2.png", behaviour: "dog" },
-    { name: "camel1", img: "resources/customisation/companions/Camel 01-1.png", behaviour: "dog" },
-    { name: "camel2", img: "resources/customisation/companions/Camel 01-2.png", behaviour: "dog" },
-    { name: "chicken1", img: "resources/customisation/companions/Chicken 01-1.png", behaviour: "dog" },
-    { name: "chicken2", img: "resources/customisation/companions/Chicken 01-2.png", behaviour: "dog" },
-    { name: "corgi1", img: "resources/customisation/companions/Corgi 01-1.png", behaviour: "dog" },
-    { name: "corgi2", img: "resources/customisation/companions/Corgi 01-2.png", behaviour: "dog" },
-    { name: "cow1", img: "resources/customisation/companions/Cow 01-1.png", behaviour: "dog" },
-    { name: "cow2", img: "resources/customisation/companions/Cow 01-2.png", behaviour: "dog" },
-    { name: "crocodile1", img: "resources/customisation/companions/Crocodile 01-1.png", behaviour: "dog" },
-    { name: "death1", img: "resources/customisation/companions/Death 01-1.png", behaviour: "dog" },
-    { name: "death2", img: "resources/customisation/companions/Death 01-2.png", behaviour: "dog" },
-    { name: "dog4", img: "resources/customisation/companions/Dog 01-4.png", behaviour: "dog" },
-    { name: "dog5", img: "resources/customisation/companions/Dog 01-5.png", behaviour: "dog" },
-    { name: "dog6", img: "resources/customisation/companions/Dog 01-6.png", behaviour: "dog" },
-    { name: "dog7", img: "resources/customisation/companions/Dog 01-7.png", behaviour: "dog" },
-    { name: "dolphin1", img: "resources/customisation/companions/Dolphin 01-1.png", behaviour: "dog" },
-    { name: "dolphin2", img: "resources/customisation/companions/Dolphin 01-2.png", behaviour: "dog" },
-    { name: "dragon1", img: "resources/customisation/companions/Dragon 01-1.png", behaviour: "dog" },
-    { name: "dragon2", img: "resources/customisation/companions/Dragon 01-2.png", behaviour: "dog" },
-    { name: "dragon3", img: "resources/customisation/companions/Dragon 01-3.png", behaviour: "dog" },
-    { name: "dragon4", img: "resources/customisation/companions/Dragon 01-4.png", behaviour: "dog" },
-    { name: "duck1", img: "resources/customisation/companions/Duck 01-1.png", behaviour: "dog" },
-    { name: "exnaton1", img: "resources/customisation/companions/Exnaton 01-1.png", behaviour: "dog" },
-    { name: "exnaton2", img: "resources/customisation/companions/Exnaton 01-2.png", behaviour: "dog" },
-    { name: "exnaton3", img: "resources/customisation/companions/Exnaton 01-3.png", behaviour: "dog" },
-    { name: "ferret1", img: "resources/customisation/companions/Ferret 01-1.png", behaviour: "dog" },
-    { name: "ferret2", img: "resources/customisation/companions/Ferret 01-2.png", behaviour: "dog" },
-    { name: "fox1", img: "resources/customisation/companions/Fox 01-1.png", behaviour: "cat" },
-    { name: "fox2", img: "resources/customisation/companions/Fox 01-2.png", behaviour: "cat" },
-    { name: "fox3", img: "resources/customisation/companions/Fox 01-3.png", behaviour: "cat" },
-    { name: "frog1", img: "resources/customisation/companions/Frog 01-1.png", behaviour: "dog" },
-    { name: "frog2", img: "resources/customisation/companions/Frog 01-2.png", behaviour: "dog" },
-    { name: "goose1", img: "resources/customisation/companions/Goose 01-1.png", behaviour: "dog" },
-    { name: "goose2", img: "resources/customisation/companions/Goose 01-2.png", behaviour: "dog" },
-    { name: "goose3", img: "resources/customisation/companions/Goose 01-3.png", behaviour: "dog" },
-    { name: "grogu1", img: "resources/customisation/companions/Grogu 01-1.png", behaviour: "dog" },
-    { name: "koala1", img: "resources/customisation/companions/Koala 01-1.png", behaviour: "dog" },
-    { name: "lizzard1", img: "resources/customisation/companions/Lizzard 01-1.png", behaviour: "dog" },
-    { name: "lizzard2", img: "resources/customisation/companions/Lizzard 01-2.png", behaviour: "dog" },
-    { name: "mario1", img: "resources/customisation/companions/Mario 01-1.png", behaviour: "dog" },
-    { name: "mouse1", img: "resources/customisation/companions/Mouse 01-1.png", behaviour: "dog" },
-    { name: "mouse2", img: "resources/customisation/companions/Mouse 01-2.png", behaviour: "dog" },
-    { name: "ostrich1", img: "resources/customisation/companions/Ostrich 01-1.png", behaviour: "dog" },
-    { name: "ostrich2", img: "resources/customisation/companions/Ostrich 01-2.png", behaviour: "dog" },
-    { name: "owl1", img: "resources/customisation/companions/Owl 01-1.png", behaviour: "dog" },
-    { name: "panda1", img: "resources/customisation/companions/Panda 01-1.png", behaviour: "dog" },
-    { name: "pig1", img: "resources/customisation/companions/Pig 01-1.png", behaviour: "dog" },
-    { name: "pig2", img: "resources/customisation/companions/Pig 01-2.png", behaviour: "dog" },
-    { name: "pokemon1", img: "resources/customisation/companions/Pokemon 01-1.png", behaviour: "dog" },
-    { name: "pokemon2", img: "resources/customisation/companions/Pokemon 01-2.png", behaviour: "dog" },
-    { name: "penguin1", img: "resources/customisation/companions/Penguin 01-1.png", behaviour: "dog" },
-    { name: "penguin2", img: "resources/customisation/companions/Penguin 01-2.png", behaviour: "dog" },
-    { name: "penguin3", img: "resources/customisation/companions/Penguin 01-3.png", behaviour: "dog" },
-    { name: "penguin4", img: "resources/customisation/companions/Penguin 01-4.png", behaviour: "dog" },
-    { name: "platypus1", img: "resources/customisation/companions/Platypus 01-1.png", behaviour: "dog" },
-    { name: "platypus2", img: "resources/customisation/companions/Platypus 01-2.png", behaviour: "dog" },
-    { name: "polarbear1", img: "resources/customisation/companions/Polar Bear 01-1.png", behaviour: "dog" },
-    { name: "rtwodtwo1", img: "resources/customisation/companions/R2D2 01-1.png", behaviour: "dog" },
-    { name: "raccoon1", img: "resources/customisation/companions/Raccoon 01-1.png", behaviour: "dog" },
-    { name: "raccoon2", img: "resources/customisation/companions/Raccoon 01-2.png", behaviour: "dog" },
-    { name: "shark1", img: "resources/customisation/companions/Shark 01-1.png", behaviour: "dog" },
-    { name: "shark2", img: "resources/customisation/companions/Shark 01-2.png", behaviour: "dog" },
-    { name: "sheep1", img: "resources/customisation/companions/Sheep 01-1.png", behaviour: "dog" },
-    { name: "snake1", img: "resources/customisation/companions/Snake 01-1.png", behaviour: "dog" },
-    { name: "snake2", img: "resources/customisation/companions/Snake 01-2.png", behaviour: "dog" },
-    { name: "squirrel1", img: "resources/customisation/companions/Squirrel 01-1.png", behaviour: "dog" },
-    { name: "squirrel2", img: "resources/customisation/companions/Squirrel 01-2.png", behaviour: "dog" },
-    { name: "tanuki1", img: "resources/customisation/companions/Tanuki 01-1.png", behaviour: "dog" },
-    { name: "tanuki2", img: "resources/customisation/companions/Tanuki 01-2.png", behaviour: "dog" },
-    { name: "tiger1", img: "resources/customisation/companions/Tiger 01-1.png", behaviour: "dog" },
-    { name: "tiger2", img: "resources/customisation/companions/Tiger 01-2.png", behaviour: "dog" },
-    { name: "wildboar1", img: "resources/customisation/companions/Wildboar 01-1.png", behaviour: "dog" },
-    { name: "wildboar2", img: "resources/customisation/companions/Wildboar 01-2.png", behaviour: "dog" },
-];
+export interface CompanionTextureDescriptionInterface {
+    id: string;
+    url: string;
+}
+
+export class CompanionTextures {
+    private companionResources: CompanionTextureByIdList = {};
+    private companionCollections = new Map<string, CompanionTexture[]>();
+
+    public loadCompanionTexturesMetadata(metadata: CompanionTextureCollection[]): void {
+        this.mapTexturesMetadataIntoResources(metadata);
+    }
+
+    public getCollectionsKeys(): string[] {
+        return Array.from(this.companionCollections.keys());
+    }
+
+    public getCompanionCollectionTextures(key: string): CompanionTexture[] {
+        return this.companionCollections.get(key) ?? [];
+    }
+
+    public mapTexturesMetadataIntoResources(collections: CompanionTextureCollection[]): void {
+        const resources: CompanionTextureByIdList = {};
+        for (const collection of collections) {
+            const textures: CompanionTexture[] = [];
+            for (const texture of collection.textures) {
+                textures.push(texture);
+                resources[texture.id] = texture;
+                this.companionCollections.set(collection.name, textures);
+            }
+        }
+        this.companionResources = resources;
+    }
+    public getCompanionResourceById(id: string): CompanionTexture {
+        return this.companionResources[id];
+    }
+
+    public getCompanionCollectionAndIndexByCompanionId(id: string): [string, number] | undefined {
+        for (const [key, value] of this.companionCollections.entries()) {
+            for (let i = 0; i < value.length; i++) {
+                return [key, i];
+            }
+        }
+        return undefined;
+    }
+
+    public getCompanionResources(): CompanionTextureByIdList {
+        return this.companionResources;
+    }
+}

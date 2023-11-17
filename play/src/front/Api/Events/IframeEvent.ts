@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { isChatEvent, isChatMessage } from "./ChatEvent";
+import { KLAXOON_ACTIVITY_PICKER_EVENT, isKlaxoonEvent, isXmppSettingsMessageEvent } from "@workadventure/shared-utils";
+import { isStartWritingEvent, isStopWritingEvent } from "@workadventure/shared-utils/src/Events/WritingEvent";
+import { isUpdateWritingStatusChatListEvent } from "@workadventure/shared-utils/src/Events/UpdateWritingStatusChatListEvent";
+import { isChatEvent, isChatMessage } from "../../../../../libs/shared-utils/src/Events/ChatEvent";
 import { isClosePopupEvent } from "./ClosePopupEvent";
 import { isGoToPageEvent } from "./GoToPageEvent";
 import { isLoadPageEvent } from "./LoadPageEvent";
@@ -18,7 +21,7 @@ import { isSetVariableEvent } from "./SetVariableEvent";
 import { isCreateEmbeddedWebsiteEvent, isEmbeddedWebsiteEvent } from "./EmbeddedWebsiteEvent";
 import { isLoadTilesetEvent } from "./LoadTilesetEvent";
 import { isMessageReferenceEvent, isTriggerActionMessageEvent } from "./Ui/TriggerActionMessageEvent";
-import { isMenuRegisterEvent, isUnregisterMenuEvent } from "./Ui/MenuRegisterEvent";
+import { isMenuRegisterEvent, isOpenMenuEvent, isUnregisterMenuEvent } from "./Ui/MenuEvents";
 import { isPlayerPosition } from "./PlayerPosition";
 import { isCameraSetEvent } from "./CameraSetEvent";
 import { isCameraFollowPlayerEvent } from "./CameraFollowPlayerEvent";
@@ -29,7 +32,7 @@ import { isAddActionsMenuKeyToRemotePlayerEvent } from "./AddActionsMenuKeyToRem
 import { isRemoveActionsMenuKeyFromRemotePlayerEvent } from "./RemoveActionsMenuKeyFromRemotePlayerEvent";
 import { isSetAreaPropertyEvent } from "./SetAreaPropertyEvent";
 import { isCreateUIWebsiteEvent, isModifyUIWebsiteEvent, isUIWebsiteEvent } from "./Ui/UIWebsiteEvent";
-import { isAreaEvent, isCreateAreaEvent } from "./CreateAreaEvent";
+import { isDynamicAreaEvent, isCreateDynamicAreaEvent } from "./CreateDynamicAreaEvent";
 import { isUserInputChatEvent } from "./UserInputChatEvent";
 import { isEnterLeaveEvent } from "./EnterLeaveEvent";
 import { isChangeLayerEvent } from "./ChangeLayerEvent";
@@ -53,9 +56,12 @@ import { isChatVisibilityEvent } from "./ChatVisibilityEvent";
 import { isNotificationEvent } from "./NotificationEvent";
 import { isShowBusinessCardEvent } from "./ShowBusinessCardEvent";
 import { isModalEvent } from "./ModalEvent";
-import { isXmppSettingsMessageEvent } from "./XmppSettingsMessageEvent";
 import { isAddButtonActionBarEvent, isRemoveButtonActionBarEvent } from "./Ui/ButtonActionBarEvent";
 import { isBannerEvent } from "./Ui/BannerEvent";
+import { isTeleportPlayerToEventConfig } from "./TeleportPlayerToEvent";
+import { isSendEventEvent } from "./SendEventEvent";
+import { isReceiveEventEvent } from "./ReceiveEventEvent";
+import { isPlaySoundInBubbleEvent } from "./ProximityMeeting/PlaySoundInBubbleEvent";
 
 export interface TypedMessageEvent<T> extends MessageEvent {
     data: T;
@@ -80,6 +86,14 @@ export const isIframeEventWrapper = z.union([
     z.object({
         type: z.literal("chat"),
         data: isChatEvent,
+    }),
+    z.object({
+        type: z.literal("startWriting"),
+        data: isStartWritingEvent,
+    }),
+    z.object({
+        type: z.literal("stopWriting"),
+        data: isStopWritingEvent,
     }),
     z.object({
         type: z.literal("openChat"),
@@ -215,6 +229,10 @@ export const isIframeEventWrapper = z.union([
         data: isUnregisterMenuEvent,
     }),
     z.object({
+        type: z.literal("openMenu"),
+        data: isOpenMenuEvent,
+    }),
+    z.object({
         type: z.literal("setTiles"),
         data: isSetTilesEvent,
     }),
@@ -228,7 +246,7 @@ export const isIframeEventWrapper = z.union([
     }),
     z.object({
         type: z.literal("modifyArea"),
-        data: isAreaEvent,
+        data: isDynamicAreaEvent,
     }),
     z.object({
         type: z.literal("askPosition"),
@@ -289,6 +307,10 @@ export const isIframeEventWrapper = z.union([
     z.object({
         type: z.literal("closeBanner"),
         data: z.undefined(),
+    }),
+    z.object({
+        type: z.literal(KLAXOON_ACTIVITY_PICKER_EVENT),
+        payload: isKlaxoonEvent,
     }),
 ]);
 
@@ -376,6 +398,10 @@ export const isIframeResponseEvent = z.union([
         data: isSetSharedPlayerVariableEvent,
     }),
     z.object({
+        type: z.literal("receiveEvent"),
+        data: isReceiveEventEvent,
+    }),
+    z.object({
         type: z.literal("messageTriggered"),
         data: isMessageReferenceEvent,
     }),
@@ -431,7 +457,7 @@ export const isIframeResponseEvent = z.union([
     }),
     z.object({
         type: z.literal("updateWritingStatusChatList"),
-        data: z.array(z.nullable(z.string())),
+        data: isUpdateWritingStatusChatListEvent,
     }),
     z.object({
         type: z.literal("buttonActionBarTrigger"),
@@ -447,6 +473,7 @@ export type IframeResponseEvent = z.infer<typeof isIframeResponseEvent>;
 export const isLookingLikeIframeEventWrapper = z.object({
     type: z.string(),
     data: z.unknown().optional(),
+    payload: z.unknown().optional(),
 });
 
 /**
@@ -470,6 +497,10 @@ export const iframeQueryMapTypeGuards = {
         query: isSetPlayerVariableEvent,
         answer: z.undefined(),
     },
+    dispatchEvent: {
+        query: isSendEventEvent,
+        answer: z.undefined(),
+    },
     loadTileset: {
         query: isLoadTilesetEvent,
         answer: z.number(),
@@ -487,6 +518,10 @@ export const iframeQueryMapTypeGuards = {
         answer: z.undefined(),
     },
     closeCoWebsites: {
+        query: z.undefined(),
+        answer: z.undefined(),
+    },
+    goToLogin: {
         query: z.undefined(),
         answer: z.undefined(),
     },
@@ -511,15 +546,15 @@ export const iframeQueryMapTypeGuards = {
         answer: z.undefined(),
     },
     createArea: {
-        query: isCreateAreaEvent,
+        query: isCreateDynamicAreaEvent,
         answer: z.undefined(),
     },
     getArea: {
         query: z.string(),
-        answer: isCreateAreaEvent,
+        answer: isCreateDynamicAreaEvent,
     },
     modifyArea: {
-        query: isAreaEvent,
+        query: isDynamicAreaEvent,
         answer: z.undefined(),
     },
     deleteArea: {
@@ -541,6 +576,10 @@ export const iframeQueryMapTypeGuards = {
     movePlayerTo: {
         query: isMovePlayerToEventConfig,
         answer: isMovePlayerToEventAnswer,
+    },
+    teleportPlayerTo: {
+        query: isTeleportPlayerToEventConfig,
+        answer: z.undefined(),
     },
     openUIWebsite: {
         query: isCreateUIWebsiteEvent,
@@ -565,6 +604,10 @@ export const iframeQueryMapTypeGuards = {
     getWoka: {
         query: z.undefined(),
         answer: z.string(),
+    },
+    playSoundInBubble: {
+        query: isPlaySoundInBubbleEvent,
+        answer: z.undefined(),
     },
 };
 

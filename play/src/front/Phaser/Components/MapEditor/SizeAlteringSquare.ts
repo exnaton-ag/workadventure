@@ -1,4 +1,4 @@
-import type { GameScene } from "../../Game/GameScene";
+import { GameScene } from "../../Game/GameScene";
 
 export enum SizeAlteringSquarePosition {
     TopLeft = 0,
@@ -9,6 +9,7 @@ export enum SizeAlteringSquarePosition {
     BottomLeft,
     BottomCenter,
     BottomRight,
+    GameScene,
 }
 
 export enum SizeAlteringSquareEvent {
@@ -19,13 +20,13 @@ export enum SizeAlteringSquareEvent {
 export class SizeAlteringSquare extends Phaser.GameObjects.Rectangle {
     private selected: boolean;
 
-    constructor(scene: Phaser.Scene, pos: { x: number; y: number }) {
+    constructor(scene: Phaser.Scene, pos: { x: number; y: number }, private cursor: string) {
         super(scene, pos.x, pos.y, 7, 7, 0xffffff);
 
         this.selected = false;
 
         this.setStrokeStyle(1, 0x000000);
-        this.setInteractive({ cursor: "pointer" });
+        this.setInteractive({ cursor });
         this.scene.input.setDraggable(this);
 
         this.bindEventHandlers();
@@ -43,7 +44,11 @@ export class SizeAlteringSquare extends Phaser.GameObjects.Rectangle {
         }
         this.selected = value;
         this.setFillStyle(value ? 0x000000 : 0xffffff);
-        (this.scene as GameScene).markDirty();
+        if (this.scene instanceof GameScene) {
+            this.scene.markDirty();
+        } else {
+            throw new Error("Not the Game Scene");
+        }
     }
 
     private bindEventHandlers(): void {

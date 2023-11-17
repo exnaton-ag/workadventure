@@ -1,19 +1,11 @@
-import { apiClientRepository } from "../services/ApiClientRepository";
-import type { RoomsList } from "../../messages/generated/messages_pb";
-import {
-    AdminRoomMessage,
-    WorldFullWarningToRoomMessage,
-    RefreshRoomPromptMessage,
-    EmptyMessage,
-    ChatMessagePrompt,
-    MucRoomDefinitionMessage,
-    JoinMucRoomMessage,
-    LeaveMucRoomMessage,
-} from "../../messages/generated/messages_pb";
-import { adminToken } from "../middlewares/AdminToken";
-import { BaseHttpController } from "./BaseHttpController";
 import { Metadata } from "@grpc/grpc-js";
 import type { Request, Response } from "hyper-express";
+import { ChatMessagePrompt, RoomsList } from "@workadventure/messages";
+import { z } from "zod";
+import { apiClientRepository } from "../services/ApiClientRepository";
+import { adminToken } from "../middlewares/AdminToken";
+import { validatePostQuery } from "../services/QueryValidator";
+import { BaseHttpController } from "./BaseHttpController";
 
 export class AdminController extends BaseHttpController {
     routes(): void {
@@ -21,6 +13,7 @@ export class AdminController extends BaseHttpController {
         this.receiveRoomEditionPrompt();
         this.getRoomsList();
         this.sendChatMessagePrompt();
+        this.dispatchGlobalEvent();
     }
 
     /**
@@ -31,11 +24,11 @@ export class AdminController extends BaseHttpController {
      *     tags:
      *      - Admin endpoint
      *     parameters:
-     *      - name: "admin-token"
+     *      - name: "authorization"
      *        in: "header"
      *        required: true
      *        type: "string"
-     *        description: TODO - move this to a classic "Authorization" header!
+     *        description: The token to be allowed to access this API (in ADMIN_API_TOKEN environment variable)
      *      - name: "roomId"
      *        in: "body"
      *        description: "The ID (full URL) to the room"
@@ -57,12 +50,14 @@ export class AdminController extends BaseHttpController {
 
             await apiClientRepository.getClient(roomId).then((roomClient) => {
                 return new Promise<void>((res, rej) => {
-                    const roomMessage = new RefreshRoomPromptMessage();
-                    roomMessage.setRoomid(roomId);
-
-                    roomClient.sendRefreshRoomPrompt(roomMessage, (err) => {
-                        err ? rej(err) : res();
-                    });
+                    roomClient.sendRefreshRoomPrompt(
+                        {
+                            roomId,
+                        },
+                        (err) => {
+                            err ? rej(err) : res();
+                        }
+                    );
                 });
             });
 
@@ -79,11 +74,11 @@ export class AdminController extends BaseHttpController {
      *     tags:
      *      - Admin endpoint
      *     parameters:
-     *      - name: "admin-token"
+     *      - name: "authorization"
      *        in: "header"
      *        required: true
      *        type: "string"
-     *        description: TODO - move this to a classic "Authorization" header!
+     *        description: The token to be allowed to access this API (in ADMIN_API_TOKEN environment variable)
      *      - name: "text"
      *        in: "body"
      *        description: "The text of the message"
@@ -129,20 +124,25 @@ export class AdminController extends BaseHttpController {
                     return apiClientRepository.getClient(roomId).then((roomClient) => {
                         return new Promise<void>((res, rej) => {
                             if (type === "message") {
-                                const roomMessage = new AdminRoomMessage();
-                                roomMessage.setMessage(text);
-                                roomMessage.setRoomid(roomId);
-
-                                roomClient.sendAdminMessageToRoom(roomMessage, (err) => {
-                                    err ? rej(err) : res();
-                                });
+                                roomClient.sendAdminMessageToRoom(
+                                    {
+                                        message: text,
+                                        roomId: roomId,
+                                        type: "", // TODO: what to put here?
+                                    },
+                                    (err) => {
+                                        err ? rej(err) : res();
+                                    }
+                                );
                             } else if (type === "capacity") {
-                                const roomMessage = new WorldFullWarningToRoomMessage();
-                                roomMessage.setRoomid(roomId);
-
-                                roomClient.sendWorldFullWarningToRoom(roomMessage, (err) => {
-                                    err ? rej(err) : res();
-                                });
+                                roomClient.sendWorldFullWarningToRoom(
+                                    {
+                                        roomId,
+                                    },
+                                    (err) => {
+                                        err ? rej(err) : res();
+                                    }
+                                );
                             }
                         });
                     });
@@ -181,14 +181,12 @@ export class AdminController extends BaseHttpController {
         this.app.get("/rooms", [adminToken], async (req: Request, res: Response) => {
             const roomClients = await apiClientRepository.getAllClients();
 
-            const emptyMessage = new EmptyMessage();
-
             const promises: Promise<RoomsList>[] = [];
             for (const roomClient of roomClients) {
                 promises.push(
                     new Promise<RoomsList>((resolve, reject) => {
                         roomClient.getRooms(
-                            emptyMessage,
+                            {},
                             new Metadata(),
                             {
                                 deadline: Date.now() + 1000,
@@ -212,8 +210,8 @@ export class AdminController extends BaseHttpController {
 
             for (const roomsListResult of roomsListsResult) {
                 if (roomsListResult.status === "fulfilled") {
-                    for (const room of roomsListResult.value.getRoomdescriptionList()) {
-                        rooms[room.getRoomid()] = room.getNbusers();
+                    for (const room of roomsListResult.value.roomDescription) {
+                        rooms[room.roomId] = room.nbUsers;
                     }
                 } else {
                     console.warn(
@@ -224,6 +222,101 @@ export class AdminController extends BaseHttpController {
             }
 
             res.setHeader("Content-Type", "application/json").send(JSON.stringify(rooms));
+            return;
+        });
+    }
+
+    /**
+     * @openapi
+     * /global/event:
+     *   post:
+     *     description: Sends a scripting API event to ALL rooms.
+     *     tags:
+     *      - Admin endpoint
+     *     parameters:
+     *      - name: "authorization"
+     *        in: "header"
+     *        required: true
+     *        type: "string"
+     *        description: The token to be allowed to access this API (in ADMIN_API_TOKEN environment variable)
+     *      - name: "name"
+     *        in: "body"
+     *        description: "The name of the event"
+     *        required: true
+     *        type: "string"
+     *      - name: "data"
+     *        in: "body"
+     *        description: "The payload of the event"
+     *        required: false
+     *        type:
+     *          oneOf:
+     *          - type: "string"
+     *            nullable: true
+     *          - type: "object"
+     *          - type: "array"
+     *          - type: "number"
+     *          - type: "boolean"
+     *          - type: "integer"
+     *     responses:
+     *       200:
+     *         description: Will always return "ok".
+     *         example: "ok"
+     */
+    dispatchGlobalEvent(): void {
+        this.app.post("/global/event", [adminToken], async (req: Request, res: Response) => {
+            const body = await validatePostQuery(
+                req,
+                res,
+                z.object({
+                    name: z.string(),
+                    data: z.unknown().optional(),
+                })
+            );
+
+            if (body === undefined) {
+                return;
+            }
+
+            const roomClients = await apiClientRepository.getAllClients();
+
+            const promises: Promise<void>[] = [];
+            for (const roomClient of roomClients) {
+                promises.push(
+                    new Promise<void>((resolve, reject) => {
+                        roomClient.dispatchGlobalEvent(
+                            {
+                                name: body.name,
+                                value: body.data,
+                            },
+                            new Metadata(),
+                            {
+                                deadline: Date.now() + 1000,
+                            },
+                            (error, result) => {
+                                if (error) {
+                                    reject(error);
+                                } else {
+                                    resolve();
+                                }
+                            }
+                        );
+                    })
+                );
+            }
+
+            // Note: this call will take at most 1 second because we won't wait more for all the promises to resolve.
+            const results = await Promise.allSettled(promises);
+
+            for (const roomsListResult of results) {
+                if (roomsListResult.status === "rejected") {
+                    console.warn(
+                        "One back server did not respond within one second to the call to 'dispatchGlobalEvent': ",
+                        roomsListResult.reason
+                    );
+                }
+            }
+
+            res.send("ok");
             return;
         });
     }
@@ -250,24 +343,29 @@ export class AdminController extends BaseHttpController {
                 const mucRoomName: string = body.mucRoomName;
                 const mucRoomType: string = body.mucRoomType;
 
-                const chatMessagePrompt = new ChatMessagePrompt();
-                chatMessagePrompt.setRoomid(body.roomId);
+                const chatMessagePrompt: ChatMessagePrompt = {
+                    roomId: body.roomId,
+                };
 
                 if (body.type === "join") {
-                    const mucRoomDefinition = new MucRoomDefinitionMessage();
-                    mucRoomDefinition.setUrl(mucRoomUrl);
-                    mucRoomDefinition.setName(mucRoomName);
-                    mucRoomDefinition.setType(mucRoomType);
-
-                    const joinMucRoomMessage = new JoinMucRoomMessage();
-                    joinMucRoomMessage.setMucroomdefinitionmessage(mucRoomDefinition);
-
-                    chatMessagePrompt.setJoinmucroommessage(joinMucRoomMessage);
+                    chatMessagePrompt.message = {
+                        $case: "joinMucRoomMessage",
+                        joinMucRoomMessage: {
+                            mucRoomDefinitionMessage: {
+                                url: mucRoomUrl,
+                                name: mucRoomName,
+                                type: mucRoomType,
+                                subscribe: false,
+                            },
+                        },
+                    };
                 } else if (body.type === "leave") {
-                    const leaveMucRoomMessage = new LeaveMucRoomMessage();
-                    leaveMucRoomMessage.setUrl(mucRoomUrl);
-
-                    chatMessagePrompt.setLeavemucroommessage(leaveMucRoomMessage);
+                    chatMessagePrompt.message = {
+                        $case: "leaveMucRoomMessage",
+                        leaveMucRoomMessage: {
+                            url: mucRoomUrl,
+                        },
+                    };
                 } else {
                     throw new Error("Incorrect type parameter value");
                 }

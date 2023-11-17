@@ -1,7 +1,18 @@
-import { writable } from "svelte/store";
+import { readable, writable } from "svelte/store";
 import { ErrorScreenMessage } from "@workadventure/messages";
-import Axios from "axios";
+import { isAxiosError } from "axios";
+
+import logoImg from "../Components/images/logo-min-white.png";
+import errorGif from "../Components/UI/images/error.gif";
 import { ApiError } from "./Errors/ApiError";
+
+const errorLogo = new Image();
+errorLogo.src = logoImg;
+export const errorLogoStore = readable<HTMLImageElement>(errorLogo);
+
+const errorImage = new Image();
+errorImage.src = errorGif;
+export const errorImageStore = readable<HTMLImageElement>(errorImage);
 
 /**
  * A store that contains one error of type WAError to be displayed.
@@ -35,7 +46,7 @@ function createErrorScreenStore() {
                 );
                 return;
             }
-            if (Axios.isAxiosError(error) && error.response) {
+            if (isAxiosError(error) && error.response) {
                 // Axios HTTP error
                 // client received an error response (5xx, 4xx)
                 console.error("Axios error. Request:", error.request, " - Response: ", error.response);
@@ -49,12 +60,12 @@ function createErrorScreenStore() {
                             error.response.status +
                             " - " +
                             (error.response.data ? error.response.data : error.response.statusText),
-                        details: "An error occurred while accessing URL: " + error.response.config?.url,
+                        details: "An error occurred while accessing URL: " + error.config?.url,
                     })
                 );
                 return;
             }
-            if (Axios.isAxiosError(error)) {
+            if (isAxiosError(error)) {
                 // Axios HTTP error
                 // client never received a response, or request never left
                 console.error("Axios error. No full HTTP response received. Request to URL:", error.config?.url);

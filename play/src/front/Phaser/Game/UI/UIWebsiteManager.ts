@@ -1,11 +1,13 @@
 import { get } from "svelte/store";
+import { v4 as uuidv4 } from "uuid";
 import type { CreateUIWebsiteEvent, ModifyUIWebsiteEvent, UIWebsiteEvent } from "../../../Api/Events/Ui/UIWebsiteEvent";
 import { iframeListener } from "../../../Api/IframeListener";
-import { v4 as uuidv4 } from "uuid";
 import { uiWebsitesStore } from "../../../Stores/UIWebsiteStore";
 
 class UIWebsiteManager {
     constructor() {
+        // This is a singleton, so we subscribe to iframeListener only once and never unsubscribe.
+        //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
         iframeListener.modifyUIWebsiteStream.subscribe((websiteEvent: ModifyUIWebsiteEvent) => {
             const website = get(uiWebsitesStore).find((currentWebsite) => currentWebsite.id === websiteEvent.id);
             if (!website) {

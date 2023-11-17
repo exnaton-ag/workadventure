@@ -1,6 +1,6 @@
 //* GENERAL */
 .media-box-camera-on-size {
-    @apply tw-h-32 tw-w-56 sm:tw-h-48 sm:tw-w-80 md:tw-h-28 md:tw-w-48 lg:tw-h-24 lg:tw-w-44 xl:tw-h-36 xl:tw-w-64 2xl:tw-h-48 2xl:tw-w-96;
+    @apply tw-max-w-full;
 }
 
 .media-box-camera-on-position {
@@ -8,7 +8,7 @@
 }
 
 .media-box-camera-off-size {
-    @apply tw-w-56 sm:tw-w-80 md:tw-w-48 lg:tw-w-44 xl:tw-w-64 2xl:tw-w-96;
+    @apply tw-w-full;
 }
 
 .media-box-shape-color {
@@ -20,7 +20,7 @@
 }
 
 .media-box-screensharing-size {
-    @apply tw-w-56 sm:tw-w-80 md:tw-w-48 lg:tw-w-44 xl:tw-w-64 2xl:tw-w-96;
+    @apply tw-w-full;
 }
 
 .scale-y-min {
@@ -28,40 +28,38 @@
 }
 
 .cameras-container{
-    @apply tw-max-h-full tw-pointer-events-auto tw-overflow-x-hidden tw-overflow-y-auto tw-flex tw-z-[150] tw-gap-5 tw-self-end tw-relative;
-    //sm:tw-max-h-[60vh]
+    @apply tw-max-h-[46vh] tw-pointer-events-auto tw-overflow-x-hidden tw-overflow-y-auto tw-flex tw-z-[150] tw-gap-5 tw-self-end tw-relative;
+    @media (min-height: 500px) {
+        @apply tw-max-h-[80vh];
+    }
+    @media (min-height: 400px) {
+        @apply tw-max-h-[72vh];
+    }
 }
 
 .other-cameras {
-    @apply tw-bottom-32 sm:tw-bottom-48 md:tw-bottom-28 xl:tw-bottom-36 2xl:tw-bottom-48 tw-mb-2 tw-overflow-y-auto tw-overflow-x-hidden tw-h-fit;
-    //lg:tw-bottom-24
+    @apply tw-bottom-32 sm:tw-bottom-48 md:tw-bottom-28 xl:tw-bottom-36 2xl:tw-bottom-48 tw-mb-2 tw-overflow-y-auto tw-overflow-x-hidden tw-h-fit tw-w-full;
 }
 
 .media-container {
-    @apply tw-mt-2;
+    @apply tw-mt-2 tw-max-w-full tw-h-auto;
 
     &.hightlighted {
-        @apply tw-pointer-events-auto;
+        @apply tw-pointer-events-auto tw-h-full;
         .nametag-webcam-container,
         .woka-webcam-container,
         .voice-meter-webcam-container,
-        .report-ban-container {
-            @apply tw-h-[32vw] md:tw-w-[58vw] lg:tw-w-[63vw] xl:tw-w-[66vw] 2xl:tw-w-[67vw];
-        }
-
-        .nametag-screenshare-container {
-            @apply tw-h-[41.25vw] tw-w-[65vw];
-        }
-
+        .report-ban-container,
+        .nametag-screenshare-container,
         .report-ban-screenshare-container {
-            @apply tw-h-[41vw] tw-w-[60vw] lg:tw-w-[63vw] xl:tw-w-[66vw] 2xl:tw-w-[70vw];
+            @apply tw-h-full tw-w-full;
         }
     }
 
     &:hover {
         .report-ban-container,
         .report-ban-screenshare-container {
-            @apply -tw-translate-x-3 tw-opacity-100 xl:-tw-translate-x-10;
+            @apply -tw-translate-x-1 tw-opacity-100;
         }
 
         .report-ban-container-cam-off {
@@ -69,7 +67,7 @@
         }
 
         .voice-meter-cam-off {
-            @apply -tw-translate-x-8 md:-tw-translate-x-1 xl:-tw-translate-x-8;
+            @apply -tw-translate-x-1;
         }
     }
 }
@@ -79,18 +77,19 @@
 }
 
 .video-on-responsive-height {
-    @apply tw-h-32 sm:tw-h-48 md:tw-h-28 lg:tw-h-24 xl:tw-h-36 2xl:tw-h-48;
+    @apply tw-h-full;
 }
 
 .video-container {
     display: flex;
     transition: all 0.2s ease;
-    cursor: url("../images/cursor_pointer.png"), pointer;
+    cursor: pointer;
     width: 100%;
+    position: relative;
 
     &.no-clikable {
         video {
-            cursor: url("../images/cursor_normal.png"), pointer;
+            cursor: pointer;
         }
     }
 }
@@ -219,4 +218,62 @@
 
 .mozaic-grid {
     @apply tw-gap-1 lg:tw-gap-4 tw-grid-cols-1 lg:tw-grid-cols-2;
+}
+
+
+
+
+////////////////////
+// Loading.svelte //
+////////////////////
+#loading {
+    @apply tw-h-fit tw-flex tw-bg-warning tw-relative tw-rounded tw-py-2 tw-my-2;
+    transition: all 0.2s ease;
+    .wrapper {
+        @apply tw-flex tw-flex-wrap tw-justify-items-center tw-items-center tw-justify-center tw-text-brand-blue tw-text-center tw-mx-auto;
+        .svg {
+            @apply tw-bg-contain tw-bg-no-repeat tw-bg-center tw-bg-brand-blue tw-w-7 tw-h-7 tw-ml-3;
+            content: "";
+        }
+    }
+}
+
+
+
+
+////////////////////
+// UserTag.svelte //
+////////////////////
+#tag {
+    @apply tw-flex tw-rounded-sm tw-items-center tw-w-full tw-p-2 tw-h-fit;
+    &.minimal {
+        @apply tw-absolute tw-left-0 tw-bottom-0 tw-p-0 tw-pr-2 tw-pb-[1px] tw-items-end tw-w-fit tw-rounded-none tw-rounded-bl-sm tw-rounded-tr-lg;
+        #name {
+            @apply tw-ml-0.5 tw-text-xs tw-leading-[0.875rem] tw-px-0;
+        }
+        #woka {
+            @apply tw--mt-3;
+        }
+    }
+    #name {
+        @apply tw-font-semibold tw-text-sm tw-not-italic tw-break-words tw-px-2 tw-overflow-y-auto tw-max-h-10 tw-flex;
+    }
+}
+
+
+
+
+//////////////////////////
+// JitsiMediaBox.svelte //
+//////////////////////////
+.jitsi-video{
+    @apply tw-flex tw-w-full tw-border-warning tw-border-2 tw-border-solid tw-relative tw-rounded;
+    transition: all 0.2s ease;
+
+    video {
+        object-fit: cover;
+        &.object-contain {
+            object-fit: contain;
+        }
+    }
 }
