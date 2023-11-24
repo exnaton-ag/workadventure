@@ -1,6 +1,23 @@
-import { warningContainerStore } from "./../Stores/MenuStore";
 import { Subject } from "rxjs";
+import { availabilityStatusToJSON, XmppSettingsMessage } from "@workadventure/messages";
+import { KLAXOON_ACTIVITY_PICKER_EVENT, ChatMessage } from "@workadventure/shared-utils";
 import { HtmlUtils } from "../WebRtc/HtmlUtils";
+import {
+    additionnalButtonsMenu,
+    handleMenuRegistrationEvent,
+    handleMenuUnregisterEvent,
+    handleOpenMenuEvent,
+    warningContainerStore,
+} from "../Stores/MenuStore";
+import type { PlayerInterface } from "../Phaser/Game/PlayerInterface";
+import { ProtobufClientUtils } from "../Network/ProtobufClientUtils";
+import type { MessageUserJoined } from "../Connection/ConnexionModels";
+import { localUserStore } from "../Connection/LocalUserStore";
+import { mediaManager, NotificationType } from "../WebRtc/MediaManager";
+import { analyticsClient } from "../Administration/AnalyticsClient";
+import { bannerStore, requestVisitCardsStore } from "../Stores/GameStore";
+import { modalIframeStore, modalVisibilityStore } from "../Stores/ModalStore";
+import { connectionManager } from "../Connection/ConnectionManager";
 import type { EnterLeaveEvent } from "./Events/EnterLeaveEvent";
 import type { OpenPopupEvent } from "./Events/OpenPopupEvent";
 import type { OpenTabEvent } from "./Events/OpenTabEvent";
@@ -18,7 +35,6 @@ import type { LayerEvent } from "./Events/LayerEvent";
 import type { SetTilesEvent } from "./Events/SetTilesEvent";
 import type { SetVariableEvent } from "./Events/SetVariableEvent";
 import type { ModifyEmbeddedWebsiteEvent } from "./Events/EmbeddedWebsiteEvent";
-import { additionnalButtonsMenu, handleMenuRegistrationEvent, handleMenuUnregisterEvent } from "../Stores/MenuStore";
 import type { ChangeLayerEvent } from "./Events/ChangeLayerEvent";
 import type { WasCameraUpdatedEvent } from "./Events/WasCameraUpdatedEvent";
 import type { ChangeAreaEvent } from "./Events/ChangeAreaEvent";
@@ -29,26 +45,16 @@ import type { ActionsMenuActionClickedEvent } from "./Events/ActionsMenuActionCl
 import type { RemoveActionsMenuKeyFromRemotePlayerEvent } from "./Events/RemoveActionsMenuKeyFromRemotePlayerEvent";
 import type { SetAreaPropertyEvent } from "./Events/SetAreaPropertyEvent";
 import type { ModifyUIWebsiteEvent } from "./Events/Ui/UIWebsiteEvent";
-import type { ModifyAreaEvent } from "./Events/CreateAreaEvent";
+import type { ModifyDynamicAreaEvent } from "./Events/CreateDynamicAreaEvent";
 import type { AskPositionEvent } from "./Events/AskPositionEvent";
-import type { PlayerInterface } from "../Phaser/Game/PlayerInterface";
 import type { SetSharedPlayerVariableEvent } from "./Events/SetSharedPlayerVariableEvent";
-import { ProtobufClientUtils } from "../Network/ProtobufClientUtils";
 import type { HasPlayerMovedInterface } from "./Events/HasPlayerMovedInterface";
 import type { JoinProximityMeetingEvent } from "./Events/ProximityMeeting/JoinProximityMeetingEvent";
 import type { ParticipantProximityMeetingEvent } from "./Events/ProximityMeeting/ParticipantProximityMeetingEvent";
-import type { MessageUserJoined } from "../Connexion/ConnexionModels";
-import { availabilityStatusToJSON, XmppSettingsMessage } from "@workadventure/messages";
 import type { AddPlayerEvent } from "./Events/AddPlayerEvent";
-import { localUserStore } from "../Connexion/LocalUserStore";
-import { mediaManager, NotificationType } from "../WebRtc/MediaManager";
-import { analyticsClient } from "../Administration/AnalyticsClient";
-import type { ChatMessage } from "./Events/ChatEvent";
-import { bannerStore, requestVisitCardsStore } from "../Stores/GameStore";
-import { modalIframeStore, modalVisibilityStore } from "../Stores/ModalStore";
-import { connectionManager } from "../Connexion/ConnectionManager";
 import { ModalEvent } from "./Events/ModalEvent";
 import { AddButtonActionBarEvent } from "./Events/Ui/ButtonActionBarEvent";
+import { ReceiveEventEvent } from "./Events/ReceiveEventEvent";
 
 type AnswererCallback<T extends keyof IframeQueryMap> = (
     query: IframeQueryMap[T]["query"],
@@ -156,7 +162,7 @@ class IframeListener {
     private readonly _loadSoundStream: Subject<LoadSoundEvent> = new Subject();
     public readonly loadSoundStream = this._loadSoundStream.asObservable();
 
-    private readonly _trackCameraUpdateStream: Subject<LoadSoundEvent> = new Subject();
+    private readonly _trackCameraUpdateStream: Subject<void> = new Subject();
     public readonly trackCameraUpdateStream = this._trackCameraUpdateStream.asObservable();
 
     private readonly _setTilesStream: Subject<SetTilesEvent> = new Subject();
@@ -165,7 +171,7 @@ class IframeListener {
     private readonly _modifyEmbeddedWebsiteStream: Subject<ModifyEmbeddedWebsiteEvent> = new Subject();
     public readonly modifyEmbeddedWebsiteStream = this._modifyEmbeddedWebsiteStream.asObservable();
 
-    private readonly _modifyAreaStream: Subject<ModifyAreaEvent> = new Subject();
+    private readonly _modifyAreaStream: Subject<ModifyDynamicAreaEvent> = new Subject();
     public readonly modifyAreaStream = this._modifyAreaStream.asObservable();
 
     private readonly _modifyUIWebsiteStream: Subject<ModifyUIWebsiteEvent> = new Subject();
@@ -220,6 +226,11 @@ class IframeListener {
                 let foundSrc: string | undefined;
 
                 let iframe: HTMLIFrameElement | undefined;
+
+                // if the message source is Klaxoon, we set the src to the content window of the iframe
+                if (message.origin === "https://app.klaxoon.com") {
+                    foundSrc = message.origin;
+                }
                 for (iframe of this.iframes.keys()) {
                     if (iframe.contentWindow === message.source) {
                         foundSrc = iframe.src;
@@ -328,7 +339,11 @@ class IframeListener {
                     } else if (iframeEvent.type === "cameraFollowPlayer") {
                         this._cameraFollowPlayerStream.next(iframeEvent.data);
                     } else if (iframeEvent.type === "chat") {
-                        scriptUtils.sendAnonymousChat(iframeEvent.data, iframe.contentWindow ?? undefined);
+                        scriptUtils.sendChat(iframeEvent.data, iframe.contentWindow ?? undefined);
+                    } else if (iframeEvent.type === "startWriting") {
+                        scriptUtils.startWriting(iframeEvent.data, iframe.contentWindow ?? undefined);
+                    } else if (iframeEvent.type === "stopWriting") {
+                        scriptUtils.stopWriting(iframeEvent.data, iframe.contentWindow ?? undefined);
                     } else if (iframeEvent.type === "openChat") {
                         this._openChatStream.next(iframeEvent.data);
                     } else if (iframeEvent.type === "closeChat") {
@@ -407,11 +422,14 @@ class IframeListener {
                         handleMenuRegistrationEvent(
                             iframeEvent.data.name,
                             iframeEvent.data.iframe,
+                            iframeEvent.data.key,
                             foundSrc,
                             iframeEvent.data.options
                         );
                     } else if (iframeEvent.type == "unregisterMenu") {
-                        handleMenuUnregisterEvent(iframeEvent.data.name);
+                        handleMenuUnregisterEvent(iframeEvent.data.key);
+                    } else if (iframeEvent.type == "openMenu") {
+                        handleOpenMenuEvent(iframeEvent.data.key);
                     } else if (iframeEvent.type == "askPosition") {
                         this._askPositionStream.next(iframeEvent.data);
                     } else if (iframeEvent.type == "openInviteMenu") {
@@ -458,11 +476,16 @@ class IframeListener {
                             this.messagesToChatQueue = [];
                         }
                     } else if (iframeEvent.type == "openBanner") {
-                        warningContainerStore.activateWarningContainer();
+                        warningContainerStore.activateWarningContainer(iframeEvent.data.timeToClose);
                         bannerStore.set(iframeEvent.data);
                     } else if (iframeEvent.type == "closeBanner") {
                         warningContainerStore.set(false);
                         bannerStore.set(null);
+                    } else if (iframeEvent.type == KLAXOON_ACTIVITY_PICKER_EVENT) {
+                        // dispacth event on windows
+                        // @ts-ignore
+                        const event = new MessageEvent("AcitivityPickerFromWorkAdventure", message);
+                        window.dispatchEvent(event);
                     } else {
                         // Keep the line below. It will throw an error if we forget to handle one of the possible values.
                         const _exhaustiveCheck: never = iframeEvent;
@@ -506,13 +529,15 @@ class IframeListener {
      * Registers an event listener to know when iframes are closed and returns an "unsubscriber" function.
      */
     onIframeCloseEvent(source: MessageEventSource, callback: () => void): () => void {
-        const callbackSet = this.iframeCloseCallbacks.get(source);
+        let callbackSet = this.iframeCloseCallbacks.get(source);
         if (callbackSet === undefined) {
-            throw new Error("Could not find iframe in list");
+            // It is possible that the iframe is not registered yet (register happens on the "load" event of the iframe, but it could be triggered AFTER first events are received).
+            callbackSet = new Set();
+            this.iframeCloseCallbacks.set(source, callbackSet);
         }
         callbackSet.add(callback);
         return () => {
-            callbackSet.delete(callback);
+            callbackSet?.delete(callback);
         };
     }
 
@@ -608,14 +633,16 @@ class IframeListener {
 
     /**
      * @param message The message to dispatch
+     * @param senderId The id of the sender (or undefined if the message is sent by the current user)
      * @param exceptOrigin Don't dispatch the message to exceptOrigin (to avoid infinite loops)
      */
-    sendUserInputChat(message: string, exceptOrigin?: Window) {
+    sendUserInputChat(message: string, senderId: number | undefined, exceptOrigin?: Window) {
         this.postMessage(
             {
                 type: "userInputChat",
                 data: {
-                    message: message,
+                    message,
+                    senderId,
                 } as UserInputChatEvent,
             },
             exceptOrigin
@@ -807,6 +834,12 @@ class IframeListener {
         });
     }
 
+    dispatchReceivedEvent(receiveEventEvent: ReceiveEventEvent) {
+        this.postMessage({
+            type: "receiveEvent",
+            data: receiveEventEvent,
+        });
+    }
     sendActionMessageTriggered(uuid: string): void {
         this.postMessage({
             type: "messageTriggered",
@@ -889,11 +922,21 @@ class IframeListener {
 
     // << TODO delete with chat XMPP integration for the discussion circle
     sendWritingStatusToChatIframe(list: Set<PlayerInterface>) {
-        const usersTyping: Array<string> = [];
-        list.forEach((user) => usersTyping.push(user.userJid));
+        const usersTyping: Array<{
+            jid?: string;
+            name?: string;
+        }> = [];
+        list.forEach((user) =>
+            usersTyping.push({
+                jid: user.userJid === "fake" ? undefined : user.userJid,
+                name: user.name,
+            })
+        );
         this.postMessageToChat({
             type: "updateWritingStatusChatList",
-            data: usersTyping,
+            data: {
+                users: usersTyping,
+            },
         });
     }
 
@@ -1005,6 +1048,26 @@ class IframeListener {
             source ?? undefined
         );
     }
+
+    /*dispatchScriptableEventToOtherIframes(
+        key: string,
+        value: unknown,
+        myId: number,
+        source: MessageEventSource | null
+    ) {
+        // Let's dispatch the message to the other iframes
+        this.postMessage(
+            {
+                type: "receiveEvent",
+                data: {
+                    key,
+                    value,
+                    senderId: myId,
+                } as ReceiveEventEvent,
+            },
+            source ?? undefined
+        );
+    }*/
 }
 
 export const iframeListener = new IframeListener();

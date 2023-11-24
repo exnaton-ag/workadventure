@@ -1,39 +1,26 @@
-import type { ExSocketInterface } from "../models/Websocket/ExSocketInterface";
-import type { PointInterface } from "../models/Websocket/PointInterface";
+import { isAxiosError } from "axios";
+import type HyperExpress from "hyper-express";
+import { z } from "zod";
 import {
-    SubMessage,
-    BatchMessage,
+    apiVersionHash,
     ClientToServerMessage,
-    SendUserMessage,
-    ServerToClientMessage,
-    CompanionMessage,
-} from "../../messages/generated/messages_pb";
-import type {
-    UserMovesMessage,
-    SetPlayerDetailsMessage,
-    ItemEventMessage,
-    ViewportMessage,
-    WebRtcSignalToServerMessage,
-    PlayGlobalMessage,
-    ReportPlayerMessage,
-    EmotePromptMessage,
-    FollowRequestMessage,
-    FollowConfirmationMessage,
-    FollowAbortMessage,
-    VariableMessage,
-    LockGroupPromptMessage,
-    AskPositionMessage,
-    AvailabilityStatus,
-    QueryMessage,
-    EditMapCommandMessage,
-    PingMessage,
-} from "../../messages/generated/messages_pb";
-import qs from "qs";
+    ErrorApiData,
+    ServerToClientMessage as ServerToClientMessageTsProto,
+    SubMessage,
+    WokaDetail,
+    SpaceFilterMessage,
+    SpaceUser,
+    CompanionDetail,
+} from "@workadventure/messages";
+import Jwt, { JsonWebTokenError } from "jsonwebtoken";
+import { v4 as uuid } from "uuid";
+import { JID } from "stanza";
+import * as Sentry from "@sentry/node";
+import { Color } from "@workadventure/shared-utils";
 import type { AdminSocketTokenData } from "../services/JWTTokenManager";
 import { jwtTokenManager, tokenInvalidException } from "../services/JWTTokenManager";
 import type { FetchMemberDataByUuidResponse } from "../services/AdminApi";
-import { socketManager } from "../services/SocketManager";
-import { emitInBatch } from "../services/IoSocketHelpers";
+import { Socket, socketManager, SocketUpgradeFailed } from "../services/SocketManager";
 import {
     ADMIN_SOCKETS_TOKEN,
     DISABLE_ANONYMOUS,
@@ -42,77 +29,38 @@ import {
     SOCKET_IDLE_TIMER,
 } from "../enums/EnvironmentVariable";
 import type { Zone } from "../models/Zone";
-import type { ExAdminSocketInterface } from "../models/Websocket/ExAdminSocketInterface";
-import { isAdminMessageInterface } from "../models/Websocket/Admin/AdminMessages";
+import type { AdminSocketData } from "../models/Websocket/AdminSocketData";
 import type { AdminMessageInterface } from "../models/Websocket/Admin/AdminMessages";
-import Axios from "axios";
-import { InvalidTokenError } from "./InvalidTokenError";
-import type HyperExpress from "hyper-express";
-import { z } from "zod";
+import { isAdminMessageInterface } from "../models/Websocket/Admin/AdminMessages";
 import { adminService } from "../services/AdminService";
-import {
-    MucRoomDefinitionInterface,
-    ErrorApiData,
-    WokaDetail,
-    apiVersionHash,
-    isErrorApiData,
-} from "@workadventure/messages";
-import Jwt from "jsonwebtoken";
-import { v4 as uuid } from "uuid";
-import { JID } from "stanza";
+import { validateWebsocketQuery } from "../services/QueryValidator";
+import { SocketData } from "../models/Websocket/SocketData";
+import { emitInBatch } from "../services/IoSocketHelpers";
 
-type WebSocket = HyperExpress.compressors.WebSocket;
-
-/**
- * The object passed between the "open" and the "upgrade" methods when opening a websocket
- */
-interface UpgradeData {
-    // Data passed here is accessible on the "websocket" socket object.
-    rejected: false;
-    token: string;
-    userUuid: string;
-    userJid: string;
-    IPAddress: string;
-    roomId: string;
-    name: string;
-    companion: CompanionMessage | undefined;
-    availabilityStatus: AvailabilityStatus;
-    characterLayers: WokaDetail[];
-    messages: unknown[];
-    tags: string[];
-    visitCardUrl: string | null;
-    userRoomToken: string | undefined;
-    position: PointInterface;
-    viewport: {
-        top: number;
-        right: number;
-        bottom: number;
-        left: number;
-    };
-    mucRooms: Array<MucRoomDefinitionInterface> | undefined;
-    activatedInviteUser: boolean | undefined;
-    isLogged: boolean;
-    canEdit: boolean;
-}
-
-interface UpgradeFailedInvalidData {
+type UpgradeFailedInvalidData = {
     rejected: true;
-    reason: "tokenInvalid" | "textureInvalid" | "invalidVersion" | null;
+    reason: "tokenInvalid" | "invalidVersion" | null;
     message: string;
+    status: number;
     roomId: string;
-}
+};
 
-interface UpgradeFailedErrorData {
+type UpgradeFailedErrorData = {
     rejected: true;
     reason: "error";
+    status: number;
     error: ErrorApiData;
-}
+};
 
-type UpgradeFailedData = UpgradeFailedErrorData | UpgradeFailedInvalidData;
+type UpgradeFailedInvalidTexture = {
+    rejected: true;
+    reason: "invalidTexture";
+    entityType: "character" | "companion";
+};
+
+export type UpgradeFailedData = UpgradeFailedErrorData | UpgradeFailedInvalidData | UpgradeFailedInvalidTexture;
 
 export class IoSocketController {
-    private nextUserId = 1;
-
     constructor(private readonly app: HyperExpress.compressors.TemplatedApp) {
         this.ioConnection();
         if (ADMIN_SOCKETS_TOKEN) {
@@ -121,17 +69,28 @@ export class IoSocketController {
     }
 
     adminRoomSocket(): void {
-        this.app.ws("/admin/rooms", {
+        this.app.ws<AdminSocketData>("/admin/rooms", {
             upgrade: (res, req, context) => {
                 const websocketKey = req.getHeader("sec-websocket-key");
                 const websocketProtocol = req.getHeader("sec-websocket-protocol");
                 const websocketExtensions = req.getHeader("sec-websocket-extensions");
 
-                res.upgrade({}, websocketKey, websocketProtocol, websocketExtensions, context);
+                res.upgrade<AdminSocketData>(
+                    {
+                        adminConnections: new Map(),
+                        disconnecting: false,
+                    },
+                    websocketKey,
+                    websocketProtocol,
+                    websocketExtensions,
+                    context
+                );
             },
             open: (ws) => {
-                console.log("Admin socket connect to client on " + Buffer.from(ws.getRemoteAddressAsText()).toString());
-                ws.disconnecting = false;
+                console.info(
+                    "Admin socket connect to client on " + Buffer.from(ws.getRemoteAddressAsText()).toString()
+                );
+                ws.getUserData().disconnecting = false;
             },
             message: (ws, arrayBuffer): void => {
                 try {
@@ -144,7 +103,9 @@ export class IoSocketController {
                     } catch (err) {
                         if (err instanceof z.ZodError) {
                             console.error(err.issues);
+                            Sentry.captureException(err.issues);
                         }
+                        Sentry.captureException(`Invalid message received. ${message}`);
                         console.error("Invalid message received.", message);
                         ws.send(
                             JSON.stringify({
@@ -154,7 +115,7 @@ export class IoSocketController {
                                 },
                             })
                         );
-                        ws.close();
+                        ws.end(1007, "Invalid message received!");
                         return;
                     }
 
@@ -165,6 +126,7 @@ export class IoSocketController {
                     try {
                         data = jwtTokenManager.verifyAdminSocketToken(token);
                     } catch (e) {
+                        Sentry.captureException(`Admin socket access refused for token: ${token} ${e}`);
                         console.error("Admin socket access refused for token: " + token, e);
                         ws.send(
                             JSON.stringify({
@@ -174,7 +136,7 @@ export class IoSocketController {
                                 },
                             })
                         );
-                        ws.close();
+                        ws.end(1008, "Access refused");
                         return;
                     }
 
@@ -189,7 +151,8 @@ export class IoSocketController {
                             const errorMessage = `Admin socket refused for client on ${Buffer.from(
                                 ws.getRemoteAddressAsText()
                             ).toString()} listening of : \n${JSON.stringify(notAuthorizedRoom)}`;
-                            console.error();
+                            Sentry.captureException(errorMessage);
+                            console.error(errorMessage);
                             ws.send(
                                 JSON.stringify({
                                     type: "Error",
@@ -198,14 +161,15 @@ export class IoSocketController {
                                     },
                                 })
                             );
-                            ws.close();
+                            ws.end(1008, "Access refused");
                             return;
                         }
 
                         for (const roomId of message.roomIds) {
-                            socketManager
-                                .handleAdminRoom(ws as ExAdminSocketInterface, roomId)
-                                .catch((e) => console.error(e));
+                            socketManager.handleAdminRoom(ws, roomId).catch((e) => {
+                                console.error(e);
+                                Sentry.captureException(e);
+                            });
                         }
                     } else if (message.event === "user-message") {
                         const messageToEmit = message.message;
@@ -218,7 +182,10 @@ export class IoSocketController {
                             if (messageToEmit.type === "banned") {
                                 socketManager
                                     .emitBan(messageToEmit.userUuid, messageToEmit.message, messageToEmit.type, roomId)
-                                    .catch((error) => console.error(error));
+                                    .catch((error) => {
+                                        Sentry.captureException(error);
+                                        console.error(error);
+                                    });
                             } else if (messageToEmit.type === "ban") {
                                 socketManager
                                     .emitSendUserMessage(
@@ -227,29 +194,32 @@ export class IoSocketController {
                                         messageToEmit.type,
                                         roomId
                                     )
-                                    .catch((error) => console.error(error));
+                                    .catch((error) => {
+                                        Sentry.captureException(error);
+                                        console.error(error);
+                                    });
                             }
                         }
                     }
                 } catch (err) {
+                    Sentry.captureException(err);
                     console.error(err);
                 }
             },
             close: (ws) => {
-                const Client = ws as ExAdminSocketInterface;
                 try {
-                    Client.disconnecting = true;
-                    socketManager.leaveAdminRoom(Client);
+                    ws.getUserData().disconnecting = true;
+                    socketManager.leaveAdminRoom(ws);
                 } catch (e) {
-                    console.error('An error occurred on admin "disconnect"');
-                    console.error(e);
+                    Sentry.captureException(`An error occurred on admin "disconnect" ${e}`);
+                    console.error(`An error occurred on admin "disconnect" ${e}`);
                 }
             },
         });
     }
 
     ioConnection(): void {
-        this.app.ws("/room", {
+        this.app.ws<SocketData | UpgradeFailedData>("/room", {
             /* Options */
             //compression: uWS.SHARED_COMPRESSOR,
             idleTimeout: SOCKET_IDLE_TIMER,
@@ -265,31 +235,55 @@ export class IoSocketController {
                         upgradeAborted.aborted = true;
                     });
 
-                    const query = qs.parse(req.getQuery());
+                    const query = validateWebsocketQuery(
+                        req,
+                        res,
+                        context,
+                        z.object({
+                            roomId: z.string(),
+                            token: z.string().optional(),
+                            name: z.string(),
+                            characterTextureIds: z.union([z.string(), z.string().array()]),
+                            x: z.coerce.number(),
+                            y: z.coerce.number(),
+                            top: z.coerce.number(),
+                            bottom: z.coerce.number(),
+                            left: z.coerce.number(),
+                            right: z.coerce.number(),
+                            companionTextureId: z.string().optional(),
+                            availabilityStatus: z.coerce.number(),
+                            lastCommandId: z.string().optional(),
+                            version: z.string(),
+                        })
+                    );
+
+                    if (query === undefined) {
+                        return;
+                    }
+
                     const websocketKey = req.getHeader("sec-websocket-key");
                     const websocketProtocol = req.getHeader("sec-websocket-protocol");
                     const websocketExtensions = req.getHeader("sec-websocket-extensions");
-                    const IPAddress = req.getHeader("x-forwarded-for");
+                    const ipAddress = req.getHeader("x-forwarded-for");
                     const locale = req.getHeader("accept-language");
 
-                    const roomId = query.roomId;
+                    const {
+                        roomId,
+                        token,
+                        x,
+                        y,
+                        top,
+                        bottom,
+                        left,
+                        right,
+                        name,
+                        availabilityStatus,
+                        lastCommandId,
+                        version,
+                        companionTextureId,
+                    } = query;
+
                     try {
-                        if (typeof roomId !== "string") {
-                            throw new Error("Undefined room ID: ");
-                        }
-
-                        const token = query.token;
-                        const x = Number(query.x);
-                        const y = Number(query.y);
-                        const top = Number(query.top);
-                        const bottom = Number(query.bottom);
-                        const left = Number(query.left);
-                        const right = Number(query.right);
-                        const name = query.name;
-                        const availabilityStatus = Number(query.availabilityStatus);
-                        const lastCommandId = query.lastCommandId;
-                        const version = query.version;
-
                         if (version !== apiVersionHash) {
                             if (upgradeAborted.aborted) {
                                 // If the response points to nowhere, don't attempt an upgrade
@@ -299,6 +293,7 @@ export class IoSocketController {
                                 {
                                     rejected: true,
                                     reason: "error",
+                                    status: 419,
                                     error: {
                                         type: "retry",
                                         title: "Please refresh",
@@ -311,7 +306,7 @@ export class IoSocketController {
                                         buttonTitle: "Refresh",
                                         timeToRetry: 999999,
                                     },
-                                } as UpgradeFailedData,
+                                } satisfies UpgradeFailedData,
                                 websocketKey,
                                 websocketProtocol,
                                 websocketExtensions,
@@ -319,40 +314,12 @@ export class IoSocketController {
                             );
                         }
 
-                        let companion: CompanionMessage | undefined = undefined;
+                        const characterTextureIds: string[] =
+                            typeof query.characterTextureIds === "string"
+                                ? [query.characterTextureIds]
+                                : query.characterTextureIds;
 
-                        if (typeof query.companion === "string") {
-                            companion = new CompanionMessage();
-                            companion.setName(query.companion);
-                        }
-
-                        if (typeof name !== "string") {
-                            throw new Error("Expecting name");
-                        }
-                        if (typeof availabilityStatus !== "number") {
-                            throw new Error("Expecting availability status");
-                        }
-                        if (name === "") {
-                            throw new Error("No empty name");
-                        }
-                        let characterLayers: string[];
-
-                        if (!query.characterLayers) {
-                            throw new Error("Expecting skin");
-                        }
-                        if (typeof query.characterLayers === "string") {
-                            characterLayers = [query.characterLayers];
-                        } else {
-                            const checkCharacterLayers = z.string().array().safeParse(query.characterLayers);
-                            if (!checkCharacterLayers.success) {
-                                throw new Error("Unknown layers data");
-                            }
-
-                            characterLayers = checkCharacterLayers.data;
-                        }
-
-                        const tokenData =
-                            token && typeof token === "string" ? jwtTokenManager.verifyJWTToken(token) : null;
+                        const tokenData = token ? jwtTokenManager.verifyJWTToken(token) : null;
 
                         if (DISABLE_ANONYMOUS && !tokenData) {
                             throw new Error("Expecting token");
@@ -363,15 +330,14 @@ export class IoSocketController {
 
                         let memberTags: string[] = [];
                         let memberVisitCardUrl: string | null = null;
-                        let memberMessages: unknown;
                         let memberUserRoomToken: string | undefined;
-                        let memberTextures: WokaDetail[] = [];
                         let userData: FetchMemberDataByUuidResponse = {
                             email: userIdentifier,
                             userUuid: userIdentifier,
                             tags: [],
                             visitCardUrl: null,
-                            textures: [],
+                            characterTextures: [],
+                            companionTexture: undefined,
                             messages: [],
                             anonymous: true,
                             userRoomToken: undefined,
@@ -382,7 +348,8 @@ export class IoSocketController {
                             canEdit: false,
                         };
 
-                        let characterLayerObjs: WokaDetail[];
+                        let characterTextures: WokaDetail[];
+                        let companionTexture: CompanionDetail | undefined;
 
                         try {
                             try {
@@ -390,19 +357,23 @@ export class IoSocketController {
                                     userIdentifier,
                                     tokenData?.accessToken,
                                     roomId,
-                                    IPAddress,
-                                    characterLayers,
+                                    ipAddress,
+                                    characterTextureIds,
+                                    companionTextureId,
                                     locale
                                 );
                             } catch (err) {
-                                if (Axios.isAxiosError(err)) {
-                                    const errorType = isErrorApiData.safeParse(err?.response?.data);
+                                if (isAxiosError(err)) {
+                                    const errorType = ErrorApiData.safeParse(err?.response?.data);
                                     if (errorType.success) {
                                         if (upgradeAborted.aborted) {
                                             // If the response points to nowhere, don't attempt an upgrade
                                             return;
                                         }
 
+                                        Sentry.captureException(
+                                            `Axios error on room connection ${err?.response?.status} ${errorType.data}`
+                                        );
                                         console.error(
                                             "Axios error on room connection",
                                             err?.response?.status,
@@ -413,15 +384,16 @@ export class IoSocketController {
                                             {
                                                 rejected: true,
                                                 reason: "error",
-                                                status: err?.response?.status,
+                                                status: err?.response?.status || 500,
                                                 error: errorType.data,
-                                            } as UpgradeFailedData,
+                                            } satisfies UpgradeFailedData,
                                             websocketKey,
                                             websocketProtocol,
                                             websocketExtensions,
                                             context
                                         );
                                     } else {
+                                        Sentry.captureException(`Unknown error on room connection ${err}`);
                                         console.error("Unknown error on room connection", err);
                                         if (upgradeAborted.aborted) {
                                             // If the response points to nowhere, don't attempt an upgrade
@@ -434,7 +406,7 @@ export class IoSocketController {
                                                 status: 500,
                                                 message: err?.response?.data,
                                                 roomId: roomId,
-                                            } as UpgradeFailedData,
+                                            } satisfies UpgradeFailedData,
                                             websocketKey,
                                             websocketProtocol,
                                             websocketExtensions,
@@ -444,16 +416,16 @@ export class IoSocketController {
                                 }
                                 throw err;
                             }
-                            memberMessages = userData.messages;
                             memberTags = userData.tags;
                             memberVisitCardUrl = userData.visitCardUrl;
-                            memberTextures = userData.textures;
+                            characterTextures = userData.characterTextures;
+                            companionTexture = userData.companionTexture ?? undefined;
                             memberUserRoomToken = userData.userRoomToken;
-                            characterLayerObjs = memberTextures;
                         } catch (e) {
-                            console.log(
+                            console.info(
                                 "access not granted for user " + (userIdentifier || "anonymous") + " and room " + roomId
                             );
+                            Sentry.captureException(e);
                             console.error(e);
                             throw new Error("User cannot access this world");
                         }
@@ -477,57 +449,118 @@ export class IoSocketController {
                             userData.jabberId = `${userData.jabberId}/${uuid()}`;
                         }
 
-                        // Generate characterLayers objects from characterLayers string[]
-                        /*const characterLayerObjs: CharacterLayer[] =
-                                SocketManager.mergeCharacterLayersAndCustomTextures(characterLayers, memberTextures);*/
-
                         if (upgradeAborted.aborted) {
-                            console.log("Ouch! Client disconnected before we could upgrade it!");
+                            console.info("Ouch! Client disconnected before we could upgrade it!");
                             /* You must not upgrade now */
                             return;
                         }
 
-                        /* This immediately calls open handler, you must not use res after this call */
-                        res.upgrade(
-                            {
-                                // Data passed here is accessible on the "websocket" socket object.
-                                rejected: false,
-                                token,
-                                userUuid: userData.userUuid,
-                                userJid: userData.jabberId,
-                                IPAddress,
-                                userIdentifier,
-                                roomId,
+                        if (characterTextureIds.length !== characterTextures.length) {
+                            return res.upgrade(
+                                {
+                                    rejected: true,
+                                    reason: "invalidTexture",
+                                    entityType: "character",
+                                } satisfies UpgradeFailedInvalidTexture,
+                                websocketKey,
+                                websocketProtocol,
+                                websocketExtensions,
+                                context
+                            );
+                        }
+
+                        if (companionTextureId && !companionTexture) {
+                            return res.upgrade(
+                                {
+                                    rejected: true,
+                                    reason: "invalidTexture",
+                                    entityType: "companion",
+                                } satisfies UpgradeFailedInvalidTexture,
+                                websocketKey,
+                                websocketProtocol,
+                                websocketExtensions,
+                                context
+                            );
+                        }
+
+                        const socketData: SocketData = {
+                            rejected: false,
+                            disconnecting: false,
+                            token: token && typeof token === "string" ? token : "",
+                            roomId,
+                            userId: undefined,
+                            userUuid: userData.userUuid,
+                            userJid: userData.jabberId,
+                            isLogged,
+                            ipAddress,
+                            name,
+                            characterTextures,
+                            companionTexture,
+                            position: {
+                                x: x,
+                                y: y,
+                                direction: "down",
+                                moving: false,
+                            },
+                            viewport: {
+                                top,
+                                right,
+                                bottom,
+                                left,
+                            },
+                            availabilityStatus,
+                            lastCommandId,
+                            messages: [],
+                            tags: memberTags,
+                            visitCardUrl: memberVisitCardUrl,
+                            userRoomToken: memberUserRoomToken,
+                            jabberId: userData.jabberId,
+                            jabberPassword: userData.jabberPassword,
+                            activatedInviteUser: userData.activatedInviteUser || undefined,
+                            mucRooms: userData.mucRooms || [],
+                            applications: userData.applications,
+                            canEdit: userData.canEdit ?? false,
+                            spaceUser: SpaceUser.fromPartial({
+                                id: 0,
+                                uuid: userData.userUuid,
                                 name,
-                                companion,
+                                playUri: roomId,
+                                // FIXME : Get room name from admin
+                                roomName: "",
                                 availabilityStatus,
-                                lastCommandId,
-                                characterLayers: characterLayerObjs,
-                                messages: memberMessages,
-                                tags: memberTags,
-                                visitCardUrl: memberVisitCardUrl,
-                                userRoomToken: memberUserRoomToken,
-                                textures: memberTextures,
-                                jabberId: userData.jabberId,
-                                jabberPassword: userData.jabberPassword,
-                                mucRooms: userData.mucRooms,
-                                activatedInviteUser: userData.activatedInviteUser,
-                                canEdit: userData.canEdit ?? false,
-                                applications: userData.applications,
-                                position: {
-                                    x: x,
-                                    y: y,
-                                    direction: "down",
-                                    moving: false,
-                                } as PointInterface,
-                                viewport: {
-                                    top,
-                                    right,
-                                    bottom,
-                                    left,
-                                },
                                 isLogged,
-                            } as UpgradeData,
+                                color: Color.getColorByString(name),
+                                tags: memberTags,
+                                cameraState: false,
+                                screenSharingState: false,
+                                microphoneState: false,
+                                megaphoneState: false,
+                                characterTextures: characterTextures.map((characterTexture) => ({
+                                    url: characterTexture.url,
+                                    id: characterTexture.id,
+                                })),
+                                visitCardUrl: memberVisitCardUrl ?? undefined,
+                            }),
+                            emitInBatch: (payload: SubMessage): void => {},
+                            batchedMessages: {
+                                event: "",
+                                payload: [],
+                            },
+                            batchTimeout: null,
+                            backConnection: undefined,
+                            listenedZones: new Set<Zone>(),
+                            pusherRoom: undefined,
+                            spaces: [],
+                            spacesFilters: new Map<string, SpaceFilterMessage[]>(),
+                            cameraState: undefined,
+                            microphoneState: undefined,
+                            screenSharingState: undefined,
+                            megaphoneState: undefined,
+                        };
+
+                        /* This immediately calls open handler, you must not use res after this call */
+                        res.upgrade<SocketData>(
+                            socketData,
                             /* Spell these correctly */
                             websocketKey,
                             websocketProtocol,
@@ -536,7 +569,8 @@ export class IoSocketController {
                         );
                     } catch (e) {
                         if (e instanceof Error) {
-                            if (!(e instanceof InvalidTokenError)) {
+                            if (!(e instanceof JsonWebTokenError)) {
+                                Sentry.captureException(e);
                                 console.error(e);
                             }
                             if (upgradeAborted.aborted) {
@@ -546,10 +580,11 @@ export class IoSocketController {
                             res.upgrade(
                                 {
                                     rejected: true,
-                                    reason: e instanceof InvalidTokenError ? tokenInvalidException : null,
+                                    reason: e instanceof JsonWebTokenError ? tokenInvalidException : null,
+                                    status: 401,
                                     message: e.message,
                                     roomId,
-                                } as UpgradeFailedData,
+                                } satisfies UpgradeFailedData,
                                 websocketKey,
                                 websocketProtocol,
                                 websocketExtensions,
@@ -565,8 +600,9 @@ export class IoSocketController {
                                     rejected: true,
                                     reason: null,
                                     message: "500 Internal Server Error",
+                                    status: 500,
                                     roomId,
-                                } as UpgradeFailedData,
+                                } satisfies UpgradeFailedData,
                                 websocketKey,
                                 websocketProtocol,
                                 websocketExtensions,
@@ -574,203 +610,300 @@ export class IoSocketController {
                             );
                         }
                     }
-                })().catch((e) => console.error(e));
+                })().catch((e) => {
+                    Sentry.captureException(e);
+                    console.error(e);
+                });
             },
             /* Handlers */
-            open: (_ws: WebSocket) => {
+            open: (ws) => {
                 (async () => {
-                    const ws = _ws as WebSocket & (UpgradeData | UpgradeFailedData);
-                    if (ws.rejected === true) {
+                    const socketData = ws.getUserData();
+                    if (socketData.rejected === true) {
+                        const socket = ws as SocketUpgradeFailed;
                         // If there is a room in the error, let's check if we need to clean it.
-                        if (ws.roomId) {
-                            socketManager.deleteRoomIfEmptyFromId(ws.roomId);
+                        if ("roomId" in socketData) {
+                            socketManager.deleteRoomIfEmptyFromId(socketData.roomId);
                         }
 
-                        //FIX ME to use status code
-                        if (ws.reason === tokenInvalidException) {
-                            socketManager.emitTokenExpiredMessage(ws);
-                        } else if (ws.reason === "textureInvalid") {
-                            socketManager.emitInvalidTextureMessage(ws);
-                        } else if (ws.reason === "error") {
-                            socketManager.emitErrorScreenMessage(ws, ws.error);
+                        if (socketData.reason === tokenInvalidException) {
+                            socketManager.emitTokenExpiredMessage(socket);
+                        } else if (socketData.reason === "error") {
+                            socketManager.emitErrorScreenMessage(socket, socketData.error);
+                        } else if (socketData.reason === "invalidTexture") {
+                            if (socketData.entityType === "character") {
+                                socketManager.emitInvalidCharacterTextureMessage(socket);
+                            } else {
+                                socketManager.emitInvalidCompanionTextureMessage(socket);
+                            }
                         } else {
-                            socketManager.emitConnexionErrorMessage(ws, ws.message);
+                            socketManager.emitConnectionErrorMessage(socket, socketData.message);
                         }
-                        setTimeout(() => ws.close(), 0);
+                        ws.end(1000, "Error message sent");
                         return;
                     }
 
-                    // Let's join the room
-                    const client = this.initClient(ws);
-                    await socketManager.handleJoinRoom(client);
-                    socketManager.emitXMPPSettings(client);
+                    // Mandatory for typing hint
+                    const socket = ws as Socket;
+
+                    socketData.emitInBatch = (payload: SubMessage): void => {
+                        emitInBatch(socket, payload);
+                    };
+
+                    await socketManager.handleJoinRoom(socket);
+
+                    socketManager.emitXMPPSettings(socket);
 
                     //get data information and show messages
-                    if (client.messages && Array.isArray(client.messages)) {
-                        client.messages.forEach((c: unknown) => {
-                            const messageToSend = c as { type: string; message: string };
+                    if (socketData.messages && Array.isArray(socketData.messages)) {
+                        socketData.messages.forEach((c: unknown) => {
+                            const messageToSend = z.object({ type: z.string(), message: z.string() }).parse(c);
 
-                            const sendUserMessage = new SendUserMessage();
-                            sendUserMessage.setType(messageToSend.type);
-                            sendUserMessage.setMessage(messageToSend.message);
+                            const bytes = ServerToClientMessageTsProto.encode({
+                                message: {
+                                    $case: "sendUserMessage",
+                                    sendUserMessage: {
+                                        type: messageToSend.type,
+                                        message: messageToSend.message,
+                                    },
+                                },
+                            }).finish();
 
-                            const serverToClientMessage = new ServerToClientMessage();
-                            serverToClientMessage.setSendusermessage(sendUserMessage);
-
-                            if (!client.disconnecting) {
-                                client.send(serverToClientMessage.serializeBinary().buffer, true);
+                            if (!socketData.disconnecting) {
+                                socket.send(bytes, true);
                             }
                         });
                     }
-                })().catch((e) => console.error(e));
+
+                    // Performance test
+                    /*
+                    const positionMessage = new PositionMessage();
+                    positionMessage.setMoving(true);
+                    positionMessage.setX(300);
+                    positionMessage.setY(300);
+                    positionMessage.setDirection(PositionMessage.Direction.DOWN);
+
+                    const userMovedMessage = new UserMovedMessage();
+                    userMovedMessage.setUserid(1);
+                    userMovedMessage.setPosition(positionMessage);
+
+                    const subMessage = new SubMessage();
+                    subMessage.setUsermovedmessage(userMovedMessage);
+
+                    const startTimestamp2 = Date.now();
+                    for (let i = 0; i < 100000; i++) {
+                        const batchMessage = new BatchMessage();
+                        batchMessage.setEvent("");
+                        batchMessage.setPayloadList([
+                            subMessage
+                        ]);
+
+                        const serverToClientMessage = new ServerToClientMessage();
+                        serverToClientMessage.setBatchmessage(batchMessage);
+
+                        client.send(serverToClientMessage.serializeBinary().buffer, true);
+                    }
+                    const endTimestamp2 = Date.now();
+
+                    const startTimestamp = Date.now();
+                    for (let i = 0; i < 100000; i++) {
+                        // Let's do a performance test!
+                        const bytes = ServerToClientMessageTsProto.encode({
+                            message: {
+                                $case: "batchMessage",
+                                batchMessage: {
+                                    event: '',
+                                    payload: [
+                                        {
+                                            message: {
+                                                $case: "userMovedMessage",
+                                                userMovedMessage: {
+                                                    userId: 1,
+                                                    position: {
+                                                        moving: true,
+                                                        x: 300,
+                                                        y: 300,
+                                                        direction: PositionMessage_Direction.DOWN,
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        }).finish();
+
+                        client.send(bytes);
+                    }
+                    const endTimestamp = Date.now();
+                    */
+                })().catch((e) => {
+                    Sentry.captureException(e);
+                    console.error(e);
+                });
             },
             message: (ws, arrayBuffer): void => {
                 (async () => {
-                    const client = ws as ExSocketInterface;
-                    const message = ClientToServerMessage.deserializeBinary(new Uint8Array(arrayBuffer));
+                    const socket = ws as Socket;
+                    const message = ClientToServerMessage.decode(new Uint8Array(arrayBuffer));
 
-                    if (message.hasViewportmessage()) {
-                        socketManager.handleViewport(
-                            client,
-                            (message.getViewportmessage() as ViewportMessage).toObject()
-                        );
-                    } else if (message.hasUsermovesmessage()) {
-                        socketManager.handleUserMovesMessage(client, message.getUsermovesmessage() as UserMovesMessage);
-                    } else if (message.hasSetplayerdetailsmessage()) {
-                        socketManager.handleSetPlayerDetails(
-                            client,
-                            message.getSetplayerdetailsmessage() as SetPlayerDetailsMessage
-                        );
-                    } else if (message.hasItemeventmessage()) {
-                        socketManager.handleItemEvent(client, message.getItemeventmessage() as ItemEventMessage);
-                    } else if (message.hasVariablemessage()) {
-                        socketManager.handleVariableEvent(client, message.getVariablemessage() as VariableMessage);
-                    } else if (message.hasWebrtcsignaltoservermessage()) {
-                        socketManager.emitVideo(
-                            client,
-                            message.getWebrtcsignaltoservermessage() as WebRtcSignalToServerMessage
-                        );
-                    } else if (message.hasWebrtcscreensharingsignaltoservermessage()) {
-                        socketManager.emitScreenSharing(
-                            client,
-                            message.getWebrtcscreensharingsignaltoservermessage() as WebRtcSignalToServerMessage
-                        );
-                    } else if (message.hasPlayglobalmessage()) {
-                        await socketManager.emitPlayGlobalMessage(
-                            client,
-                            message.getPlayglobalmessage() as PlayGlobalMessage
-                        );
-                    } else if (message.hasReportplayermessage()) {
-                        await socketManager.handleReportMessage(
-                            client,
-                            message.getReportplayermessage() as ReportPlayerMessage
-                        );
-                    } else if (message.hasQuerymessage()) {
-                        socketManager.handleQueryMessage(client, message.getQuerymessage() as QueryMessage);
-                    } else if (message.hasEmotepromptmessage()) {
-                        socketManager.handleEmotePromptMessage(
-                            client,
-                            message.getEmotepromptmessage() as EmotePromptMessage
-                        );
-                    } else if (message.hasFollowrequestmessage()) {
-                        socketManager.handleFollowRequest(
-                            client,
-                            message.getFollowrequestmessage() as FollowRequestMessage
-                        );
-                    } else if (message.hasFollowconfirmationmessage()) {
-                        socketManager.handleFollowConfirmation(
-                            client,
-                            message.getFollowconfirmationmessage() as FollowConfirmationMessage
-                        );
-                    } else if (message.hasFollowabortmessage()) {
-                        socketManager.handleFollowAbort(client, message.getFollowabortmessage() as FollowAbortMessage);
-                    } else if (message.hasLockgrouppromptmessage()) {
-                        socketManager.handleLockGroup(
-                            client,
-                            message.getLockgrouppromptmessage() as LockGroupPromptMessage
-                        );
-                    } else if (message.hasPingmessage()) {
-                        socketManager.handlePingMessage(client, message.getPingmessage() as PingMessage);
-                    } else if (message.hasEditmapcommandmessage()) {
-                        socketManager.handleEditMapCommandMessage(
-                            client,
-                            message.getEditmapcommandmessage() as EditMapCommandMessage
-                        );
-                    } else if (message.hasAskpositionmessage()) {
-                        socketManager.handleAskPositionMessage(
-                            client,
-                            message.getAskpositionmessage() as AskPositionMessage
-                        );
+                    if (!message.message) {
+                        console.warn("Empty message received.");
+                        return;
+                    }
+
+                    switch (message.message.$case) {
+                        case "viewportMessage": {
+                            socketManager.handleViewport(socket, message.message.viewportMessage);
+                            break;
+                        }
+                        case "userMovesMessage": {
+                            socketManager.handleUserMovesMessage(socket, message.message.userMovesMessage);
+                            break;
+                        }
+                        case "playGlobalMessage": {
+                            await socketManager.emitPlayGlobalMessage(socket, message.message.playGlobalMessage);
+                            break;
+                        }
+                        case "reportPlayerMessage": {
+                            await socketManager.handleReportMessage(socket, message.message.reportPlayerMessage);
+                            break;
+                        }
+                        case "addSpaceFilterMessage": {
+                            socketManager.handleAddSpaceFilterMessage(socket, message.message.addSpaceFilterMessage);
+                            break;
+                        }
+                        case "updateSpaceFilterMessage": {
+                            socketManager.handleUpdateSpaceFilterMessage(
+                                socket,
+                                message.message.updateSpaceFilterMessage
+                            );
+                            break;
+                        }
+                        case "removeSpaceFilterMessage": {
+                            socketManager.handleRemoveSpaceFilterMessage(
+                                socket,
+                                message.message.removeSpaceFilterMessage
+                            );
+                            break;
+                        }
+                        case "setPlayerDetailsMessage": {
+                            socketManager.handleSetPlayerDetails(socket, message.message.setPlayerDetailsMessage);
+                            break;
+                        }
+                        case "watchSpaceMessage": {
+                            void socketManager.handleJoinSpace(
+                                socket,
+                                message.message.watchSpaceMessage.spaceName,
+                                message.message.watchSpaceMessage.spaceFilter
+                            );
+                            break;
+                        }
+                        case "unwatchSpaceMessage": {
+                            void socketManager.handleLeaveSpace(socket, message.message.unwatchSpaceMessage.spaceName);
+                            break;
+                        }
+                        case "cameraStateMessage": {
+                            socketManager.handleCameraState(socket, message.message.cameraStateMessage.value);
+                            break;
+                        }
+                        case "microphoneStateMessage": {
+                            socketManager.handleMicrophoneState(socket, message.message.microphoneStateMessage.value);
+                            break;
+                        }
+                        case "screenSharingStateMessage": {
+                            socketManager.handleScreenSharingState(
+                                socket,
+                                message.message.screenSharingStateMessage.value
+                            );
+                            break;
+                        }
+                        case "megaphoneStateMessage": {
+                            socketManager.handleMegaphoneState(socket, message.message.megaphoneStateMessage);
+                            break;
+                        }
+                        case "jitsiParticipantIdSpaceMessage": {
+                            socketManager.handleJitsiParticipantIdSpace(
+                                socket,
+                                message.message.jitsiParticipantIdSpaceMessage.spaceName,
+                                message.message.jitsiParticipantIdSpaceMessage.value
+                            );
+                            break;
+                        }
+                        case "queryMessage": {
+                            switch (message.message.queryMessage.query?.$case) {
+                                case "roomTagsQuery": {
+                                    void socketManager.handleRoomTagsQuery(socket, message.message.queryMessage);
+                                    break;
+                                }
+                                case "embeddableWebsiteQuery": {
+                                    void socketManager.handleEmbeddableWebsiteQuery(
+                                        socket,
+                                        message.message.queryMessage
+                                    );
+                                    break;
+                                }
+                                case "roomsFromSameWorldQuery": {
+                                    void socketManager.handleRoomsFromSameWorldQuery(
+                                        socket,
+                                        message.message.queryMessage
+                                    );
+                                    break;
+                                }
+                                default: {
+                                    socketManager.forwardMessageToBack(socket, message.message);
+                                }
+                            }
+                            break;
+                        }
+                        case "itemEventMessage":
+                        case "variableMessage":
+                        case "webRtcSignalToServerMessage":
+                        case "webRtcScreenSharingSignalToServerMessage":
+                        case "emotePromptMessage":
+                        case "followRequestMessage":
+                        case "followConfirmationMessage":
+                        case "followAbortMessage":
+                        case "lockGroupPromptMessage":
+                        case "pingMessage":
+                        case "editMapCommandMessage":
+                        case "askPositionMessage": {
+                            socketManager.forwardMessageToBack(socket, message.message);
+                            break;
+                        }
+                        default: {
+                            const _exhaustiveCheck: never = message.message;
+                        }
                     }
 
                     /* Ok is false if backpressure was built up, wait for drain */
                     //let ok = ws.send(message, isBinary);
-                })().catch((e) => console.error(e));
+                })().catch((e) => {
+                    Sentry.captureException(e);
+                    console.error(e);
+                });
             },
             drain: (ws) => {
-                console.log("WebSocket backpressure: " + ws.getBufferedAmount());
+                console.info("WebSocket backpressure: " + ws.getBufferedAmount());
             },
             close: (ws) => {
-                const Client = ws as ExSocketInterface;
+                const socketData = ws.getUserData();
+
+                if (socketData.rejected === true) {
+                    return;
+                }
+
+                const socket = ws as Socket;
+
                 try {
-                    Client.disconnecting = true;
-                    //leave room
-                    socketManager.leaveRoom(Client);
+                    socketData.disconnecting = true;
+                    socketManager.leaveRoom(socket);
+                    socketManager.leaveSpaces(socket);
                 } catch (e) {
-                    console.error('An error occurred on "disconnect"');
+                    Sentry.captureException(`An error occurred on "disconnect" ${e}`);
                     console.error(e);
-                } finally {
-                    if (Client.pingIntervalId) {
-                        clearInterval(Client.pingIntervalId);
-                    }
-                    if (Client.pongTimeoutId) {
-                        clearTimeout(Client.pongTimeoutId);
-                    }
                 }
             },
         });
-    }
-
-    //eslint-disable-next-line @typescript-eslint/no-explicit-any
-    private initClient(ws: any): ExSocketInterface {
-        const client: ExSocketInterface = ws;
-        client.userId = this.nextUserId;
-        this.nextUserId++;
-        client.userJid = ws.userJid;
-        client.userUuid = ws.userUuid;
-        client.IPAddress = ws.IPAddress;
-        client.token = ws.token;
-        client.batchedMessages = new BatchMessage();
-        client.batchTimeout = null;
-        client.emitInBatch = (payload: SubMessage): void => {
-            emitInBatch(client, payload);
-        };
-        client.disconnecting = false;
-
-        client.messages = ws.messages;
-        client.name = ws.name;
-        client.userIdentifier = ws.userIdentifier;
-        client.tags = ws.tags;
-        client.visitCardUrl = ws.visitCardUrl;
-        client.characterLayers = ws.characterLayers;
-        client.companion = ws.companion;
-        client.availabilityStatus = ws.availabilityStatus;
-        client.lastCommandId = ws.lastCommandId;
-        client.roomId = ws.roomId;
-        client.listenedZones = new Set<Zone>();
-        client.jabberId = ws.jabberId;
-        client.jabberPassword = ws.jabberPassword;
-        client.mucRooms = ws.mucRooms;
-        client.activatedInviteUser = ws.activatedInviteUser;
-        client.canEdit = ws.canEdit;
-        client.isLogged = ws.isLogged;
-        client.applications = ws.applications;
-        client.customJsonReplacer = (key: unknown, value: unknown): string | undefined => {
-            if (key === "listenedZones") {
-                return (value as Set<Zone>).size + " listened zone(s)";
-            }
-            return undefined;
-        };
-        return client;
     }
 }

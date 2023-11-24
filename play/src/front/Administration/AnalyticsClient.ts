@@ -1,5 +1,5 @@
-import { POSTHOG_API_KEY, POSTHOG_URL } from "../Enum/EnvironmentVariable";
 import type { PostHog } from "posthog-js";
+import { POSTHOG_API_KEY, POSTHOG_URL } from "../Enum/EnvironmentVariable";
 import { Emoji } from "../Stores/Utils/emojiSchema";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare let window: any;
@@ -307,10 +307,10 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
 
-    openedWebsite(): void {
+    openedWebsite(url: URL): void {
         this.posthogPromise
             ?.then((posthog) => {
-                posthog.capture("wa_opened_website");
+                posthog.capture("wa_opened_website", { url: url.toString() });
             })
             .catch((e) => console.error(e));
     }
@@ -473,6 +473,93 @@ class AnalyticsClient {
         this.posthogPromise
             ?.then((posthog) => {
                 posthog.capture("wa_spontaneous_discussion");
+            })
+            .catch((e) => console.error(e));
+    }
+
+    openMegaphone(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_action_megaphone");
+            })
+            .catch((e) => console.error(e));
+    }
+
+    startMegaphone(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_start_megaphone");
+            })
+            .catch((e) => console.error(e));
+    }
+
+    stopMegaphone(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_stop_megaphone");
+            })
+            .catch((e) => console.error(e));
+    }
+
+    toggleMapEditor(open: boolean): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture(`wa_mapeditor_${open ? "open" : "close"}`);
+            })
+            .catch((e) => console.error(e));
+    }
+
+    addMapEditorProperty(type: string, propertyName: string): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture(`wa_mapeditor_${type}_add_${propertyName}_property`);
+            })
+            .catch((e) => console.error(e));
+    }
+
+    removeMapEditorProperty(type: string, propertyName: string): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture(`wa_map-editor_${type}_remove_${propertyName}_property`);
+            })
+            .catch((e) => console.error(e));
+    }
+
+    openMapEditorTool(toolName: string): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture(`wa_map-editor_open_${toolName}`);
+            })
+            .catch((e) => console.error(e));
+    }
+
+    turnTestSuccess(protocol: string | null): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture(`wa_turn_test_success`, { protocol });
+            })
+            .catch((e) => console.error(e));
+    }
+
+    turnTestFailure(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture(`wa_turn_test_failure`);
+            })
+            .catch((e) => console.error(e));
+    }
+    turnTestTimeout(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture(`wa_turn_test_timeout`);
+            })
+            .catch((e) => console.error(e));
+    }
+
+    noVideoStreamReceived(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture(`wa_no_video_stream_received`);
             })
             .catch((e) => console.error(e));
     }

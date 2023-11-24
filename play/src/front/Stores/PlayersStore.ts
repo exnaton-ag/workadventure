@@ -1,9 +1,9 @@
 import { writable } from "svelte/store";
-import type { PlayerInterface } from "../Phaser/Game/PlayerInterface";
-import type { RoomConnection } from "../Connexion/RoomConnection";
 import { AvailabilityStatus } from "@workadventure/messages";
-import { getColorByString } from "../Components/Video/utils";
-import { localUserStore } from "../Connexion/LocalUserStore";
+import { Color } from "@workadventure/shared-utils";
+import type { PlayerInterface } from "../Phaser/Game/PlayerInterface";
+import type { RoomConnection } from "../Connection/RoomConnection";
+import { localUserStore } from "../Connection/LocalUserStore";
 
 let idCount = 0;
 
@@ -20,24 +20,26 @@ function createPlayersStore() {
         connectToRoomConnection: (roomConnection: RoomConnection) => {
             players = new Map<number, PlayerInterface>();
             set(players);
-            // TODO: it would be cool to unsubscribe properly here
+            // The userJoinedMessageStream and userLeftMessageStream streams are completed in the RoomConnection. No need to unsubscribe.
+            //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
             roomConnection.userJoinedMessageStream.subscribe((message) => {
                 update((users) => {
                     users.set(message.userId, {
                         userId: message.userId,
                         userJid: message.userJid,
                         name: message.name,
-                        characterLayers: message.characterLayers,
+                        characterTextures: message.characterTextures,
                         visitCardUrl: message.visitCardUrl,
-                        companion: message.companion,
+                        companionTexture: message.companionTexture,
                         userUuid: message.userUuid,
                         availabilityStatus: message.availabilityStatus,
-                        color: getColorByString(message.name),
+                        color: Color.getColorByString(message.name),
                         isLogged: localUserStore.isLogged(),
                     });
                     return users;
                 });
             });
+            //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
             roomConnection.userLeftMessageStream.subscribe((message) => {
                 update((users) => {
                     users.delete(message.userId);
@@ -69,12 +71,11 @@ function createPlayersStore() {
                     userId: newUserId,
                     userJid: "fake",
                     name,
-                    characterLayers: [],
+                    characterTextures: [],
                     visitCardUrl: null,
-                    companion: null,
                     availabilityStatus: AvailabilityStatus.ONLINE,
                     userUuid: "dummy",
-                    color: getColorByString(name),
+                    color: Color.getColorByString(name),
                     isLogged: localUserStore.isLogged(),
                 });
                 return users;
