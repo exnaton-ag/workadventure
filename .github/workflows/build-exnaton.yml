@@ -50,6 +50,6 @@ jobs:
         with:
           context: .
           file: play/Dockerfile
-          platforms: linux/amd64
+          platforms: linux/arm64
           push: true
           tags: ${{ env.image_name_latest }},${{ env.image_immutable_tag }}
