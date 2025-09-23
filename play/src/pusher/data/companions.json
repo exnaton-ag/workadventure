@@ -38,6 +38,504 @@
         "name": "cat3",
         "behavior": "cat",
         "url": "resources/characters/pipoya/Cat 01-3.png"
+      },
+      {
+        "id": "bear1",
+        "name": "bear1",
+        "url": "resources/customisation/companions/Bear 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "bear2",
+        "name": "bear2",
+        "url": "resources/customisation/companions/Bear 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "beaver1",
+        "name": "beaver1",
+        "url": "resources/customisation/companions/Beaver 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "bee1",
+        "name": "bee1",
+        "url": "resources/customisation/companions/Bee 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "bird1",
+        "name": "bird1",
+        "url": "resources/customisation/companions/Bird 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "bird2",
+        "name": "bird2",
+        "url": "resources/customisation/companions/Bird 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "bird3",
+        "name": "bird3",
+        "url": "resources/customisation/companions/Bird 01-3.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "blastoise1",
+        "name": "blastoise1",
+        "url": "resources/customisation/companions/Blastoise 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "butterfly1",
+        "name": "butterfly1",
+        "url": "resources/customisation/companions/Butterfly 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "butterfly2",
+        "name": "butterfly2",
+        "url": "resources/customisation/companions/Butterfly 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "camel1",
+        "name": "camel1",
+        "url": "resources/customisation/companions/Camel 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "camel2",
+        "name": "camel2",
+        "url": "resources/customisation/companions/Camel 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "chicken1",
+        "name": "chicken1",
+        "url": "resources/customisation/companions/Chicken 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "chicken2",
+        "name": "chicken2",
+        "url": "resources/customisation/companions/Chicken 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "corgi1",
+        "name": "corgi1",
+        "url": "resources/customisation/companions/Corgi 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "corgi2",
+        "name": "corgi2",
+        "url": "resources/customisation/companions/Corgi 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "cow1",
+        "name": "cow1",
+        "url": "resources/customisation/companions/Cow 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "cow2",
+        "name": "cow2",
+        "url": "resources/customisation/companions/Cow 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "crocodile1",
+        "name": "crocodile1",
+        "url": "resources/customisation/companions/Crocodile 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "death1",
+        "name": "death1",
+        "url": "resources/customisation/companions/Death 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "death2",
+        "name": "death2",
+        "url": "resources/customisation/companions/Death 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "dog4",
+        "name": "dog4",
+        "url": "resources/customisation/companions/Dog 01-4.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "dog5",
+        "name": "dog5",
+        "url": "resources/customisation/companions/Dog 01-5.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "dog6",
+        "name": "dog6",
+        "url": "resources/customisation/companions/Dog 01-6.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "dog7",
+        "name": "dog7",
+        "url": "resources/customisation/companions/Dog 01-7.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "dolphin1",
+        "name": "dolphin1",
+        "url": "resources/customisation/companions/Dolphin 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "dolphin2",
+        "name": "dolphin2",
+        "url": "resources/customisation/companions/Dolphin 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "dragon1",
+        "name": "dragon1",
+        "url": "resources/customisation/companions/Dragon 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "dragon2",
+        "name": "dragon2",
+        "url": "resources/customisation/companions/Dragon 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "dragon3",
+        "name": "dragon3",
+        "url": "resources/customisation/companions/Dragon 01-3.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "dragon4",
+        "name": "dragon4",
+        "url": "resources/customisation/companions/Dragon 01-4.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "duck1",
+        "name": "duck1",
+        "url": "resources/customisation/companions/Duck 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "exnaton1",
+        "name": "exnaton1",
+        "url": "resources/customisation/companions/Exnaton 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "exnaton2",
+        "name": "exnaton2",
+        "url": "resources/customisation/companions/Exnaton 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "exnaton3",
+        "name": "exnaton3",
+        "url": "resources/customisation/companions/Exnaton 01-3.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "ferret1",
+        "name": "ferret1",
+        "url": "resources/customisation/companions/Ferret 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "ferret2",
+        "name": "ferret2",
+        "url": "resources/customisation/companions/Ferret 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "fox1",
+        "name": "fox1",
+        "url": "resources/customisation/companions/Fox 01-1.png",
+        "behaviour": "cat"
+      },
+      {
+        "id": "fox2",
+        "name": "fox2",
+        "url": "resources/customisation/companions/Fox 01-2.png",
+        "behaviour": "cat"
+      },
+      {
+        "id": "fox3",
+        "name": "fox3",
+        "url": "resources/customisation/companions/Fox 01-3.png",
+        "behaviour": "cat"
+      },
+      {
+        "id": "frog1",
+        "name": "frog1",
+        "url": "resources/customisation/companions/Frog 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "frog2",
+        "name": "frog2",
+        "url": "resources/customisation/companions/Frog 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "goose1",
+        "name": "goose1",
+        "url": "resources/customisation/companions/Goose 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "goose2",
+        "name": "goose2",
+        "url": "resources/customisation/companions/Goose 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "goose3",
+        "name": "goose3",
+        "url": "resources/customisation/companions/Goose 01-3.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "grogu1",
+        "name": "grogu1",
+        "url": "resources/customisation/companions/Grogu 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "koala1",
+        "name": "koala1",
+        "url": "resources/customisation/companions/Koala 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "lizzard1",
+        "name": "lizzard1",
+        "url": "resources/customisation/companions/Lizzard 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "lizzard2",
+        "name": "lizzard2",
+        "url": "resources/customisation/companions/Lizzard 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "mario1",
+        "name": "mario1",
+        "url": "resources/customisation/companions/Mario 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "mouse1",
+        "name": "mouse1",
+        "url": "resources/customisation/companions/Mouse 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "mouse2",
+        "name": "mouse2",
+        "url": "resources/customisation/companions/Mouse 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "ostrich1",
+        "name": "ostrich1",
+        "url": "resources/customisation/companions/Ostrich 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "ostrich2",
+        "name": "ostrich2",
+        "url": "resources/customisation/companions/Ostrich 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "owl1",
+        "name": "owl1",
+        "url": "resources/customisation/companions/Owl 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "panda1",
+        "name": "panda1",
+        "url": "resources/customisation/companions/Panda 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "pig1",
+        "name": "pig1",
+        "url": "resources/customisation/companions/Pig 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "pig2",
+        "name": "pig2",
+        "url": "resources/customisation/companions/Pig 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "pokemon1",
+        "name": "pokemon1",
+        "url": "resources/customisation/companions/Pokemon 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "pokemon2",
+        "name": "pokemon2",
+        "url": "resources/customisation/companions/Pokemon 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "penguin1",
+        "name": "penguin1",
+        "url": "resources/customisation/companions/Penguin 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "penguin2",
+        "name": "penguin2",
+        "url": "resources/customisation/companions/Penguin 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "penguin3",
+        "name": "penguin3",
+        "url": "resources/customisation/companions/Penguin 01-3.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "penguin4",
+        "name": "penguin4",
+        "url": "resources/customisation/companions/Penguin 01-4.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "platypus1",
+        "name": "platypus1",
+        "url": "resources/customisation/companions/Platypus 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "platypus2",
+        "name": "platypus2",
+        "url": "resources/customisation/companions/Platypus 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "polarbear1",
+        "name": "polarbear1",
+        "url": "resources/customisation/companions/Polar Bear 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "rtwodtwo1",
+        "name": "rtwodtwo1",
+        "url": "resources/customisation/companions/R2D2 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "raccoon1",
+        "name": "raccoon1",
+        "url": "resources/customisation/companions/Raccoon 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "raccoon2",
+        "name": "raccoon2",
+        "url": "resources/customisation/companions/Raccoon 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "shark1",
+        "name": "shark1",
+        "url": "resources/customisation/companions/Shark 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "shark2",
+        "name": "shark2",
+        "url": "resources/customisation/companions/Shark 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "sheep1",
+        "name": "sheep1",
+        "url": "resources/customisation/companions/Sheep 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "snake1",
+        "name": "snake1",
+        "url": "resources/customisation/companions/Snake 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "snake2",
+        "name": "snake2",
+        "url": "resources/customisation/companions/Snake 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "squirrel1",
+        "name": "squirrel1",
+        "url": "resources/customisation/companions/Squirrel 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "squirrel2",
+        "name": "squirrel2",
+        "url": "resources/customisation/companions/Squirrel 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "tanuki1",
+        "name": "tanuki1",
+        "url": "resources/customisation/companions/Tanuki 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "tanuki2",
+        "name": "tanuki2",
+        "url": "resources/customisation/companions/Tanuki 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "tiger1",
+        "name": "tiger1",
+        "url": "resources/customisation/companions/Tiger 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "tiger2",
+        "name": "tiger2",
+        "url": "resources/customisation/companions/Tiger 01-2.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "wildboar1",
+        "name": "wildboar1",
+        "url": "resources/customisation/companions/Wildboar 01-1.png",
+        "behaviour": "dog"
+      },
+      {
+        "id": "wildboar2",
+        "name": "wildboar2",
+        "url": "resources/customisation/companions/Wildboar 01-2.png",
+        "behaviour": "dog"
       }
     ]
   }
