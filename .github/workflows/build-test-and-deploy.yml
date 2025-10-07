@@ -301,9 +301,6 @@ jobs:
       - name: Fill .env file
         run: |
           sed -i "s/ROOM_API_SECRET_KEY=/ROOM_API_SECRET_KEY=MYAWESOMEKEY/g" .env
-          sed -i "s/JITSI_DOMAIN=/JITSI_DOMAIN=coremeet.workadventu.re/g" .env
-          sed -i "s/JITSI_MUC_DOMAIN=/JITSI_MUC_DOMAIN=muc.prosody.workadventu.re/g" .env
-          sed -i "s/JITSI_XMPP_DOMAIN=/JITSI_XMPP_DOMAIN=prosody.workadventu.re/g" .env
           sed -i "s/KLAXOON_ENABLED=false/KLAXOON_ENABLED=true/g" .env
           sed -i "s/KLAXOON_CLIENT_ID=/KLAXOON_CLIENT_ID=${{ env.KLAXOON_CLIENT_ID }}/g" .env
           sed -i "s/MAP_STORAGE_API_TOKEN=/MAP_STORAGE_API_TOKEN=MYAWESOMEKEY/g" .env  
@@ -375,6 +372,7 @@ jobs:
         env:
           RENDERER_MODE: ${{ matrix.renderer }}
           NO_FLAKY: ${{ steps.check-no-flaky.outputs.has_no_flaky_label }}
+          IS_FORK: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.owner.login != 'workadventure') && (github.event_name == 'pull_request' || github.repository_owner != 'workadventure') }}
       - name: Display docker compose logs on failure
         run: docker compose -f docker-compose.yaml -f docker-compose.e2e.yml logs
         if: failure()
@@ -587,16 +585,13 @@ jobs:
           sed -i "s/MAP_STORAGE_AUTHENTICATION_PASSWORD=/MAP_STORAGE_AUTHENTICATION_PASSWORD=password/g" .env
           sed -i "s/ADMIN_API_TOKEN=/ADMIN_API_TOKEN=123/g" .env
           sed -i "s/ROOM_API_SECRET_KEY=/ROOM_API_SECRET_KEY=MYAWESOMEKEY/g" .env
-          sed -i "s/JITSI_DOMAIN=/JITSI_DOMAIN=coremeet.workadventu.re/g" .env
-          sed -i "s/JITSI_MUC_DOMAIN=/JITSI_MUC_DOMAIN=muc.prosody.workadventu.re/g" .env
-          sed -i "s/JITSI_XMPP_DOMAIN=/JITSI_XMPP_DOMAIN=prosody.workadventu.re/g" .env
           sed -i "s/FEATURE_FLAG_BROADCAST_AREAS=/FEATURE_FLAG_BROADCAST_AREAS=true/g" .env
           sed -i "s/KLAXOON_ENABLED=false/KLAXOON_ENABLED=true/g" .env
           sed -i "s/KLAXOON_CLIENT_ID=/KLAXOON_CLIENT_ID=${{ env.KLAXOON_CLIENT_ID }}/g" .env
           sed -i "s/ROOM_API_SECRET_KEY=/ROOM_API_SECRET_KEY=MYAWESOMEKEY/g" .env
           sed -i "s/OPENID_PROMPT=/OPENID_PROMPT=login/g" .env
           sed -i "s/MAX_USERS_FOR_WEBRTC=4/MAX_USERS_FOR_WEBRTC=3/g" .env
-          sed -i "s/LIVEKIT_HOST=/LIVEKIT_HOST=http:\/\/livekit.workadventure.localhost/g" .env
+          sed -i "s/LIVEKIT_HOST=/LIVEKIT_HOST=https:\/\/livekit.workadventure.localhost/g" .env
           sed -i "s/LIVEKIT_API_KEY=/LIVEKIT_API_KEY=devkey/g" .env
           sed -i "s/LIVEKIT_API_SECRET=/LIVEKIT_API_SECRET=12345678901234567890123456789012/g" .env
           sed -i "s/MAX_PER_GROUP=4/MAX_PER_GROUP=100/g" .env
@@ -756,9 +751,6 @@ jobs:
           commonEnv:
             ENABLE_MAP_EDITOR: true
             KLAXOON_ENABLED: true
-            JITSI_DOMAIN: coremeet.workadventu.re
-            JITSI_MUC_DOMAIN: muc.prosody.workadventu.re
-            JITSI_XMPP_DOMAIN: prosody.workadventu.re
             FEATURE_FLAG_BROADCAST_AREAS: true
             YOUTUBE_ENABLED: true
             GOOGLE_DRIVE_ENABLED: true

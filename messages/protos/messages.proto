@@ -19,6 +19,7 @@ enum AvailabilityStatus {
   DO_NOT_DISTURB = 9;
   BACK_IN_A_MOMENT = 10;
   LIVEKIT = 11;
+  LISTENER = 12;
 }
 
 message PositionMessage {
@@ -952,6 +953,9 @@ message PrivateSpaceEvent {
     AddSpaceUserMessage addSpaceUserMessage = 16;
     UpdateSpaceUserMessage updateSpaceUserMessage = 17;
     RemoveSpaceUserMessage removeSpaceUserMessage = 18;
+    CancelSwitchMessage cancelSwitchMessage = 19;
+    BlockUserMessage blockUserMessage = 20;
+    UnblockUserMessage unblockUserMessage = 21;
   }
 }
 
@@ -967,20 +971,23 @@ message ExecuteSwitchMessage {
   string strategy = 1;
 }
 
-enum LivekitTokenType {
-  WATCHER = 0;
-  STREAMER = 1;
+message CancelSwitchMessage {
+  string strategy = 1;
+}
+
+message BlockUserMessage {
+}
+
+message UnblockUserMessage {
 }
 
 message LivekitInvitationMessage {
   string token = 1;
   string serverUrl = 2;
   bool shouldJoinRoomImmediately = 3;
-  LivekitTokenType tokenType = 4;
 }
 
 message LivekitDisconnectMessage {
-  LivekitTokenType tokenType = 1;
 }
 
 message UserReadyForSwitchEvent {
