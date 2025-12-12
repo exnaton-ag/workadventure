@@ -1628,6 +1628,12 @@
                         "name": "tinfoil_hat1",
                         "url": "resources/customisation/character_hats/tinfoil_hat1.png",
                         "position": 26
+                    },
+                    {
+                        "id": "hat_santa_red",
+                        "name": "hat_santa_red",
+                        "url": "resources/customisation/character_hats/santa_hat_red.png",
+                        "position": 34
                     }
                 ]
             }
@@ -1843,12 +1849,6 @@
                         "name": "accessory_mask",
                         "url": "resources/customisation/character_accessories/mask.png",
                         "position": 33
-                    },
-                    {
-                        "id": "accessory_santa_hat",
-                        "name": "accessory_santa_hat",
-                        "url": "resources/customisation/character_accessories/santa_hat_red.png",
-                        "position": 34
                     }
                 ]
             }
