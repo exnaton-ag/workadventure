@@ -1628,6 +1628,12 @@
                         "name": "tinfoil_hat1",
                         "url": "resources/customisation/character_hats/tinfoil_hat1.png",
                         "position": 26
+                    },
+                    {
+                        "id": "hat_santa_red",
+                        "name": "hat_santa_red",
+                        "url": "resources/customisation/character_hats/santa_hat_red.png",
+                        "position": 27
                     }
                 ]
             }
