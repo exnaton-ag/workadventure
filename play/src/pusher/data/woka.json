@@ -1843,6 +1843,12 @@
                         "name": "accessory_mask",
                         "url": "resources/customisation/character_accessories/mask.png",
                         "position": 33
+                    },
+                    {
+                        "id": "accessory_santa_hat",
+                        "name": "accessory_santa_hat",
+                        "url": "resources/customisation/character_accessories/santa_hat_red.png",
+                        "position": 34
                     }
                 ]
             }
