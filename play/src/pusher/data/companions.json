@@ -536,6 +536,12 @@
         "name": "wildboar2",
         "url": "resources/customisation/companions/Wildboar 01-2.png",
         "behaviour": "dog"
+      },
+      {
+        "id": "wattson",
+        "name": "wattson",
+        "url": "resources/customisation/companions/Wattson.png",
+        "behavior": "dog"
       }
     ]
   }
