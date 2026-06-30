@@ -1634,6 +1634,12 @@
                         "name": "hat_santa_red",
                         "url": "resources/customisation/character_hats/santa_hat_red.png",
                         "position": 27
+                    },
+                    {
+                        "id": "hat_brain",
+                        "name": "hat_brain",
+                        "url": "resources/customisation/character_hats/brain_hat.png",
+                        "position": 28
                     }
                 ]
             }
@@ -1849,6 +1855,12 @@
                         "name": "accessory_mask",
                         "url": "resources/customisation/character_accessories/mask.png",
                         "position": 33
+                    },
+                    {
+                        "id": "accessory_trophy",
+                        "name": "accessory_trophy",
+                        "url": "resources/customisation/character_accessories/trophy.png",
+                        "position": 34
                     }
                 ]
             }

@@ -542,6 +542,30 @@
         "name": "wattson",
         "url": "resources/customisation/companions/Wattson.png",
         "behavior": "dog"
+      },
+      {
+        "id": "brain1",
+        "name": "brain1",
+        "url": "resources/customisation/companions/Brain 01-1.png",
+        "behavior": "dog"
+      },
+      {
+        "id": "seagull1",
+        "name": "seagull1",
+        "url": "resources/customisation/companions/Seagull 01-1.png",
+        "behavior": "dog"
+      },
+      {
+        "id": "droid1",
+        "name": "droid1",
+        "url": "resources/customisation/companions/Droid 01-1.png",
+        "behavior": "dog"
+      },
+      {
+        "id": "cats1",
+        "name": "cats1",
+        "url": "resources/customisation/companions/Cats 01-1.png",
+        "behavior": "cat"
       }
     ]
   }
