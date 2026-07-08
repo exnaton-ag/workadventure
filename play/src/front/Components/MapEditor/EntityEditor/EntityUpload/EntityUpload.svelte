@@ -1,22 +1,24 @@
 <script lang="ts">
-    import { CustomEntityDirection, UploadEntityMessage } from "@workadventure/messages";
+    import type { UploadEntityMessage } from "@workadventure/messages";
+    import { CustomEntityDirection } from "@workadventure/messages";
     import { onDestroy } from "svelte";
     import { v4 as uuidv4 } from "uuid";
-    import { Direction, ENTITY_UPLOAD_SUPPORTED_FORMATS_FRONT, EntityPrefab } from "@workadventure/map-editor";
+    import type { EntityPrefab } from "@workadventure/map-editor";
+    import { Direction, ENTITY_UPLOAD_SUPPORTED_FORMATS_FRONT } from "@workadventure/map-editor";
     import LL from "../../../../../i18n/i18n-svelte";
     import { mapEditorEntityUploadEventStore, selectCategoryStore } from "../../../../Stores/MapEditorStore";
     import CustomEntityEditionForm from "../CustomEntityEditionForm/CustomEntityEditionForm.svelte";
     import { IconCloudUpload } from "@wa-icons";
 
-    let files: FileList | undefined = undefined;
-    let dropZoneRef: HTMLDivElement;
-    let customEntityToUpload: EntityPrefab | undefined = undefined;
-    let errorOnFile: string | undefined;
+    let files: FileList | undefined = $state(undefined);
+    let dropZoneRef: HTMLDivElement | undefined = $state();
+    let customEntityToUpload: EntityPrefab | undefined = $state(undefined);
+    let errorOnFile: string | undefined = $state();
     let tagUploadInProcess: string | undefined;
 
     const BASIC_TYPE = "Custom";
 
-    $: {
+    $effect(() => {
         if (files) {
             const file = files.item(0);
             if (file && isASupportedFormat(file.type)) {
@@ -35,12 +37,12 @@
                 errorOnFile = $LL.mapEditor.entityEditor.uploadEntity.errorOnFileFormat();
             }
         }
-    }
+    });
 
     const mapEditorEntityUploadEventStoreUnsubscriber = mapEditorEntityUploadEventStore.subscribe(
         (uploadEntityMessage) => {
             completeAndResetUpload(uploadEntityMessage);
-        }
+        },
     );
 
     function isASupportedFormat(format: string): boolean {
@@ -52,7 +54,7 @@
         }
 
         // At the end, open the categorie of image uploaded
-        selectCategoryStore.set(tagUploadInProcess);
+        selectCategoryStore.set(tagUploadInProcess ? { kind: "tag", tag: tagUploadInProcess } : undefined);
     }
 
     async function processFileToUpload(customEditedEntity: EntityPrefab) {
@@ -69,7 +71,7 @@
                 file: fileAsUint8Array,
                 direction: CustomEntityDirection.Down,
                 name: customEditedEntity.name,
-                tags: customEditedEntity.tags,
+                tags: $state.snapshot(customEditedEntity.tags),
                 imagePath: `${generatedId}-${fileToUpload.name}`,
                 collisionGrid: customEditedEntity.collisionGrid,
                 depthOffset: customEditedEntity.depthOffset,
@@ -100,7 +102,7 @@
                 }
             }
         }
-        dropZoneRef.classList.remove("border-cyan-400");
+        dropZoneRef?.classList.remove("border-cyan-400");
     }
 
     onDestroy(() => {
@@ -113,8 +115,8 @@
         <CustomEntityEditionForm
             isUploadForm
             customEntity={customEntityToUpload}
-            on:closeForm={initFileUpload}
-            on:applyEntityModifications={({ detail: customModifiedEntity }) =>
+            closeForm={initFileUpload}
+            applyEntityModifications={(customModifiedEntity) =>
                 processFileToUpload(customModifiedEntity).catch((e) => console.error(e))}
         />
     </div>
@@ -122,12 +124,23 @@
     <div class="no-padding">
         <p class="m-0">{$LL.mapEditor.entityEditor.uploadEntity.title()}</p>
         <p class="opacity-50">{$LL.mapEditor.entityEditor.uploadEntity.description()}</p>
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
-            on:drop|preventDefault|stopPropagation={dropHandler}
-            on:dragover|preventDefault={() => dropZoneRef.classList.add("border-cyan-400")}
-            on:dragleave|preventDefault={() => dropZoneRef.classList.remove("border-cyan-400")}
+            ondrop={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                dropHandler(event);
+            }}
+            ondragover={(event) => {
+                event.preventDefault();
+                dropZoneRef?.classList.add("border-cyan-400");
+            }}
+            ondragleave={(event) => {
+                event.preventDefault();
+                dropZoneRef?.classList.remove("border-cyan-400");
+            }}
             bind:this={dropZoneRef}
-            class="hover:cursor-pointer h-32 flex flex-col border border-dashed rounded-md items-center justify-center bg-white bg-opacity-10"
+            class="hover:cursor-pointer h-32 flex flex-col border border-dashed rounded-md items-center justify-center bg-white/10"
         >
             <input
                 id="upload"

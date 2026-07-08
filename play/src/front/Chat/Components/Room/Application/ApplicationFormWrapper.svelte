@@ -1,32 +1,40 @@
 <script lang="ts">
-    import { createEventDispatcher, onDestroy, onMount } from "svelte";
+    import { onDestroy, onMount } from "svelte";
+    import type { KlaxoonEvent } from "@workadventure/shared-utils";
     import {
         ApplicationService,
-        defautlNativeIntegrationAppName,
+        defaultNativeIntegrationAppName,
         GoogleWorkSpaceService,
-        KlaxoonEvent,
         KlaxoonService,
         MediaLinkManager,
     } from "@workadventure/shared-utils";
     import CloseButton from "../../../../Components/MapEditor/PropertyEditor/CloseButton.svelte";
-    import { connectionManager } from "../../../../Connection/ConnectionManager";
     import { GOOGLE_DRIVE_PICKER_APP_ID, GOOGLE_DRIVE_PICKER_CLIENT_ID } from "../../../../Enum/EnvironmentVariable";
     import LL from "../../../../../i18n/i18n-svelte";
-    import { ApplicationProperty } from "../MessageInputBar.svelte";
+    import type { ApplicationProperty } from "../MessageInputBar.svelte";
+    import { gameManager } from "../../../../Phaser/Game/GameManager";
 
-    const dispatch = createEventDispatcher<{
-        update: ApplicationProperty;
-        // Currently resolving oEmbed link
-        processing: void;
-        // Resolved oEmbed link
-        processed: void;
-        close: void;
-        input: string;
-    }>();
+    const applicationManager = gameManager.getCurrentGameScene().applicationManager;
 
-    export let property: ApplicationProperty;
+    interface Props {
+        property: ApplicationProperty;
+        close?: () => void;
+        update?: (property: ApplicationProperty) => void;
+        processing?: () => void;
+        processed?: () => void;
+        input?: (link: string) => void;
+    }
 
-    let errorLink: string | undefined;
+    let {
+        property,
+        close = () => {},
+        update = () => {},
+        processing = () => {},
+        processed = () => {},
+        input: inputCallback = () => {},
+    }: Props = $props();
+
+    let errorLink: string | undefined = $state();
     let htmlElementInput: HTMLInputElement;
     let timeOutToFocusElement: ReturnType<typeof setTimeout>;
     let timeOutToHtmlInpuElement: ReturnType<typeof setTimeout>;
@@ -37,48 +45,48 @@
 
         try {
             switch (property.name) {
-                case defautlNativeIntegrationAppName.KLAXOON:
-                    if (connectionManager.klaxoonToolClientId == undefined) return;
+                case defaultNativeIntegrationAppName.KLAXOON:
+                    if (applicationManager.klaxoonToolClientId == undefined) return;
                     KlaxoonService.openKlaxoonActivityPicker(
-                        connectionManager.klaxoonToolClientId,
+                        applicationManager.klaxoonToolClientId,
                         (payload: KlaxoonEvent) => {
                             link = KlaxoonService.getKlaxoonEmbedUrl(
                                 new URL(payload.url),
-                                connectionManager.klaxoonToolClientId
+                                applicationManager.klaxoonToolClientId,
                             );
-                            dispatch("update", { ...property, link });
-                        }
+                            update({ ...property, link });
+                        },
                     );
                     break;
-                case defautlNativeIntegrationAppName.GOOGLE_DRIVE:
-                    if (GOOGLE_DRIVE_PICKER_CLIENT_ID == undefined || GOOGLE_DRIVE_PICKER_APP_ID == undefined) return;
-                    link = await GoogleWorkSpaceService.initGooglePicker(
-                        GOOGLE_DRIVE_PICKER_CLIENT_ID,
-                        GOOGLE_DRIVE_PICKER_APP_ID
-                    );
-                    break;
-                case defautlNativeIntegrationAppName.GOOGLE_DOCS:
+                case defaultNativeIntegrationAppName.GOOGLE_DRIVE:
                     if (GOOGLE_DRIVE_PICKER_CLIENT_ID == undefined || GOOGLE_DRIVE_PICKER_APP_ID == undefined) return;
                     link = await GoogleWorkSpaceService.initGooglePicker(
                         GOOGLE_DRIVE_PICKER_CLIENT_ID,
                         GOOGLE_DRIVE_PICKER_APP_ID,
-                        window.google.picker.ViewId.DOCS
                     );
                     break;
-                case defautlNativeIntegrationAppName.GOOGLE_SHEETS:
+                case defaultNativeIntegrationAppName.GOOGLE_DOCS:
                     if (GOOGLE_DRIVE_PICKER_CLIENT_ID == undefined || GOOGLE_DRIVE_PICKER_APP_ID == undefined) return;
                     link = await GoogleWorkSpaceService.initGooglePicker(
                         GOOGLE_DRIVE_PICKER_CLIENT_ID,
                         GOOGLE_DRIVE_PICKER_APP_ID,
-                        window.google.picker.ViewId.SPREADSHEETS
+                        window.google.picker.ViewId.DOCS,
                     );
                     break;
-                case defautlNativeIntegrationAppName.GOOGLE_SLIDES:
+                case defaultNativeIntegrationAppName.GOOGLE_SHEETS:
                     if (GOOGLE_DRIVE_PICKER_CLIENT_ID == undefined || GOOGLE_DRIVE_PICKER_APP_ID == undefined) return;
                     link = await GoogleWorkSpaceService.initGooglePicker(
                         GOOGLE_DRIVE_PICKER_CLIENT_ID,
                         GOOGLE_DRIVE_PICKER_APP_ID,
-                        window.google.picker.ViewId.PRESENTATIONS
+                        window.google.picker.ViewId.SPREADSHEETS,
+                    );
+                    break;
+                case defaultNativeIntegrationAppName.GOOGLE_SLIDES:
+                    if (GOOGLE_DRIVE_PICKER_CLIENT_ID == undefined || GOOGLE_DRIVE_PICKER_APP_ID == undefined) return;
+                    link = await GoogleWorkSpaceService.initGooglePicker(
+                        GOOGLE_DRIVE_PICKER_CLIENT_ID,
+                        GOOGLE_DRIVE_PICKER_APP_ID,
+                        window.google.picker.ViewId.PRESENTATIONS,
                     );
                     break;
             }
@@ -86,28 +94,27 @@
             console.error(error);
             link = "";
         } finally {
-            dispatch("update", { ...property, link });
+            update({ ...property, link });
         }
     }
 
     async function unFocus() {
-        dispatch("processing");
+        processing();
         errorLink = undefined;
         let link = htmlElementInput.value.trim();
         try {
             let mediaLink = new MediaLinkManager(htmlElementInput.value.trim());
-            console.log("property.name", property.name);
             mediaLink.linkMatchWithApplicationIdOrName(property.name);
             link = await mediaLink.getEmbedLink({
-                klaxoonId: connectionManager.klaxoonToolClientId,
-                excalidrawDomains: connectionManager.excalidrawToolDomains,
+                klaxoonId: applicationManager.klaxoonToolClientId,
+                excalidrawDomains: applicationManager.excalidrawToolDomains,
             });
             if (property.regexUrl) {
                 link = ApplicationService.validateLink(
                     new URL(link),
                     property.regexUrl,
-                    $LL.mapEditor.properties.linkProperties.errorEmbeddableLink(),
-                    property.targetEmbedableUrl
+                    $LL.mapEditor.properties.openWebsite.errorEmbeddableLink(),
+                    property.targetEmbedableUrl,
                 );
             }
         } catch (error) {
@@ -115,33 +122,33 @@
             link = "";
             errorLink = getErrorFromPropertyName() ?? errorLink ?? (error as Error).message;
         } finally {
-            dispatch("processed");
-            dispatch("update", { ...property, link });
+            processed();
+            update({ ...property, link });
         }
     }
 
     function getErrorFromPropertyName() {
         switch (property.name) {
-            case defautlNativeIntegrationAppName.YOUTUBE:
-                return $LL.mapEditor.properties.youtubeProperties.error();
-            case defautlNativeIntegrationAppName.KLAXOON:
-                return $LL.mapEditor.properties.klaxoonProperties.error();
-            case defautlNativeIntegrationAppName.GOOGLE_DRIVE:
-                return $LL.mapEditor.properties.googleDriveProperties.error();
-            case defautlNativeIntegrationAppName.GOOGLE_DOCS:
-                return $LL.mapEditor.properties.googleDocsProperties.error();
-            case defautlNativeIntegrationAppName.GOOGLE_SHEETS:
-                return $LL.mapEditor.properties.googleSheetsProperties.error();
-            case defautlNativeIntegrationAppName.GOOGLE_SLIDES:
-                return $LL.mapEditor.properties.googleSlidesProperties.error();
-            case defautlNativeIntegrationAppName.ERASER:
-                return $LL.mapEditor.properties.eraserProperties.error();
-            case defautlNativeIntegrationAppName.EXCALIDRAW:
-                return $LL.mapEditor.properties.excalidrawProperties.error();
-            case defautlNativeIntegrationAppName.CARDS:
-                return $LL.mapEditor.properties.cardsProperties.error();
-            case defautlNativeIntegrationAppName.TLDRAW:
-                return $LL.mapEditor.properties.tldrawProperties.error();
+            case defaultNativeIntegrationAppName.YOUTUBE:
+                return $LL.mapEditor.properties.youtube.error();
+            case defaultNativeIntegrationAppName.KLAXOON:
+                return $LL.mapEditor.properties.klaxoon.error();
+            case defaultNativeIntegrationAppName.GOOGLE_DRIVE:
+                return $LL.mapEditor.properties.googleDrive.error();
+            case defaultNativeIntegrationAppName.GOOGLE_DOCS:
+                return $LL.mapEditor.properties.googleDocs.error();
+            case defaultNativeIntegrationAppName.GOOGLE_SHEETS:
+                return $LL.mapEditor.properties.googleSheets.error();
+            case defaultNativeIntegrationAppName.GOOGLE_SLIDES:
+                return $LL.mapEditor.properties.googleSlides.error();
+            case defaultNativeIntegrationAppName.ERASER:
+                return $LL.mapEditor.properties.eraser.error();
+            case defaultNativeIntegrationAppName.EXCALIDRAW:
+                return $LL.mapEditor.properties.excalidraw.error();
+            case defaultNativeIntegrationAppName.CARDS:
+                return $LL.mapEditor.properties.cards.error();
+            case defaultNativeIntegrationAppName.TLDRAW:
+                return $LL.mapEditor.properties.tldraw.error();
             default:
                 return null;
         }
@@ -176,15 +183,17 @@
 
 <div class="flex flex-col w-full justify-center items-center py-4 px-6 gap-2">
     <div class="flex flex-row w-full justify-between items-center gap-2">
-        <img draggable="false" class="w-8" src={property.img} alt="info icon" />
-        <h2 class="text-sm p-0 m-0">{property.title}</h2>
+        <img draggable="false" class="w-8 shrink-0" src={property.img} alt={$LL.chat.a11y.applicationIcon()} />
+        <h2 class="min-w-0 flex-1 text-center text-sm p-0 m-0 leading-tight whitespace-normal break-words">
+            {property.title}
+        </h2>
         <CloseButton
-            on:click={() => {
-                dispatch("close");
+            onclick={() => {
+                close();
             }}
         />
     </div>
-    <p class="text-xs text-center p-0 m-0 h-8 w-full whitespace-nowrap overflow-hidden overflow-ellipsis text-gray-400">
+    <p class="text-xs text-center p-0 m-0 min-h-8 w-full leading-tight whitespace-normal break-words text-gray-400">
         {property.description}
     </p>
 
@@ -194,18 +203,18 @@
         class="border rounded w-full !m-0 text-black"
         value={property.link}
         bind:this={htmlElementInput}
-        on:input={() => {
-            dispatch("input", property.link);
+        oninput={() => {
+            inputCallback(property.link);
+            input();
         }}
-        on:focusout={unFocus}
-        on:keydown={(event) => {
+        onfocusout={unFocus}
+        onkeydown={(event) => {
             if (event.key === "Enter") {
                 unFocus().catch((error) => {
                     console.error(error);
                 });
             }
         }}
-        on:input={input}
         placeholder={property.placeholder}
     />
 

@@ -1,5 +1,5 @@
-import { z, ZodObject, ZodRawShape } from "zod";
-import { Request, Response } from "express";
+import type { z, ZodObject, ZodRawShape } from "zod";
+import type { Request, Response } from "express";
 
 /**
  * Either validates the query and returns the parsed query data (according to the validator passed in parameter)
@@ -8,7 +8,7 @@ import { Request, Response } from "express";
 export function validateQuery<T extends ZodObject<ZodRawShape>>(
     req: Request,
     res: Response,
-    validator: T
+    validator: T,
 ): z.infer<T> | undefined {
     const result = validator.safeParse(req.query);
 

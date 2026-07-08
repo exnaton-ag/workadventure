@@ -1,15 +1,17 @@
 <script lang="ts">
-    import { Readable, Unsubscriber } from "svelte/store";
+    import type { Readable, Unsubscriber } from "svelte/store";
     import { Marked } from "marked";
-    import { onDestroy, onMount, createEventDispatcher } from "svelte";
-    import { ChatMessageContent } from "../../../Connection/ChatConnection";
+    import { onDestroy, onMount } from "svelte";
+    import type { ChatMessageContent } from "../../../Connection/ChatConnection";
     import { sanitizeHTML } from "./WA-HTML-Sanitizer";
-    export let content: Readable<ChatMessageContent>;
-    export let hasDepth: false;
 
-    const dispatch = createEventDispatcher<{
-        updateMessageBody: void;
-    }>();
+    interface Props {
+        content: Readable<ChatMessageContent>;
+        hasDepth: false;
+        updateMessageBody?: () => void;
+    }
+
+    let { content, hasDepth, updateMessageBody = () => {} }: Props = $props();
 
     async function getMarked(body: string): Promise<Marked> {
         let marked: Marked;
@@ -27,7 +29,7 @@
                         const language = hljsModule.default.getLanguage(lang) ? lang : "plaintext";
                         return hljsModule.default.highlight(code, { language }).value;
                     },
-                })
+                }),
             );
         } else {
             marked = new Marked();
@@ -35,8 +37,9 @@
 
         // Custom renderer for links
         const renderer = new marked.Renderer();
-        renderer.link = (href: string, title: string, text: string) => {
+        renderer.link = function ({ href, title, tokens }) {
             const titleAttr = title ? `title="${title}"` : "";
+            const text = this.parser.parseInline(tokens);
             return `<a href="${href}" target="_blank" rel="noopener noreferrer" ${titleAttr} style="color: white;">${text}</a>`;
         };
 
@@ -49,7 +52,7 @@
         return marked;
     }
 
-    let html = "";
+    let html = $state("");
 
     let unsubscriber: Unsubscriber | undefined;
     onMount(() => {
@@ -64,7 +67,7 @@
                     html = $content.body;
                 })
                 .finally(() => {
-                    dispatch("updateMessageBody");
+                    updateMessageBody();
                 });
         });
     });
@@ -78,55 +81,8 @@
     /* eslint-disable svelte/no-at-html-tags */
 </script>
 
-<div
-    class="message-bubble m-0 {hasDepth ? 'text-xs leading-4' : 'text-sm'} text-white py-1 px-2"
-    style="padding-top: 7px;"
-    lang=""
->
+<div class="message-bubble m-0 {hasDepth ? 'text-xs leading-4' : 'text-sm'} text-white py-1 px-3" lang="">
     {@html sanitizeHTML(html)}
-    <style>
-        .response .message-bubble p:last-of-type {
-            text-overflow: ellipsis;
-            overflow: hidden;
-            display: -webkit-box;
-            -webkit-box-orient: vertical;
-            -webkit-line-clamp: 1;
-        }
-        .message-bubble p:last-of-type {
-            margin: 0;
-        }
-        .message-bubble a {
-            text-decoration: underline;
-            opacity: 0.75;
-        }
-        pre {
-            margin: 0;
-        }
-        code {
-            display: block;
-            width: 100%;
-            background-color: rgba(255, 255, 255, 0.1);
-            padding: 0.25em 0.5em;
-            border-radius: 8px;
-            overflow-x: auto;
-            padding: 0.2em 0.5em;
-        }
-        ::-webkit-scrollbar {
-            width: 2px;
-            height: 6px;
-        }
-
-        /* Track */
-        /* Track */
-        ::-webkit-scrollbar-track {
-        }
-
-        /* Handle */
-        ::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.5);
-            border-radius: 3px;
-        }
-    </style>
 </div>
 
 <style>

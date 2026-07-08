@@ -1,38 +1,39 @@
 import { z } from "zod";
-import {
-    AnswerMessage,
-    apiVersionHash,
-    ClientToServerMessage,
-    CompanionDetail,
-    ErrorApiData,
-    noUndefined,
-    ServerToClientMessage as ServerToClientMessageTsProto,
-    ServerToClientMessage,
-    SubMessage,
-    WokaDetail,
-} from "@workadventure/messages";
-import { JsonWebTokenError } from "jsonwebtoken";
+import type { AnswerMessage, CompanionDetail, ErrorApiData, WokaDetail } from "@workadventure/messages";
+import { apiVersionHash, noUndefined } from "@workadventure/messages";
+import { errors } from "jose";
 import * as Sentry from "@sentry/node";
-import { TemplatedApp, WebSocket } from "uWebSockets.js";
+import type { TemplatedApp, WebSocket } from "uWebSockets.js";
 import { asError } from "catch-unknown";
-import { Deferred } from "ts-deferred";
 import Debug from "debug";
 import { AxiosError } from "axios";
+import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import type { FetchMemberDataByUuidResponse } from "../services/AdminApi";
 import type { AdminSocketTokenData } from "../services/JWTTokenManager";
 import { jwtTokenManager, tokenInvalidException } from "../services/JWTTokenManager";
-import { Socket, socketManager, SocketUpgradeFailed } from "../services/SocketManager";
-import { ADMIN_SOCKETS_TOKEN, DISABLE_ANONYMOUS, SOCKET_IDLE_TIMER } from "../enums/EnvironmentVariable";
-import type { Zone } from "../models/Zone";
+import { socketManager } from "../services/SocketManager";
+import {
+    ADMIN_SOCKETS_TOKEN,
+    DISABLE_ANONYMOUS,
+    PUSHER_ADMIN_WS_MAX_BACKPRESSURE_BYTES,
+    SOCKET_IDLE_TIMER,
+} from "../enums/EnvironmentVariable";
 import type { AdminSocketData } from "../models/Websocket/AdminSocketData";
 import type { AdminMessageInterface } from "../models/Websocket/Admin/AdminMessages";
 import { isAdminMessageInterface } from "../models/Websocket/Admin/AdminMessages";
 import { adminService } from "../services/AdminService";
-import { validateWebsocketQuery } from "../services/QueryValidator";
-import { SocketData, SpaceName } from "../models/Websocket/SocketData";
-import { emitInBatch } from "../services/IoSocketHelpers";
+import type { ConnectingSocketData, SpaceName } from "../models/Websocket/SocketData";
+import { ClientAbortError } from "../models/ClientAbortError";
+import { ClientNotPartOfSpaceError, UserAlreadyAddedInSpaceError } from "../models/SpaceValidationErrors";
+import { videoQualityAnalyticsQueue } from "../services/VideoQualityAnalyticsQueue";
+import { PusherRoomSocketController } from "../services/PusherRoomSocketController";
+import { AdminWebSocketBackpressureWriter } from "../services/AdminWebSocketBackpressureWriter";
+import type { PusherWebSocket } from "../services/PusherWebSocket";
+
+type PendingAnswerMessage = Omit<AnswerMessage, "answer"> & { answer?: AnswerMessage["answer"] };
 
 const debug = Debug("pusher:requests");
+const ADMIN_WS_BACKPRESSURE_DRAIN_TIMEOUT_MS = 10_000;
 
 type UpgradeFailedInvalidData = {
     rejected: true;
@@ -56,6 +57,9 @@ type UpgradeFailedInvalidTexture = {
 export type UpgradeFailedData = UpgradeFailedErrorData | UpgradeFailedInvalidData | UpgradeFailedInvalidTexture;
 
 export class IoSocketController {
+    private readonly roomSocketController: PusherRoomSocketController;
+    private readonly adminSocketWriters = new WeakMap<WebSocket<AdminSocketData>, AdminWebSocketBackpressureWriter>();
+
     constructor(private readonly app: TemplatedApp) {
         // Global handler for unhandled Promises
         // The listener never needs to be removed, because we are in a singleton that is never destroyed.
@@ -65,6 +69,8 @@ export class IoSocketController {
             Sentry.captureException(reason);
         });
 
+        this.roomSocketController = new PusherRoomSocketController(this.app);
+
         this.ioConnection();
         if (ADMIN_SOCKETS_TOKEN) {
             this.adminRoomSocket();
@@ -73,32 +79,53 @@ export class IoSocketController {
 
     adminRoomSocket(): void {
         this.app.ws<AdminSocketData>("/ws/admin/rooms", {
+            maxBackpressure: PUSHER_ADMIN_WS_MAX_BACKPRESSURE_BYTES,
             upgrade: (res, req, context) => {
                 const websocketKey = req.getHeader("sec-websocket-key");
                 const websocketProtocol = req.getHeader("sec-websocket-protocol");
                 const websocketExtensions = req.getHeader("sec-websocket-extensions");
 
-                res.upgrade<AdminSocketData>(
-                    {
-                        adminConnections: new Map(),
-                        disconnecting: false,
-                    },
-                    websocketKey,
-                    websocketProtocol,
-                    websocketExtensions,
-                    context
-                );
+                res.cork(() => {
+                    res.upgrade<AdminSocketData>(
+                        {
+                            adminConnections: new Map(),
+                            disconnecting: false,
+                            sendMessage: () => {
+                                return;
+                            },
+                        },
+                        websocketKey,
+                        websocketProtocol,
+                        websocketExtensions,
+                        context,
+                    );
+                });
             },
             open: (ws) => {
                 console.info(
-                    "Admin socket connect to client on " + Buffer.from(ws.getRemoteAddressAsText()).toString()
+                    "Admin socket connect to client on " + Buffer.from(ws.getRemoteAddressAsText()).toString(),
                 );
                 ws.getUserData().disconnecting = false;
+                const writer = new AdminWebSocketBackpressureWriter(ws, {
+                    maxQueuedMessages: 1_000,
+                    maxQueuedBytes: PUSHER_ADMIN_WS_MAX_BACKPRESSURE_BYTES,
+                    drainTimeoutMs: ADMIN_WS_BACKPRESSURE_DRAIN_TIMEOUT_MS,
+                    onDropped: (reason, priority) => {
+                        console.warn(`Admin websocket dropped ${priority} message: ${reason}`);
+                    },
+                    onClosed: (reason) => {
+                        console.warn(`Admin websocket closed by backpressure: ${reason}`);
+                    },
+                });
+                this.adminSocketWriters.set(ws, writer);
+                ws.getUserData().sendMessage = (message) => {
+                    writer.send(message);
+                };
             },
-            message: (ws, arrayBuffer): void => {
+            message: async (ws, arrayBuffer): Promise<void> => {
                 try {
                     const message: AdminMessageInterface = JSON.parse(
-                        new TextDecoder("utf-8").decode(new Uint8Array(arrayBuffer))
+                        new TextDecoder("utf-8").decode(new Uint8Array(arrayBuffer)),
                     );
 
                     try {
@@ -110,13 +137,13 @@ export class IoSocketController {
                         }
                         Sentry.captureException(`Invalid message received. ${JSON.stringify(message)}`);
                         console.error("Invalid message received.", message);
-                        ws.send(
+                        ws.getUserData().sendMessage(
                             JSON.stringify({
                                 type: "Error",
                                 data: {
                                     message: "Invalid message received! The connection has been closed.",
                                 },
-                            })
+                            }),
                         );
                         ws.end(1007, "Invalid message received!");
                         return;
@@ -127,16 +154,16 @@ export class IoSocketController {
                     let data: AdminSocketTokenData;
 
                     try {
-                        data = jwtTokenManager.verifyAdminSocketToken(token);
+                        data = await jwtTokenManager.verifyAdminSocketToken(token);
                     } catch (e) {
                         console.error("Admin socket access refused for token: " + token, e);
-                        ws.send(
+                        ws.getUserData().sendMessage(
                             JSON.stringify({
                                 type: "Error",
                                 data: {
                                     message: "Admin socket access refused! The connection has been closed.",
                                 },
-                            })
+                            }),
                         );
                         ws.end(1008, "Access refused");
                         return;
@@ -146,22 +173,22 @@ export class IoSocketController {
 
                     if (message.event === "listen") {
                         const notAuthorizedRoom = message.roomIds.filter(
-                            (roomId) => !authorizedRoomIds.includes(roomId)
+                            (roomId) => !authorizedRoomIds.includes(roomId),
                         );
 
                         if (notAuthorizedRoom.length > 0) {
                             const errorMessage = `Admin socket refused for client on ${Buffer.from(
-                                ws.getRemoteAddressAsText()
+                                ws.getRemoteAddressAsText(),
                             ).toString()} listening of : \n${JSON.stringify(notAuthorizedRoom)}`;
                             Sentry.captureException(errorMessage);
                             console.error(errorMessage);
-                            ws.send(
+                            ws.getUserData().sendMessage(
                                 JSON.stringify({
                                     type: "Error",
                                     data: {
                                         message: errorMessage,
                                     },
-                                })
+                                }),
                             );
                             ws.end(1008, "Access refused");
                             return;
@@ -177,7 +204,7 @@ export class IoSocketController {
                         const messageToEmit = message.message;
                         // Get roomIds of the world where we want broadcast the message
                         const roomIds = authorizedRoomIds.filter(
-                            (authorizeRoomId) => authorizeRoomId.split("/")[5] === message.world
+                            (authorizeRoomId) => authorizeRoomId.split("/")[5] === message.world,
                         );
 
                         for (const roomId of roomIds) {
@@ -194,7 +221,7 @@ export class IoSocketController {
                                         messageToEmit.userUuid,
                                         messageToEmit.message,
                                         messageToEmit.type,
-                                        roomId
+                                        roomId,
                                     )
                                     .catch((error) => {
                                         Sentry.captureException(error);
@@ -211,500 +238,381 @@ export class IoSocketController {
             close: (ws) => {
                 try {
                     ws.getUserData().disconnecting = true;
+                    this.adminSocketWriters.get(ws)?.close("target_closed");
+                    this.adminSocketWriters.delete(ws);
                     socketManager.leaveAdminRoom(ws);
                 } catch (e) {
                     Sentry.captureException(`An error occurred on admin "disconnect" ${e}`);
                     console.error(`An error occurred on admin "disconnect" ${e}`);
                 }
             },
+            drain: (ws) => {
+                this.adminSocketWriters.get(ws)?.handleDrain();
+            },
         });
     }
 
     ioConnection(): void {
-        this.app.ws<SocketData | UpgradeFailedData>("/ws/room", {
+        this.roomSocketController.ws("/ws/room", {
             /* Options */
             //compression: uWS.SHARED_COMPRESSOR,
             idleTimeout: SOCKET_IDLE_TIMER,
             maxPayloadLength: 16 * 1024 * 1024,
             maxBackpressure: 65536, // Maximum 64kB of data in the buffer.
-            upgrade: (res, req, context) => {
-                (async () => {
-                    /* Keep track of abortions */
-                    const upgradeAborted = { aborted: false };
+            queryValidator: z.object({
+                roomId: z.string(),
+                characterTextureIds: z.union([z.string(), z.string().array()]).optional(),
+                companionTextureId: z.string().optional(),
+                lastCommandId: z.string().optional(),
+                version: z.string(),
+                chatID: z.string(),
+                roomName: z.string(),
+                cameraState: z.string().transform((val) => val === "true"),
+                microphoneState: z.string().transform((val) => val === "true"),
+                tabId: z.string(),
+            }),
+            upgrade: async ({ query, request, isAborted, upgrade, reject }) => {
+                debug(
+                    `FrontController => [${request.method}] ${request.url} — IP: ${
+                        request.ipAddress
+                    } — Time: ${Date.now()}`,
+                );
 
-                    res.onAborted(() => {
-                        /* We can simply signal that we were aborted */
-                        upgradeAborted.aborted = true;
-                    });
+                // We abuse the protocol header to pass the JWT token (to avoid sending it in the query string)
+                const token = request.token;
+                const ipAddress = request.ipAddress;
+                const locale = request.locale;
 
-                    const query = validateWebsocketQuery(
-                        req,
-                        res,
-                        context,
-                        z.object({
-                            roomId: z.string(),
-                            name: z.string(),
-                            characterTextureIds: z.union([z.string(), z.string().array()]).optional(),
-                            x: z.coerce.number(),
-                            y: z.coerce.number(),
-                            top: z.coerce.number(),
-                            bottom: z.coerce.number(),
-                            left: z.coerce.number(),
-                            right: z.coerce.number(),
-                            companionTextureId: z.string().optional(),
-                            availabilityStatus: z.coerce.number(),
-                            lastCommandId: z.string().optional(),
-                            version: z.string(),
-                            chatID: z.string(),
-                            roomName: z.string(),
-                            cameraState: z.string().transform((val) => val === "true"),
-                            microphoneState: z.string().transform((val) => val === "true"),
-                        })
-                    );
+                const { roomId, lastCommandId, version, companionTextureId, roomName, cameraState, microphoneState } =
+                    query;
 
-                    if (query === undefined) {
+                const chatID = query.chatID ? query.chatID : undefined;
+
+                try {
+                    if (version !== apiVersionHash) {
+                        if (isAborted()) {
+                            // If the response points to nowhere, don't attempt an upgrade
+                            return;
+                        }
+                        reject({
+                            rejected: true,
+                            reason: "error",
+                            error: {
+                                status: "error",
+                                type: "retry",
+                                title: "Please refresh",
+                                subtitle: "New version available",
+                                image: "/resources/icons/new_version.png",
+                                imageLogo: "/static/images/logo.png",
+                                code: "NEW_VERSION",
+                                details: "A new version of WorkAdventure is available. Please refresh your window",
+                                canRetryManual: true,
+                                buttonTitle: "Refresh",
+                                timeToRetry: 999999,
+                            },
+                        } satisfies UpgradeFailedData);
                         return;
                     }
 
-                    debug(
-                        `FrontController => [${req.getMethod()}] ${req.getUrl()} — IP: ${req.getHeader(
-                            "x-forwarded-for"
-                        )} — Time: ${Date.now()}`
-                    );
+                    const characterTextureIds: string[] =
+                        query.characterTextureIds === undefined
+                            ? []
+                            : typeof query.characterTextureIds === "string"
+                              ? [query.characterTextureIds]
+                              : query.characterTextureIds;
 
-                    const websocketKey = req.getHeader("sec-websocket-key");
-                    const websocketProtocol = req.getHeader("sec-websocket-protocol");
-                    // We abuse the protocol header to pass the JWT token (to avoid sending it in the query string)
-                    const token = websocketProtocol;
-                    const websocketExtensions = req.getHeader("sec-websocket-extensions");
-                    const ipAddress = req.getHeader("x-forwarded-for");
-                    const locale = req.getHeader("accept-language");
+                    const tokenData = token ? await jwtTokenManager.verifyJWTToken(token) : null;
 
-                    const {
-                        roomId,
-                        x,
-                        y,
-                        top,
-                        bottom,
-                        left,
-                        right,
-                        name,
-                        availabilityStatus,
-                        lastCommandId,
-                        version,
-                        companionTextureId,
-                        roomName,
-                        cameraState,
-                        microphoneState,
-                    } = query;
+                    if (DISABLE_ANONYMOUS && !tokenData) {
+                        throw new Error("Expecting token");
+                    }
 
-                    const chatID = query.chatID ? query.chatID : undefined;
+                    const userIdentifier = tokenData ? tokenData.identifier : "";
+                    const isLogged = !!tokenData?.accessToken;
+
+                    let memberTags: string[] = [];
+                    let memberVisitCardUrl: string | null = null;
+                    let memberUserRoomToken: string | undefined;
+                    let userData: FetchMemberDataByUuidResponse = {
+                        status: "ok",
+                        email: userIdentifier,
+                        userUuid: userIdentifier,
+                        tags: tokenData?.tags ?? [],
+                        visitCardUrl: null,
+                        isCharacterTexturesValid: true,
+                        characterTextures: [],
+                        isCompanionTextureValid: true,
+                        companionTexture: undefined,
+                        messages: [],
+                        userRoomToken: undefined,
+                        activatedInviteUser: true,
+                        canEdit: false,
+                        world: "",
+                        chatID,
+                        canRecord: false,
+                    };
+
+                    let characterTextures: WokaDetail[];
+                    let companionTexture: CompanionDetail | undefined;
 
                     try {
-                        if (version !== apiVersionHash) {
-                            if (upgradeAborted.aborted) {
-                                // If the response points to nowhere, don't attempt an upgrade
+                        try {
+                            const memberTagsFromToken = userData.tags;
+                            userData = await adminService.fetchMemberDataByUuid(
+                                userIdentifier,
+                                tokenData?.accessToken,
+                                roomId,
+                                ipAddress,
+                                characterTextureIds,
+                                companionTextureId,
+                                locale,
+                                memberTagsFromToken,
+                                chatID,
+                            );
+
+                            if (userData.status === "ok" && !userData.isCharacterTexturesValid) {
+                                reject({
+                                    rejected: true,
+                                    reason: "invalidTexture",
+                                    entityType: "character",
+                                } satisfies UpgradeFailedInvalidTexture);
                                 return;
                             }
-                            return res.upgrade(
-                                {
+                            if (userData.status === "ok" && !userData.isCompanionTextureValid) {
+                                reject({
                                     rejected: true,
-                                    reason: "error",
-                                    error: {
-                                        status: "error",
-                                        type: "retry",
-                                        title: "Please refresh",
-                                        subtitle: "New version available",
-                                        image: "/resources/icons/new_version.png",
-                                        imageLogo: "/static/images/logo.png",
-                                        code: "NEW_VERSION",
-                                        details:
-                                            "A new version of WorkAdventure is available. Please refresh your window",
-                                        canRetryManual: true,
-                                        buttonTitle: "Refresh",
-                                        timeToRetry: 999999,
-                                    },
-                                } satisfies UpgradeFailedData,
-                                websocketKey,
-                                websocketProtocol,
-                                websocketExtensions,
-                                context
-                            );
-                        }
+                                    reason: "invalidTexture",
+                                    entityType: "companion",
+                                } satisfies UpgradeFailedInvalidTexture);
+                                return;
+                            }
 
-                        const characterTextureIds: string[] =
-                            query.characterTextureIds === undefined
-                                ? []
-                                : typeof query.characterTextureIds === "string"
-                                ? [query.characterTextureIds]
-                                : query.characterTextureIds;
-
-                        const tokenData = token ? jwtTokenManager.verifyJWTToken(token) : null;
-
-                        if (DISABLE_ANONYMOUS && !tokenData) {
-                            throw new Error("Expecting token");
-                        }
-
-                        const userIdentifier = tokenData ? tokenData.identifier : "";
-                        const isLogged = !!tokenData?.accessToken;
-
-                        let memberTags: string[] = [];
-                        let memberVisitCardUrl: string | null = null;
-                        let memberUserRoomToken: string | undefined;
-                        let userData: FetchMemberDataByUuidResponse = {
-                            status: "ok",
-                            email: userIdentifier,
-                            userUuid: userIdentifier,
-                            tags: tokenData?.tags ?? [],
-                            visitCardUrl: null,
-                            isCharacterTexturesValid: true,
-                            characterTextures: [],
-                            isCompanionTextureValid: true,
-                            companionTexture: undefined,
-                            messages: [],
-                            userRoomToken: undefined,
-                            activatedInviteUser: true,
-                            canEdit: false,
-                            world: "",
-                            chatID,
-                        };
-
-                        let characterTextures: WokaDetail[];
-                        let companionTexture: CompanionDetail | undefined;
-
-                        try {
-                            try {
-                                userData = await adminService.fetchMemberDataByUuid(
-                                    userIdentifier,
-                                    tokenData?.accessToken,
-                                    roomId,
-                                    ipAddress,
-                                    characterTextureIds,
-                                    companionTextureId,
-                                    locale,
-                                    userData.tags,
-                                    chatID
-                                );
-
-                                if (userData.status === "ok" && !userData.isCharacterTexturesValid) {
-                                    return res.upgrade(
-                                        {
-                                            rejected: true,
-                                            reason: "invalidTexture",
-                                            entityType: "character",
-                                        } satisfies UpgradeFailedInvalidTexture,
-                                        websocketKey,
-                                        websocketProtocol,
-                                        websocketExtensions,
-                                        context
-                                    );
-                                }
-                                if (userData.status === "ok" && !userData.isCompanionTextureValid) {
-                                    return res.upgrade(
-                                        {
-                                            rejected: true,
-                                            reason: "invalidTexture",
-                                            entityType: "companion",
-                                        } satisfies UpgradeFailedInvalidTexture,
-                                        websocketKey,
-                                        websocketProtocol,
-                                        websocketExtensions,
-                                        context
-                                    );
-                                }
-
-                                if (userData.status !== "ok") {
-                                    if (upgradeAborted.aborted) {
-                                        // If the response points to nowhere, don't attempt an upgrade
-                                        return;
-                                    }
-
-                                    return res.upgrade(
-                                        {
-                                            rejected: true,
-                                            reason: "error",
-                                            error: userData,
-                                        } satisfies UpgradeFailedData,
-                                        websocketKey,
-                                        websocketProtocol,
-                                        websocketExtensions,
-                                        context
-                                    );
-                                }
-                            } catch (err) {
-                                if (upgradeAborted.aborted) {
+                            if (userData.status !== "ok") {
+                                if (isAborted()) {
                                     // If the response points to nowhere, don't attempt an upgrade
                                     return;
                                 }
-                                throw err;
+
+                                const errorData = userData;
+                                reject({
+                                    rejected: true,
+                                    reason: "error",
+                                    error: errorData,
+                                } satisfies UpgradeFailedData);
+                                return;
                             }
-                            memberTags = userData.tags;
-                            memberVisitCardUrl = userData.visitCardUrl;
-                            characterTextures = userData.characterTextures;
-                            companionTexture = userData.companionTexture ?? undefined;
-                            memberUserRoomToken = userData.userRoomToken;
-                        } catch (e) {
-                            console.info(
-                                "access not granted for user " + (userIdentifier || "anonymous") + " and room " + roomId
-                            );
-                            Sentry.captureException(e);
-                            console.error(e);
-                            throw new Error("User cannot access this world", { cause: e });
+                        } catch (err) {
+                            if (isAborted()) {
+                                // If the response points to nowhere, don't attempt an upgrade
+                                return;
+                            }
+                            throw err;
                         }
-
-                        if (upgradeAborted.aborted) {
-                            console.info("Ouch! Client disconnected before we could upgrade it!");
-                            /* You must not upgrade now */
-                            return;
-                        }
-
-                        const socketData: SocketData = {
-                            rejected: false,
-                            disconnecting: false,
-                            token: token && typeof token === "string" ? token : "",
-                            roomId,
-                            userId: undefined,
-                            userUuid: userData.userUuid,
-                            isLogged,
-                            ipAddress,
-                            name,
-                            characterTextures,
-                            companionTexture,
-                            position: {
-                                x: x,
-                                y: y,
-                                direction: "down",
-                                moving: false,
-                            },
-                            viewport: {
-                                top,
-                                right,
-                                bottom,
-                                left,
-                            },
-                            availabilityStatus,
-                            lastCommandId,
-                            messages: [],
-                            tags: memberTags,
-                            visitCardUrl: memberVisitCardUrl,
-                            userRoomToken: memberUserRoomToken,
-                            activatedInviteUser: userData.activatedInviteUser ?? undefined,
-                            applications: userData.applications,
-                            canEdit: userData.canEdit ?? false,
-                            spaceUserId: "",
-                            emitInBatch: (payload: SubMessage): void => {},
-                            batchedMessages: {
-                                event: "",
-                                payload: [],
-                            },
-                            batchTimeout: null,
-                            backConnection: undefined,
-                            listenedZones: new Set<Zone>(),
-                            pusherRoom: undefined,
-                            spaces: new Set<SpaceName>(),
-                            joinSpacesPromise: new Map<SpaceName, Deferred<void>>(),
-                            chatID,
-                            world: userData.world,
-                            currentChatRoomArea: [],
-                            roomName,
-                            microphoneState,
-                            cameraState,
-                            queryAbortControllers: new Map<number, AbortController>(),
-                        };
-
-                        /* This immediately calls open handler, you must not use res after this call */
-                        res.upgrade<SocketData>(
-                            socketData,
-                            /* Spell these correctly */
-                            websocketKey,
-                            websocketProtocol,
-                            websocketExtensions,
-                            context
-                        );
+                        memberTags = userData.tags;
+                        memberVisitCardUrl = userData.visitCardUrl;
+                        characterTextures = userData.characterTextures;
+                        companionTexture = userData.companionTexture ?? undefined;
+                        memberUserRoomToken = userData.userRoomToken;
                     } catch (e) {
-                        if (e instanceof Error) {
-                            if (!(e instanceof JsonWebTokenError)) {
-                                Sentry.captureException(e);
-                                console.error(e);
-                            }
-                            if (upgradeAborted.aborted) {
-                                // If the response points to nowhere, don't attempt an upgrade
-                                return;
-                            }
-                            res.upgrade(
-                                {
-                                    rejected: true,
-                                    reason: e instanceof JsonWebTokenError ? tokenInvalidException : null,
-                                    message: e.message,
-                                    roomId,
-                                } satisfies UpgradeFailedData,
-                                websocketKey,
-                                websocketProtocol,
-                                websocketExtensions,
-                                context
-                            );
-                        } else {
-                            if (upgradeAborted.aborted) {
-                                // If the response points to nowhere, don't attempt an upgrade
-                                return;
-                            }
-                            res.upgrade(
-                                {
-                                    rejected: true,
-                                    reason: null,
-                                    message: "500 Internal Server Error",
-                                    roomId,
-                                } satisfies UpgradeFailedData,
-                                websocketKey,
-                                websocketProtocol,
-                                websocketExtensions,
-                                context
-                            );
-                        }
+                        console.info(
+                            "access not granted for user " + (userIdentifier || "anonymous") + " and room " + roomId,
+                        );
+                        Sentry.captureException(e);
+                        console.error(e);
+                        throw new Error("User cannot access this world", { cause: e });
                     }
-                })().catch((e) => {
-                    Sentry.captureException(e);
-                    console.error(e);
-                });
-            },
-            /* Handlers */
-            open: (ws) => {
-                (async () => {
-                    const socketData = ws.getUserData();
-                    debug("WebSocket connection established");
-                    if (socketData.rejected === true) {
-                        const socket = ws as SocketUpgradeFailed;
-                        // If there is a room in the error, let's check if we need to clean it.
-                        if ("roomId" in socketData) {
-                            socketManager.deleteRoomIfEmptyFromId(socketData.roomId);
-                        }
 
-                        if (socketData.reason === tokenInvalidException) {
-                            socketManager.emitTokenExpiredMessage(socket);
-                        } else if (socketData.reason === "error") {
-                            socketManager.emitErrorScreenMessage(socket, socketData.error);
-                        } else if (socketData.reason === "invalidTexture") {
-                            if (socketData.entityType === "character") {
-                                socketManager.emitInvalidCharacterTextureMessage(socket);
-                            } else {
-                                socketManager.emitInvalidCompanionTextureMessage(socket);
-                            }
-                        } else {
-                            socketManager.emitConnectionErrorMessage(socket, socketData.message.toString());
-                        }
-                        ws.end(1000, "Error message sent");
+                    if (isAborted()) {
+                        console.info("Ouch! Client disconnected before we could upgrade it!");
+                        /* You must not upgrade now */
                         return;
                     }
 
-                    // Mandatory for typing hint
-                    const socket = ws as Socket;
+                    console.info(`Upgrading connection to WebSocket for tab ${query.tabId}`);
 
-                    socketData.emitInBatch = (payload: SubMessage): void => {
-                        emitInBatch(socket, payload);
+                    const socketData: ConnectingSocketData = {
+                        rejected: false,
+                        token: token && typeof token === "string" ? token : "",
+                        roomId,
+                        userId: undefined,
+                        userUuid: userData.userUuid,
+                        isLogged,
+                        ipAddress,
+                        characterTextures,
+                        companionTexture,
+                        lastCommandId,
+                        tags: memberTags,
+                        visitCardUrl: memberVisitCardUrl,
+                        userRoomToken: memberUserRoomToken,
+                        loginMessages: userData.messages,
+                        activatedInviteUser: userData.activatedInviteUser ?? undefined,
+                        applications: userData.applications,
+                        canEdit: userData.canEdit ?? false,
+                        spaceUserId: "",
+                        backConnection: undefined,
+                        listenedZones: new Set<string>(),
+                        pusherRoom: undefined,
+                        spaces: new Set<SpaceName>(),
+                        joinSpacesPromise: new Map<SpaceName, Promise<void>>(),
+                        chatID,
+                        world: userData.world,
+                        currentChatRoomArea: [],
+                        roomName,
+                        microphoneState,
+                        cameraState,
+                        tabId: query.tabId,
+                        attendeesState: false,
+                        queryAbortControllers: new Map<number, AbortController>(),
+                        canRecord: userData.canRecord ?? false,
                     };
 
-                    await socketManager.handleJoinRoom(socket);
-
-                    //get data information and show messages
-                    if (socketData.messages && Array.isArray(socketData.messages)) {
-                        socketData.messages.forEach((c: unknown) => {
-                            const messageToSend = z.object({ type: z.string(), message: z.string() }).parse(c);
-                            const bytes = ServerToClientMessageTsProto.encode({
-                                message: {
-                                    $case: "sendUserMessage",
-                                    sendUserMessage: {
-                                        type: messageToSend.type,
-                                        message: messageToSend.message,
-                                    },
-                                },
-                            }).finish();
-                            if (!socketData.disconnecting) {
-                                socket.send(bytes, true);
-                            }
-                        });
+                    /* This immediately calls open handler, you must not use res after this call */
+                    upgrade(socketData);
+                } catch (e) {
+                    if (e instanceof errors.JWTInvalid || e instanceof errors.JWTExpired) {
+                        reject({
+                            rejected: true,
+                            reason: tokenInvalidException,
+                            message: e.message,
+                            roomId,
+                        } satisfies UpgradeFailedData);
+                        return;
                     }
+                    throw e;
+                }
+            },
+            /* Handlers */
+            rejectedOpen: (socketData: UpgradeFailedData) => {
+                debug("Rejected WebSocket connection established");
 
-                    // Performance test
-                    /*
-                    const positionMessage = new PositionMessage();
-                    positionMessage.setMoving(true);
-                    positionMessage.setX(300);
-                    positionMessage.setY(300);
-                    positionMessage.setDirection(PositionMessage.Direction.DOWN);
+                if ("roomId" in socketData) {
+                    socketManager.deleteRoomIfEmptyFromId(socketData.roomId);
+                }
 
-                    const userMovedMessage = new UserMovedMessage();
-                    userMovedMessage.setUserid(1);
-                    userMovedMessage.setPosition(positionMessage);
-
-                    const subMessage = new SubMessage();
-                    subMessage.setUsermovedmessage(userMovedMessage);
-
-                    const startTimestamp2 = Date.now();
-                    for (let i = 0; i < 100000; i++) {
-                        const batchMessage = new BatchMessage();
-                        batchMessage.setEvent("");
-                        batchMessage.setPayloadList([
-                            subMessage
-                        ]);
-
-                        const serverToClientMessage = new ServerToClientMessage();
-                        serverToClientMessage.setBatchmessage(batchMessage);
-
-                        client.send(serverToClientMessage.serializeBinary().buffer, true);
+                if (socketData.reason === tokenInvalidException) {
+                    return socketManager.getTokenExpiredMessage();
+                } else if (socketData.reason === "error") {
+                    return socketManager.toErrorScreenMessage(socketData.error);
+                } else if (socketData.reason === "invalidTexture") {
+                    if (socketData.entityType === "character") {
+                        return socketManager.getInvalidCharacterTextureMessage();
+                    } else {
+                        return socketManager.getInvalidCompanionTextureMessage();
                     }
-                    const endTimestamp2 = Date.now();
+                } else {
+                    return socketManager.toConnectionErrorMessage(socketData.message.toString());
+                }
+            },
+            open: async (socket) => {
+                const socketData = socket.getUserData();
+                debug("WebSocket connection established");
 
-                    const startTimestamp = Date.now();
-                    for (let i = 0; i < 100000; i++) {
-                        // Let's do a performance test!
-                        const bytes = ServerToClientMessageTsProto.encode({
-                            message: {
-                                $case: "batchMessage",
-                                batchMessage: {
-                                    event: '',
-                                    payload: [
-                                        {
-                                            message: {
-                                                $case: "userMovedMessage",
-                                                userMovedMessage: {
-                                                    userId: 1,
-                                                    position: {
-                                                        moving: true,
-                                                        x: 300,
-                                                        y: 300,
-                                                        direction: PositionMessage_Direction.DOWN,
-                                                    }
+                await socketManager.handleConnectToRoom(socket);
+
+                for (const loginMessage of socketData.loginMessages) {
+                    socket.send({
+                        message: {
+                            $case: "sendUserMessage",
+                            sendUserMessage: loginMessage,
+                        },
+                    });
+                }
+
+                // Performance test
+                /*
+                const positionMessage = new PositionMessage();
+                positionMessage.setMoving(true);
+                positionMessage.setX(300);
+                positionMessage.setY(300);
+                positionMessage.setDirection(PositionMessage.Direction.DOWN);
+
+                const userMovedMessage = new UserMovedMessage();
+                userMovedMessage.setUserid(1);
+                userMovedMessage.setPosition(positionMessage);
+
+                const subMessage = new SubMessage();
+                subMessage.setUsermovedmessage(userMovedMessage);
+
+                const startTimestamp2 = Date.now();
+                for (let i = 0; i < 100000; i++) {
+                    const batchMessage = new BatchMessage();
+                    batchMessage.setEvent("");
+                    batchMessage.setPayloadList([
+                        subMessage
+                    ]);
+
+                    const serverToClientMessage = new ServerToClientMessage();
+                    serverToClientMessage.setBatchmessage(batchMessage);
+
+                    client.send(serverToClientMessage.serializeBinary().buffer, true);
+                }
+                const endTimestamp2 = Date.now();
+
+                const startTimestamp = Date.now();
+                for (let i = 0; i < 100000; i++) {
+                    // Let's do a performance test!
+                    const bytes = ServerToClientMessageTsProto.encode({
+                        message: {
+                            $case: "batchMessage",
+                            batchMessage: {
+                                event: '',
+                                payload: [
+                                    {
+                                        message: {
+                                            $case: "userMovedMessage",
+                                            userMovedMessage: {
+                                                userId: 1,
+                                                position: {
+                                                    moving: true,
+                                                    x: 300,
+                                                    y: 300,
+                                                    direction: PositionMessage_Direction.DOWN,
                                                 }
                                             }
                                         }
-                                    ]
-                                }
+                                    }
+                                ]
                             }
-                        }).finish();
+                        }
+                    }).finish();
 
-                        client.send(bytes);
-                    }
-                    const endTimestamp = Date.now();
-                    */
-                })().catch((e) => {
-                    Sentry.captureException(e);
-                    console.error(e);
-                });
+                    client.send(bytes);
+                }
+                const endTimestamp = Date.now();
+                */
             },
-            message: (ws, arrayBuffer): void => {
-                const socket = ws as Socket;
+            reconnect: (socket) => {
+                const userData = socket.getUserData();
+                const rooms = socketManager.getRooms();
+
+                if (!rooms.has(userData.roomId)) {
+                    Sentry.captureException(
+                        `Room ${userData.roomId} not found for socket ${userData.userUuid} (${userData.name}) while reconnecting, closing the connection`,
+                    );
+                    console.error(
+                        `Room ${userData.roomId} not found for socket ${userData.userUuid} (${userData.name}) while reconnecting, closing the connection`,
+                    );
+                    socketManager.cleanupSocket(socket);
+                    socket.end(1008, "Room no longer exists");
+                }
+            },
+            message: (socket, message): void => {
                 Sentry.withIsolationScope(() => {
-                    Sentry.setTag("userUuid", socket.getUserData().userUuid);
-                    Sentry.setTag("roomId", socket.getUserData().roomId);
-                    Sentry.setTag("world", socket.getUserData().world);
+                    const userData = socket.getUserData();
+                    Sentry.setTag("userUuid", userData.userUuid);
+                    Sentry.setTag("roomId", userData.roomId);
+                    Sentry.setTag("world", userData.world);
                     (async () => {
-                        const message = ClientToServerMessage.decode(new Uint8Array(arrayBuffer));
                         if (!message.message) {
                             console.warn("Empty message received.");
                             return;
                         }
 
                         switch (message.message.$case) {
+                            case "joinRoomFrontMessage": {
+                                await socketManager.handleJoinRoom(socket, message.message.joinRoomFrontMessage);
+                                break;
+                            }
                             case "viewportMessage": {
                                 socketManager.handleViewport(socket, message.message.viewportMessage);
                                 break;
@@ -723,30 +631,26 @@ export class IoSocketController {
                             }
                             case "addSpaceFilterMessage": {
                                 if (message.message.addSpaceFilterMessage.spaceFilterMessage !== undefined)
-                                    message.message.addSpaceFilterMessage.spaceFilterMessage.spaceName = `${
-                                        socket.getUserData().world
-                                    }.${message.message.addSpaceFilterMessage.spaceFilterMessage.spaceName}`;
+                                    message.message.addSpaceFilterMessage.spaceFilterMessage.spaceName = `${userData.world}.${message.message.addSpaceFilterMessage.spaceFilterMessage.spaceName}`;
                                 await socketManager.handleAddSpaceFilterMessage(
                                     socket,
-                                    noUndefined(message.message.addSpaceFilterMessage)
+                                    noUndefined(message.message.addSpaceFilterMessage),
                                 );
                                 break;
                             }
                             case "removeSpaceFilterMessage": {
                                 if (message.message.removeSpaceFilterMessage.spaceFilterMessage !== undefined)
-                                    message.message.removeSpaceFilterMessage.spaceFilterMessage.spaceName = `${
-                                        socket.getUserData().world
-                                    }.${message.message.removeSpaceFilterMessage.spaceFilterMessage.spaceName}`;
+                                    message.message.removeSpaceFilterMessage.spaceFilterMessage.spaceName = `${userData.world}.${message.message.removeSpaceFilterMessage.spaceFilterMessage.spaceName}`;
                                 socketManager.handleRemoveSpaceFilterMessage(
                                     socket,
-                                    noUndefined(message.message.removeSpaceFilterMessage)
+                                    noUndefined(message.message.removeSpaceFilterMessage),
                                 );
                                 break;
                             }
                             case "setPlayerDetailsMessage": {
                                 await socketManager.handleSetPlayerDetails(
                                     socket,
-                                    message.message.setPlayerDetailsMessage
+                                    message.message.setPlayerDetailsMessage,
                                 );
                                 break;
                             }
@@ -757,34 +661,30 @@ export class IoSocketController {
                                     .safeParse(JSON.parse(message.message.updateSpaceMetadataMessage.metadata));
                                 if (!isMetadata.success) {
                                     Sentry.captureException(
-                                        `Invalid metadata received. ${message.message.updateSpaceMetadataMessage.metadata}`
+                                        `Invalid metadata received. ${message.message.updateSpaceMetadataMessage.metadata}`,
                                     );
                                     console.error(
                                         "Invalid metadata received.",
-                                        message.message.updateSpaceMetadataMessage.metadata
+                                        message.message.updateSpaceMetadataMessage.metadata,
                                     );
                                     return;
                                 }
 
-                                message.message.updateSpaceMetadataMessage.spaceName = `${socket.getUserData().world}.${
-                                    message.message.updateSpaceMetadataMessage.spaceName
-                                }`;
+                                message.message.updateSpaceMetadataMessage.spaceName = `${userData.world}.${message.message.updateSpaceMetadataMessage.spaceName}`;
 
                                 socketManager.handleUpdateSpaceMetadata(
                                     socket,
                                     message.message.updateSpaceMetadataMessage.spaceName,
-                                    isMetadata.data
+                                    isMetadata.data,
                                 );
                                 break;
                             }
                             case "updateSpaceUserMessage": {
-                                message.message.updateSpaceUserMessage.spaceName = `${socket.getUserData().world}.${
-                                    message.message.updateSpaceUserMessage.spaceName
-                                }`;
+                                message.message.updateSpaceUserMessage.spaceName = `${userData.world}.${message.message.updateSpaceUserMessage.spaceName}`;
 
                                 await socketManager.handleUpdateSpaceUser(
                                     socket,
-                                    message.message.updateSpaceUserMessage
+                                    message.message.updateSpaceUserMessage,
                                 );
                                 break;
                             }
@@ -792,52 +692,53 @@ export class IoSocketController {
                                 await socketManager.handleUpdateChatId(
                                     socket,
                                     message.message.updateChatIdMessage.email,
-                                    message.message.updateChatIdMessage.chatId
+                                    message.message.updateChatIdMessage.chatId,
                                 );
                                 break;
                             }
                             case "leaveChatRoomAreaMessage": {
                                 await socketManager.handleLeaveChatRoomArea(
                                     socket,
-                                    message.message.leaveChatRoomAreaMessage.roomID
+                                    message.message.leaveChatRoomAreaMessage.roomID,
                                 );
                                 break;
                             }
                             case "queryMessage": {
                                 try {
-                                    const answerMessage: AnswerMessage = {
+                                    const answerMessage: PendingAnswerMessage = {
                                         id: message.message.queryMessage.id,
                                     };
                                     const abortController = new AbortController();
-                                    socket
-                                        .getUserData()
-                                        .queryAbortControllers.set(message.message.queryMessage.id, abortController);
+                                    userData.queryAbortControllers.set(
+                                        message.message.queryMessage.id,
+                                        abortController,
+                                    );
                                     switch (message.message.queryMessage.query?.$case) {
                                         case "roomTagsQuery": {
                                             await socketManager.handleRoomTagsQuery(
                                                 socket,
-                                                message.message.queryMessage
+                                                message.message.queryMessage,
                                             );
                                             break;
                                         }
                                         case "embeddableWebsiteQuery": {
                                             await socketManager.handleEmbeddableWebsiteQuery(
                                                 socket,
-                                                message.message.queryMessage
+                                                message.message.queryMessage,
                                             );
                                             break;
                                         }
                                         case "roomsFromSameWorldQuery": {
                                             await socketManager.handleRoomsFromSameWorldQuery(
                                                 socket,
-                                                message.message.queryMessage
+                                                message.message.queryMessage,
                                             );
                                             break;
                                         }
                                         case "searchMemberQuery": {
                                             const searchMemberAnswer = await socketManager.handleSearchMemberQuery(
                                                 socket,
-                                                message.message.queryMessage.query.searchMemberQuery
+                                                message.message.queryMessage.query.searchMemberQuery,
                                             );
                                             answerMessage.answer = {
                                                 $case: "searchMemberAnswer",
@@ -849,7 +750,7 @@ export class IoSocketController {
                                         case "chatMembersQuery": {
                                             const chatMembersAnswer = await socketManager.handleChatMembersQuery(
                                                 socket,
-                                                message.message.queryMessage.query.chatMembersQuery
+                                                message.message.queryMessage.query.chatMembersQuery,
                                             );
                                             answerMessage.answer = {
                                                 $case: "chatMembersAnswer",
@@ -861,7 +762,7 @@ export class IoSocketController {
                                         case "searchTagsQuery": {
                                             const searchTagsAnswer = await socketManager.handleSearchTagsQuery(
                                                 socket,
-                                                message.message.queryMessage.query.searchTagsQuery
+                                                message.message.queryMessage.query.searchTagsQuery,
                                             );
                                             answerMessage.answer = {
                                                 $case: "searchTagsAnswer",
@@ -870,9 +771,18 @@ export class IoSocketController {
                                             this.sendAnswerMessage(socket, answerMessage);
                                             break;
                                         }
+                                        case "iceServersQuery": {
+                                            const iceServersAnswer = await socketManager.handleIceServersQuery(socket);
+                                            answerMessage.answer = {
+                                                $case: "iceServersAnswer",
+                                                iceServersAnswer,
+                                            };
+                                            this.sendAnswerMessage(socket, answerMessage);
+                                            break;
+                                        }
                                         case "getMemberQuery": {
                                             const getMemberAnswer = await socketManager.handleGetMemberQuery(
-                                                message.message.queryMessage.query.getMemberQuery
+                                                message.message.queryMessage.query.getMemberQuery,
                                             );
                                             if (!getMemberAnswer) {
                                                 answerMessage.answer = {
@@ -890,11 +800,48 @@ export class IoSocketController {
                                             this.sendAnswerMessage(socket, answerMessage);
                                             break;
                                         }
+                                        case "getRecordingsQuery": {
+                                            const getRecordingsAnswer =
+                                                await socketManager.handleGetRecordingsQuery(socket);
+                                            answerMessage.answer = {
+                                                $case: "getRecordingsAnswer",
+                                                getRecordingsAnswer,
+                                            };
+                                            this.sendAnswerMessage(socket, answerMessage);
+                                            break;
+                                        }
+                                        case "deleteRecordingQuery": {
+                                            const deleteRecordingAnswer =
+                                                await socketManager.handleDeleteRecordingQuery(
+                                                    socket,
+                                                    message.message.queryMessage.query.deleteRecordingQuery.recordingId,
+                                                );
+                                            answerMessage.answer = {
+                                                $case: "deleteRecordingAnswer",
+                                                deleteRecordingAnswer,
+                                            };
+                                            this.sendAnswerMessage(socket, answerMessage);
+                                            break;
+                                        }
+                                        case "getSignedUrlQuery": {
+                                            const getSignedUrlAnswer = await socketManager.handleGetSignedUrlQuery(
+                                                socket,
+                                                message.message.queryMessage.query.getSignedUrlQuery.key,
+                                            );
+
+                                            answerMessage.answer = {
+                                                $case: "getSignedUrlAnswer",
+                                                getSignedUrlAnswer,
+                                            };
+
+                                            this.sendAnswerMessage(socket, answerMessage);
+                                            break;
+                                        }
                                         case "enterChatRoomAreaQuery": {
                                             try {
                                                 await socketManager.handleEnterChatRoomAreaQuery(
                                                     socket,
-                                                    message.message.queryMessage.query.enterChatRoomAreaQuery.roomID
+                                                    message.message.queryMessage.query.enterChatRoomAreaQuery.roomID,
                                                 );
                                                 answerMessage.answer = {
                                                     $case: "enterChatRoomAreaAnswer",
@@ -918,7 +865,7 @@ export class IoSocketController {
                                                     $case: "oauthRefreshTokenAnswer",
                                                     oauthRefreshTokenAnswer:
                                                         await socketManager.handleOauthRefreshTokenQuery(
-                                                            message.message.queryMessage.query.oauthRefreshTokenQuery
+                                                            message.message.queryMessage.query.oauthRefreshTokenQuery,
                                                         ),
                                                 };
                                                 this.sendAnswerMessage(socket, answerMessage);
@@ -929,9 +876,9 @@ export class IoSocketController {
                                                         `Token refresh failed for access token: ${error.request?.data} with response => `,
                                                         error.request?.data,
                                                         error.response?.status,
-                                                        error.response?.data
+                                                        error.response?.data,
                                                     );
-                                                const answerMessage: AnswerMessage = {
+                                                const answerMessage: PendingAnswerMessage = {
                                                     id: message.message.queryMessage.id,
                                                 };
                                                 answerMessage.answer = {
@@ -945,69 +892,78 @@ export class IoSocketController {
                                             }
                                             break;
                                         }
+                                        case "startRecordingQuery": {
+                                            const localSpaceName =
+                                                message.message.queryMessage.query.startRecordingQuery.spaceName;
+                                            const worldSpaceName = `${userData.world}.${localSpaceName}`;
+
+                                            await socketManager.handleStartRecording(socket, worldSpaceName, {
+                                                signal: abortController.signal,
+                                            });
+
+                                            answerMessage.answer = {
+                                                $case: "startRecordingAnswer",
+                                                startRecordingAnswer: {},
+                                            };
+                                            this.sendAnswerMessage(socket, answerMessage);
+                                            userData.queryAbortControllers.delete(message.message.queryMessage.id);
+                                            break;
+                                        }
+                                        case "stopRecordingQuery": {
+                                            const localSpaceName =
+                                                message.message.queryMessage.query.stopRecordingQuery.spaceName;
+                                            const worldSpaceName = `${userData.world}.${localSpaceName}`;
+
+                                            await socketManager.handleStopRecording(socket, worldSpaceName, {
+                                                signal: abortController.signal,
+                                            });
+
+                                            answerMessage.answer = {
+                                                $case: "stopRecordingAnswer",
+                                                stopRecordingAnswer: {},
+                                            };
+                                            this.sendAnswerMessage(socket, answerMessage);
+                                            userData.queryAbortControllers.delete(message.message.queryMessage.id);
+                                            break;
+                                        }
                                         case "joinSpaceQuery": {
                                             const localSpaceName =
                                                 message.message.queryMessage.query.joinSpaceQuery.spaceName;
-                                            message.message.queryMessage.query.joinSpaceQuery.spaceName = `${
-                                                socket.getUserData().world
-                                            }.${message.message.queryMessage.query.joinSpaceQuery.spaceName}`;
-                                            try {
-                                                await socketManager.handleJoinSpace(
-                                                    socket,
-                                                    message.message.queryMessage.query.joinSpaceQuery.spaceName,
-                                                    localSpaceName,
-                                                    message.message.queryMessage.query.joinSpaceQuery.filterType,
-                                                    message.message.queryMessage.query.joinSpaceQuery.propertiesToSync,
-                                                    {
-                                                        signal: abortController.signal,
-                                                    }
-                                                );
+                                            message.message.queryMessage.query.joinSpaceQuery.spaceName = `${userData.world}.${message.message.queryMessage.query.joinSpaceQuery.spaceName}`;
+                                            await socketManager.handleJoinSpace(
+                                                socket,
+                                                message.message.queryMessage.query.joinSpaceQuery.spaceName,
+                                                localSpaceName,
+                                                message.message.queryMessage.query.joinSpaceQuery.filterType,
+                                                message.message.queryMessage.query.joinSpaceQuery.propertiesToSync,
+                                                {
+                                                    signal: abortController.signal,
+                                                },
+                                            );
 
-                                                answerMessage.answer = {
-                                                    $case: "joinSpaceAnswer",
-                                                    joinSpaceAnswer: {
-                                                        spaceUserId: socket.getUserData().spaceUserId,
-                                                    },
-                                                };
-                                                this.sendAnswerMessage(socket, answerMessage);
-                                                socketManager.deleteSpaceIfEmpty(
-                                                    message.message.queryMessage.query.joinSpaceQuery.spaceName
-                                                );
-                                            } catch (e) {
-                                                socketManager.deleteSpaceIfEmpty(
-                                                    message.message.queryMessage.query.joinSpaceQuery.spaceName
-                                                );
-                                                throw e;
-                                            }
+                                            answerMessage.answer = {
+                                                $case: "joinSpaceAnswer",
+                                                joinSpaceAnswer: {
+                                                    spaceUserId: userData.spaceUserId,
+                                                },
+                                            };
+                                            this.sendAnswerMessage(socket, answerMessage);
 
                                             break;
                                         }
                                         case "leaveSpaceQuery": {
-                                            message.message.queryMessage.query.leaveSpaceQuery.spaceName = `${
-                                                socket.getUserData().world
-                                            }.${message.message.queryMessage.query.leaveSpaceQuery.spaceName}`;
-                                            try {
-                                                await socketManager.handleLeaveSpace(
-                                                    socket,
-                                                    message.message.queryMessage.query.leaveSpaceQuery.spaceName
-                                                );
+                                            message.message.queryMessage.query.leaveSpaceQuery.spaceName = `${userData.world}.${message.message.queryMessage.query.leaveSpaceQuery.spaceName}`;
+                                            await socketManager.handleLeaveSpace(
+                                                socket,
+                                                message.message.queryMessage.query.leaveSpaceQuery.spaceName,
+                                            );
 
-                                                answerMessage.answer = {
-                                                    $case: "leaveSpaceAnswer",
-                                                    leaveSpaceAnswer: {},
-                                                };
+                                            answerMessage.answer = {
+                                                $case: "leaveSpaceAnswer",
+                                                leaveSpaceAnswer: {},
+                                            };
 
-                                                this.sendAnswerMessage(socket, answerMessage);
-
-                                                socketManager.deleteSpaceIfEmpty(
-                                                    message.message.queryMessage.query.leaveSpaceQuery.spaceName
-                                                );
-                                            } catch (e) {
-                                                socketManager.deleteSpaceIfEmpty(
-                                                    message.message.queryMessage.query.leaveSpaceQuery.spaceName
-                                                );
-                                                throw e;
-                                            }
+                                            this.sendAnswerMessage(socket, answerMessage);
                                             break;
                                         }
                                         case "mapStorageJwtQuery": {
@@ -1021,36 +977,65 @@ export class IoSocketController {
                                             break;
                                         }
                                         default: {
-                                            socket
-                                                .getUserData()
-                                                .queryAbortControllers.delete(message.message.queryMessage.id);
+                                            userData.queryAbortControllers.delete(message.message.queryMessage.id);
                                             socketManager.forwardMessageToBack(socket, message.message);
                                         }
                                     }
                                 } catch (error) {
                                     const err = asError(error);
-                                    Sentry.captureException(err);
+                                    const queryType = message.message.queryMessage.query?.$case ?? "unknown";
+                                    // If the error is due to an abort, don't log it as an error
+                                    if (!(err instanceof AbortError)) {
+                                        console.error(
+                                            "Error handling query message:",
+                                            {
+                                                queryType,
+                                                queryId: message.message.queryMessage.id,
+                                                userUuid: userData.userUuid,
+                                                roomId: userData.roomId,
+                                                world: userData.world,
+                                            },
+                                            error,
+                                        );
+
+                                        // Expected join-space validation error: do not send to Sentry.
+                                        if (!(err instanceof UserAlreadyAddedInSpaceError)) {
+                                            Sentry.captureException(err, {
+                                                extra: {
+                                                    queryType,
+                                                    queryId: message.message.queryMessage.id,
+                                                },
+                                                tags: {
+                                                    queryType,
+                                                },
+                                            });
+                                        }
+                                    }
                                     const answerMessage: AnswerMessage = {
                                         id: message.message.queryMessage.id,
-                                    };
-                                    answerMessage.answer = {
-                                        $case: "error",
-                                        error: {
-                                            message: err.message,
+                                        answer: {
+                                            $case: "error",
+                                            error: {
+                                                message: err.message,
+                                            },
                                         },
                                     };
                                     this.sendAnswerMessage(socket, answerMessage);
-                                    socket.getUserData().queryAbortControllers.delete(message.message.queryMessage.id);
+                                    userData.queryAbortControllers.delete(message.message.queryMessage.id);
                                 }
                                 break;
                             }
                             case "abortQueryMessage": {
-                                const abortController = socket
-                                    .getUserData()
-                                    .queryAbortControllers.get(message.message.abortQueryMessage.id);
+                                const abortController = userData.queryAbortControllers.get(
+                                    message.message.abortQueryMessage.id,
+                                );
                                 if (abortController) {
-                                    abortController.abort();
+                                    debug(`Aborting query with id ${message.message.abortQueryMessage.id} locally`);
+                                    abortController.abort(new ClientAbortError());
                                 } else {
+                                    debug(
+                                        `Forwarding abort query with id ${message.message.abortQueryMessage.id} to back`,
+                                    );
                                     // If no abort controller found, it means the query has already been treated or has been forwarded to the back.
                                     // Let's forward the abort message to the back anyway, just in case.
                                     socketManager.forwardMessageToBack(socket, message.message);
@@ -1059,13 +1044,16 @@ export class IoSocketController {
                             }
                             case "itemEventMessage":
                             case "variableMessage":
+                            case "setAreaPropertyVariableMessage":
                             case "emotePromptMessage":
                             case "followRequestMessage":
                             case "followConfirmationMessage":
                             case "followAbortMessage":
                             case "lockGroupPromptMessage":
                             case "pingMessage":
-                            case "askPositionMessage": {
+                            case "askPositionMessage":
+                            case "meetingInvitationRequestMessage":
+                            case "meetingInvitationResponseMessage": {
                                 socketManager.forwardMessageToBack(socket, message.message);
                                 break;
                             }
@@ -1073,84 +1061,11 @@ export class IoSocketController {
                                 socketManager.forwardMessageToBack(socket, message.message);
                                 break;
                             }
-                            // case "muteParticipantIdMessage": {
-                            //     message.message.muteParticipantIdMessage.spaceName = `${socket.getUserData().world}.${
-                            //         message.message.muteParticipantIdMessage.spaceName
-                            //     }`;
-                            //     socketManager.handleMuteParticipantIdMessage(
-                            //         socket,
-                            //         message.message.muteParticipantIdMessage.spaceName,
-                            //         message.message.muteParticipantIdMessage.mutedUserUuid,
-                            //         message.message
-                            //     );
-                            //     break;
-                            // }
-                            // case "muteVideoParticipantIdMessage": {
-                            //     message.message.muteVideoParticipantIdMessage.spaceName = `${socket.getUserData().world}.${
-                            //         message.message.muteVideoParticipantIdMessage.spaceName
-                            //     }`;
-                            //
-                            //     socketManager.handleMuteVideoParticipantIdMessage(
-                            //         socket,
-                            //         message.message.muteVideoParticipantIdMessage.spaceName,
-                            //         message.message.muteVideoParticipantIdMessage.mutedUserUuid,
-                            //         message.message
-                            //     );
-                            //     break;
-                            // }
-                            // case "kickOffUserMessage": {
-                            //     message.message.kickOffUserMessage.spaceName = `${socket.getUserData().world}.${
-                            //         message.message.kickOffUserMessage.spaceName
-                            //     }`;
-                            //     socketManager.handleKickOffSpaceUserMessage(
-                            //         socket,
-                            //         message.message.kickOffUserMessage.spaceName,
-                            //         message.message.kickOffUserMessage.userId,
-                            //         message.message
-                            //     );
-                            //     break;
-                            // }
-                            // case "muteEveryBodyParticipantMessage": {
-                            //     message.message.muteEveryBodyParticipantMessage.spaceName = `${
-                            //         socket.getUserData().world
-                            //     }.${message.message.muteEveryBodyParticipantMessage.spaceName}`;
-                            //     socketManager.handleMuteEveryBodyParticipantMessage(
-                            //         socket,
-                            //         message.message.muteEveryBodyParticipantMessage.spaceName,
-                            //         message.message.muteEveryBodyParticipantMessage.senderUserId,
-                            //         message.message
-                            //     );
-                            //     break;
-                            // }
-                            // case "muteVideoEveryBodyParticipantMessage": {
-                            //     message.message.muteVideoEveryBodyParticipantMessage.spaceName = `${
-                            //         socket.getUserData().world
-                            //     }.${message.message.muteVideoEveryBodyParticipantMessage.spaceName}`;
-                            //     socketManager.handleMuteVideoEveryBodyParticipantMessage(
-                            //         socket,
-                            //         message.message.muteVideoEveryBodyParticipantMessage.spaceName,
-                            //         message.message.muteVideoEveryBodyParticipantMessage.userId,
-                            //         message.message
-                            //     );
-                            //     break;
-                            // }
                             case "banPlayerMessage": {
                                 await socketManager.handleBanPlayerMessage(socket, message.message.banPlayerMessage);
                                 break;
                             }
 
-                            case "requestFullSyncMessage": {
-                                message.message.requestFullSyncMessage.spaceName = `${socket.getUserData().world}.${
-                                    message.message.requestFullSyncMessage.spaceName
-                                }`;
-
-                                await socketManager.handleRequestFullSync(
-                                    socket,
-                                    message.message.requestFullSyncMessage
-                                );
-
-                                break;
-                            }
                             case "publicEvent": {
                                 message.message.publicEvent.spaceName = `${socket.getUserData().world}.${
                                     message.message.publicEvent.spaceName
@@ -1165,6 +1080,25 @@ export class IoSocketController {
                                 await socketManager.handlePrivateEvent(socket, message.message.privateEvent);
                                 break;
                             }
+                            case "backEvent": {
+                                message.message.backEvent.spaceName = `${socket.getUserData().world}.${
+                                    message.message.backEvent.spaceName
+                                }`;
+
+                                await socketManager.handleBackEvent(socket, message.message.backEvent);
+                                break;
+                            }
+                            case "videoQualityReportMessage": {
+                                /*debug(
+                                    "Received video quality report with %d samples",
+                                    message.message.videoQualityReportMessage.samples.length,
+                                );*/
+                                videoQualityAnalyticsQueue.enqueueReport(
+                                    message.message.videoQualityReportMessage,
+                                    socket.getUserData(),
+                                );
+                                break;
+                            }
                             default: {
                                 const _exhaustiveCheck: never = message.message;
                             }
@@ -1173,21 +1107,27 @@ export class IoSocketController {
                         /* Ok is false if backpressure was built up, wait for drain */
                         //let ok = ws.send(message, isBinary);
                     })().catch((e) => {
-                        Sentry.captureException(e);
+                        // If the error is due to an abort triggered by the client, don't log it as an error and don't send an error message back.
+                        if (e instanceof ClientAbortError) {
+                            return;
+                        }
+                        // Expected validation error: client not part of space; do not send to Sentry but still notify the client.
+                        if (!(e instanceof ClientNotPartOfSpaceError)) {
+                            Sentry.captureException(e);
+                        }
                         console.error("An error occurred while processing a message: ", e);
 
                         try {
-                            socket.send(
-                                ServerToClientMessage.encode({
+                            if (!socket.isDisconnecting()) {
+                                socket.send({
                                     message: {
                                         $case: "errorMessage",
                                         errorMessage: {
                                             message: "An error occurred in pusher: " + asError(e).message,
                                         },
                                     },
-                                }).finish(),
-                                true
-                            );
+                                });
+                            }
                         } catch (error) {
                             Sentry.captureException(error);
                             console.error(error);
@@ -1195,35 +1135,36 @@ export class IoSocketController {
                     });
                 });
             },
-            drain: (ws) => {
-                console.info("WebSocket backpressure: " + ws.getBufferedAmount());
-            },
-            close: (ws) => {
-                const socketData = ws.getUserData();
-
-                if (socketData.rejected === true) {
-                    return;
-                }
-
-                const socket = ws as Socket;
+            close: (socket) => {
                 socketManager.cleanupSocket(socket);
             },
         });
     }
 
-    private sendAnswerMessage(socket: WebSocket<SocketData>, answerMessage: AnswerMessage) {
-        socket.getUserData().queryAbortControllers.delete(answerMessage.id);
-        if (socket.getUserData().disconnecting) {
+    private sendAnswerMessage(socket: PusherWebSocket, answerMessage: PendingAnswerMessage) {
+        if (socket.isDisconnecting()) {
+            // Avoid leaking Map entries when we bail out before scheduling the delayed delete below.
+            socket.getUserData().queryAbortControllers.delete(answerMessage.id);
             return;
         }
-        socket.send(
-            ServerToClientMessage.encode({
-                message: {
-                    $case: "answerMessage",
-                    answerMessage,
-                },
-            }).finish(),
-            true
-        );
+        if (answerMessage.answer === undefined) {
+            throw new Error("Invalid answer message. Answer missing.");
+        }
+        // We don't delete the abort controller right away because between the moment where we send the answer
+        // and the moment where it is received by the client, the client could send an abort message.
+        // So we wait a few seconds before deleting it.
+        setTimeout(() => {
+            socket.getUserData().queryAbortControllers.delete(answerMessage.id);
+        }, 5000);
+        const completeAnswerMessage: AnswerMessage = {
+            id: answerMessage.id,
+            answer: answerMessage.answer,
+        };
+        socket.send({
+            message: {
+                $case: "answerMessage",
+                answerMessage: completeAnswerMessage,
+            },
+        });
     }
 }

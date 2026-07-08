@@ -43,12 +43,17 @@ export const PUSHER_HTTP_PORT = env.PUSHER_HTTP_PORT;
 
 export const PUSHER_WS_PORT = env.PUSHER_WS_PORT;
 export const SOCKET_IDLE_TIMER = env.SOCKET_IDLE_TIMER; // maximum time (in second) without activity before a socket is closed. Should be greater than 60 seconds in order to cope for Chrome intensive throttling (https://developer.chrome.com/blog/timer-throttling-in-chrome-88/#intensive-throttling)
+export const CLIENT_DISCONNECTION_RETENTION_MS = env.CLIENT_DISCONNECTION_RETENTION_MS;
+export const PUSHER_ADMIN_WS_MAX_BACKPRESSURE_BYTES = env.PUSHER_ADMIN_WS_MAX_BACKPRESSURE_BYTES;
 export const ALLOWED_CORS_ORIGIN = env.ALLOWED_CORS_ORIGIN; // Use "*" to allow any domain
 export const PUSHER_URL = env.PUSHER_URL || "";
 export const FRONT_URL = env.FRONT_URL || "";
 export const VITE_URL = env.VITE_URL || FRONT_URL; // Used only in development
 export const PUBLIC_MAP_STORAGE_URL = env.PUBLIC_MAP_STORAGE_URL || "";
 export const INTERNAL_MAP_STORAGE_URL = env.INTERNAL_MAP_STORAGE_URL;
+export const REDIS_HOST = env.REDIS_HOST;
+export const REDIS_PORT = env.REDIS_PORT;
+export const REDIS_PASSWORD = env.REDIS_PASSWORD;
 export const OPID_CLIENT_ID = env.OPENID_CLIENT_ID || env.OPID_CLIENT_ID || "";
 export const OPID_CLIENT_SECRET = env.OPENID_CLIENT_SECRET || env.OPID_CLIENT_SECRET || "";
 export const OPID_CLIENT_ISSUER = env.OPENID_CLIENT_ISSUER || env.OPID_CLIENT_ISSUER || "";
@@ -88,6 +93,16 @@ export const ENABLE_CHAT: boolean = env.ENABLE_CHAT;
 export const ENABLE_CHAT_UPLOAD: boolean = env.ENABLE_CHAT_UPLOAD;
 export const ENABLE_CHAT_ONLINE_LIST: boolean = env.ENABLE_CHAT_ONLINE_LIST;
 export const ENABLE_CHAT_DISCONNECTED_LIST: boolean = env.ENABLE_CHAT_DISCONNECTED_LIST;
+
+// Woka settings
+export const DEFAULT_WOKA_NAME: string = env.DEFAULT_WOKA_NAME || "";
+export const DEFAULT_WOKA_TEXTURE: string = env.DEFAULT_WOKA_TEXTURE || "";
+export const SKIP_CAMERA_PAGE: boolean = env.SKIP_CAMERA_PAGE ?? false;
+/** When true, map details include bypassPwa so the play client never shows the Web App install screen. */
+export const BYPASS_PWA: boolean = env.BYPASS_PWA ?? false;
+export const PROVIDE_DEFAULT_WOKA_NAME: "no" | "random" | "fix" | "fix-plus-random-numbers" | undefined =
+    env.PROVIDE_DEFAULT_WOKA_NAME;
+export const PROVIDE_DEFAULT_WOKA_TEXTURE: "no" | "random" | "fix" | undefined = env.PROVIDE_DEFAULT_WOKA_TEXTURE;
 //export const DEBUG_ERROR_MESSAGES = env.DEBUG_ERROR_MESSAGES;
 
 // If set to the string "true", the /openapi route will return the OpenAPI definition and the swagger-ui/ route will display the documentation
@@ -106,7 +121,16 @@ export const SENTRY_ENVIRONMENT: string | undefined = env.SENTRY_ENVIRONMENT;
 export const SENTRY_RELEASE: string | undefined = env.SENTRY_RELEASE;
 export const SENTRY_TRACES_SAMPLE_RATE: number | undefined = env.SENTRY_TRACES_SAMPLE_RATE;
 
+// TURN config
+export const STUN_SERVER: string | undefined = env.STUN_SERVER;
+export const TURN_SERVER: string | undefined = env.TURN_SERVER;
+export const TURN_USER: string | undefined = env.TURN_USER;
+export const TURN_PASSWORD: string | undefined = env.TURN_PASSWORD;
+export const TURN_STATIC_AUTH_SECRET: string | undefined = env.TURN_STATIC_AUTH_SECRET;
+export const TURN_CREDENTIALS_RENEWAL_TIME: number = env.TURN_CREDENTIALS_RENEWAL_TIME;
+
 // RoomAPI
+export const ROOM_API_BIND_HOST = env.ROOM_API_BIND_HOST ?? "[::]";
 export const ROOM_API_PORT = env.ROOM_API_PORT;
 export const ROOM_API_SECRET_KEY = env.ROOM_API_SECRET_KEY;
 
@@ -142,22 +166,32 @@ export const MATRIX_ADMIN_PASSWORD: string | undefined = env.MATRIX_ADMIN_PASSWO
 export const MATRIX_DOMAIN: string | undefined = env.MATRIX_DOMAIN;
 
 export const ENABLE_SAY: boolean = env.ENABLE_SAY || true;
+
+export const LIVEKIT_RECORDING_S3_ENDPOINT: string | undefined = env.LIVEKIT_RECORDING_S3_ENDPOINT;
+export const LIVEKIT_RECORDING_S3_CDN_ENDPOINT: string | undefined = env.LIVEKIT_RECORDING_S3_CDN_ENDPOINT;
+export const LIVEKIT_RECORDING_S3_ACCESS_KEY: string | undefined = env.LIVEKIT_RECORDING_S3_ACCESS_KEY;
+export const LIVEKIT_RECORDING_S3_SECRET_KEY: string | undefined = env.LIVEKIT_RECORDING_S3_SECRET_KEY;
+export const LIVEKIT_RECORDING_S3_BUCKET: string | undefined = env.LIVEKIT_RECORDING_S3_BUCKET;
+export const LIVEKIT_RECORDING_S3_REGION: string | undefined = env.LIVEKIT_RECORDING_S3_REGION;
+export const LIVEKIT_PIXEL_DENSITY: number = env.LIVEKIT_PIXEL_DENSITY;
 export const ENABLE_ISSUE_REPORT: boolean = env.ENABLE_ISSUE_REPORT || true;
+// Tutorial settings
+export const ENABLE_TUTORIAL: boolean = env.ENABLE_TUTORIAL ?? true;
+export const VIDEO_ANALYTICS_FLUSH_INTERVAL_MS: number = env.VIDEO_ANALYTICS_FLUSH_INTERVAL_MS;
+export const VIDEO_ANALYTICS_TIMEOUT_MS: number = env.VIDEO_ANALYTICS_TIMEOUT_MS;
+export const VIDEO_ANALYTICS_MAX_QUEUE_SIZE: number = env.VIDEO_ANALYTICS_MAX_QUEUE_SIZE;
+export const VIDEO_ANALYTICS_MAX_BATCH_SIZE: number = env.VIDEO_ANALYTICS_MAX_BATCH_SIZE;
+
 // Front container:
 export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
     DEBUG_MODE: env.DEBUG_MODE,
     PUSHER_URL,
     FRONT_URL,
     ADMIN_URL,
-    ADMIN_BO_URL,
     UPLOADER_URL: env.UPLOADER_URL,
     ICON_URL: env.ICON_URL,
-    STUN_SERVER: env.STUN_SERVER,
-    TURN_SERVER: env.TURN_SERVER,
     SKIP_RENDER_OPTIMIZATIONS: env.SKIP_RENDER_OPTIMIZATIONS,
     DISABLE_NOTIFICATIONS: env.DISABLE_NOTIFICATIONS,
-    TURN_USER: env.TURN_USER,
-    TURN_PASSWORD: env.TURN_PASSWORD,
     JITSI_URL: env.JITSI_URL,
     JITSI_PRIVATE_MODE: env.JITSI_PRIVATE_MODE,
     ENABLE_MAP_EDITOR: env.ENABLE_MAP_EDITOR,
@@ -165,6 +199,7 @@ export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
     MAX_USERNAME_LENGTH: env.MAX_USERNAME_LENGTH,
     MAX_PER_GROUP: env.MAX_PER_GROUP,
     MAX_DISPLAYED_VIDEOS: env.MAX_DISPLAYED_VIDEOS,
+    LIVEKIT_PIXEL_DENSITY: env.LIVEKIT_PIXEL_DENSITY,
     NODE_ENV: env.NODE_ENV || "development",
     CONTACT_URL: env.CONTACT_URL,
     POSTHOG_API_KEY: env.POSTHOG_API_KEY,
@@ -177,6 +212,7 @@ export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
     FALLBACK_LOCALE,
     ENABLE_REPORT_ISSUES_MENU: env.ENABLE_REPORT_ISSUES_MENU,
     REPORT_ISSUES_URL: env.REPORT_ISSUES_URL,
+    CLIENT_DISCONNECTION_RETENTION_MS,
     SENTRY_DSN_FRONT: env.SENTRY_DSN_FRONT,
     SENTRY_DSN_PUSHER: env.SENTRY_DSN_PUSHER,
     SENTRY_ENVIRONMENT: env.SENTRY_ENVIRONMENT,
@@ -196,10 +232,7 @@ export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
     EXCALIDRAW_DOMAINS: env.EXCALIDRAW_DOMAINS,
     CARDS_ENABLED: env.CARDS_ENABLED,
     TLDRAW_ENABLED: env.TLDRAW_ENABLED,
-    PEER_VIDEO_LOW_BANDWIDTH: parseInt(env.PEER_VIDEO_LOW_BANDWIDTH || "150"),
-    PEER_VIDEO_RECOMMENDED_BANDWIDTH: parseInt(env.PEER_VIDEO_RECOMMENDED_BANDWIDTH || "600"),
-    PEER_SCREEN_SHARE_LOW_BANDWIDTH: parseInt(env.PEER_SCREEN_SHARE_LOW_BANDWIDTH || "250"),
-    PEER_SCREEN_SHARE_RECOMMENDED_BANDWIDTH: parseInt(env.PEER_SCREEN_SHARE_RECOMMENDED_BANDWIDTH || "1000"),
+    MINIMUM_DISTANCE: env.MINIMUM_DISTANCE,
     GOOGLE_DRIVE_PICKER_CLIENT_ID: env.GOOGLE_DRIVE_PICKER_CLIENT_ID,
     GOOGLE_DRIVE_PICKER_APP_ID: env.GOOGLE_DRIVE_PICKER_APP_ID,
     EMBEDLY_KEY: env.EMBEDLY_KEY,
@@ -212,5 +245,15 @@ export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
     ENABLE_SAY: env.ENABLE_SAY || true,
     ENABLE_ISSUE_REPORT: env.ENABLE_ISSUE_REPORT || true,
     GRPC_MAX_MESSAGE_SIZE: env.GRPC_MAX_MESSAGE_SIZE,
+    TURN_CREDENTIALS_RENEWAL_TIME: env.TURN_CREDENTIALS_RENEWAL_TIME,
+    BACKGROUND_TRANSFORMER_ENGINE: env.BACKGROUND_TRANSFORMER_ENGINE || "selfie-segmentation",
+    // Woka settings
+    DEFAULT_WOKA_NAME,
+    DEFAULT_WOKA_TEXTURE,
+    SKIP_CAMERA_PAGE,
+    BYPASS_PWA,
+    PROVIDE_DEFAULT_WOKA_NAME,
+    PROVIDE_DEFAULT_WOKA_TEXTURE,
+    ENABLE_TUTORIAL,
 };
 export const GRPC_MAX_MESSAGE_SIZE = env.GRPC_MAX_MESSAGE_SIZE;

@@ -1,13 +1,9 @@
-import {
-    AreaDataProperties,
-    EntityData,
-    EntityDataProperties,
-    EntityDimensions,
-    EntityPrefabRef,
-    WAMEntityData,
-} from "@workadventure/map-editor";
-import { Observable, Subject } from "rxjs";
-import { get, Unsubscriber } from "svelte/store";
+import type { EntityData, WAMEntityData } from "@workadventure/map-editor";
+import { AreaDataProperties, EntityDataProperties, EntityDimensions, EntityPrefabRef } from "@workadventure/map-editor";
+import type { Observable } from "rxjs";
+import { Subject } from "rxjs";
+import type { Unsubscriber } from "svelte/store";
+import { get } from "svelte/store";
 import { z } from "zod";
 import * as Sentry from "@sentry/svelte";
 import { actionsMenuStore } from "../../../Stores/ActionsMenuStore";
@@ -109,7 +105,7 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
         data: WAMEntityData,
         imagePathPrefix?: string,
         interactive?: boolean,
-        withGridUpdate?: boolean
+        withGridUpdate?: boolean,
     ): Promise<Entity> {
         const prefab = await this.scene
             .getEntitiesCollectionsManager()
@@ -117,7 +113,7 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
         if (prefab === undefined) {
             console.warn(`Could not find entity ${data.prefabRef.id} in collection ${data.prefabRef.collectionName}`);
             return Promise.reject(
-                new Error(`Could not find entity ${data.prefabRef.id} in collection ${data.prefabRef.collectionName}`)
+                new Error(`Could not find entity ${data.prefabRef.id} in collection ${data.prefabRef.collectionName}`),
             );
         }
 
@@ -286,7 +282,7 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
             (...datas: { propertyName: string; propertyValue: string | number | boolean }[]) => {
                 datas.forEach((data) => this.properties.set(data.propertyName, data.propertyValue));
                 this.gameMapFrontWrapper.handleEntityActionTrigger();
-            }
+            },
         );
         entity.on(EntityEvent.Updated, (data: EntityData) => {
             this.emit(EntitiesManagerEvent.UpdateEntity, data);
@@ -332,7 +328,7 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
                             entity.displayHeight,
                             entity.getCollisionGrid(),
                             entity.getOldPosition(),
-                            this.shiftKey?.isDown
+                            this.shiftKey?.isDown,
                         )
                 ) {
                     const oldPos = entity.getOldPosition();
@@ -362,20 +358,22 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
                 return;
             }
 
+            // If the entity is not editable and the entity editor tool is not active, switch automatically to entity editor tool
             if (
                 get(mapEditorModeStore) &&
-                this.isEntityEditorToolActive() &&
-                !get(mapEditorSelectedEntityPrefabStore)
+                get(mapEditorSelectedToolStore) != EditorToolName.ExploreTheRoom &&
+                this.isEntityEditorToolActive() == false
             ) {
+                // Activate entity editor tool
+                this.scene.getMapEditorModeManager().equipTool(EditorToolName.EntityEditor);
+            }
+
+            if (get(mapEditorModeStore) && !get(mapEditorSelectedEntityPrefabStore)) {
                 if (document.activeElement instanceof HTMLElement) {
                     document.activeElement.blur();
                 }
 
                 if (this.isTrashEditorToolActive()) {
-                    return;
-                }
-
-                if (!entity.canEdit) {
                     return;
                 }
 
@@ -438,7 +436,7 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
                     entity.displayHeight,
                     entity.getCollisionGrid(),
                     entity.getOldPosition(),
-                    this.shiftKey?.isDown
+                    this.shiftKey?.isDown,
                 )
         ) {
             entity.setTint(0xff0000);
@@ -474,7 +472,7 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
     public getEntitiesInsideArea(areaId: string): Map<string, Entity> {
         const entitiesInsideArea = new Map<string, Entity>();
         const gameMapFrontWrapper = this.scene.getGameMapFrontWrapper();
-        const area = this.scene.getGameMap().getGameMapAreas()?.getArea(areaId);
+        const area = this.scene.getGameMap().getWamFile()?.getGameMapAreas().getArea(areaId);
         if (area === undefined) {
             return entitiesInsideArea;
         }
@@ -486,7 +484,7 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
                     {
                         x: entity.getBounds().centerX,
                         y: entity.getBounds().centerY,
-                    }
+                    },
                 )
             ) {
                 entitiesInsideArea.set(entityId, entity);

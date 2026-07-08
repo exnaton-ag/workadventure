@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { get } from "svelte/store";
-import { JitsiRoomConfigData } from "@workadventure/map-editor";
+import type { JitsiRoomConfigData } from "@workadventure/map-editor";
 import { requestedCameraState, requestedMicrophoneState } from "../../Stores/MediaStore";
+import LL from "../../../i18n/i18n-svelte";
+import jitsiIcon from "../../Components/images/jitsi.png";
 import { SimpleCoWebsite } from "./SimpleCoWebsite";
 
 export const JitsiConfig = z
@@ -134,7 +136,7 @@ export class JitsiCoWebsite extends SimpleCoWebsite {
         public readonly jitsiConfig: JitsiRoomConfigData | undefined,
         public readonly jitsiInterfaceConfig: object | undefined,
         public readonly jitsiRoomAdminTag: string | null,
-        hideUrl?: boolean
+        hideUrl?: boolean,
     ) {
         super(url, false, undefined, widthPercent, closable, hideUrl);
     }
@@ -149,5 +151,17 @@ export class JitsiCoWebsite extends SimpleCoWebsite {
 
     public getUrl(): URL {
         return new URL(this.roomName, this.url);
+    }
+
+    public getTitle(): string {
+        return get(LL).cowebsite.jitsi();
+    }
+
+    public getIcon(): string {
+        return jitsiIcon;
+    }
+
+    public shouldCloseOnOpenInNewTab(): boolean {
+        return true;
     }
 }

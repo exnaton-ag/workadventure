@@ -1,13 +1,16 @@
 import type { AxiosResponse } from "axios";
 import axios, { isAxiosError } from "axios";
-import {
+import type {
     AdminApiData,
-    isOauthRefreshToken,
     MapDetailsData,
     OauthRefreshToken,
     RoomRedirect,
-    MemberData,
     Capabilities,
+    IceServer,
+} from "@workadventure/messages";
+import {
+    isOauthRefreshToken,
+    MemberData,
     CompanionDetail,
     ErrorApiData,
     isAdminApiData,
@@ -21,8 +24,8 @@ import {
 import { z } from "zod";
 import { extendApi } from "@anatine/zod-openapi";
 import * as Sentry from "@sentry/node";
-import { Deferred } from "ts-deferred";
-import { JsonWebTokenError } from "jsonwebtoken";
+import { Deferred } from "@workadventure/shared-utils";
+import { errors } from "jose";
 import {
     ADMIN_API_RETRY_DELAY,
     ADMIN_API_TOKEN,
@@ -30,11 +33,13 @@ import {
     OPID_PROFILE_SCREEN_PROVIDER,
     ADMIN_URL,
 } from "../enums/EnvironmentVariable";
+import { IceServer as IceServerSchema } from "./IceServer";
 import type { AdminInterface } from "./AdminInterface";
 import type { AuthTokenData } from "./JWTTokenManager";
 import { jwtTokenManager } from "./JWTTokenManager";
 import { ShortMapDescriptionList } from "./ShortMapDescription";
 import { WorldChatMembersData } from "./WorldChatMembersData";
+import { iceServersService } from "./IceServersService";
 
 export const AdminBannedData = z.object({
     is_banned: z.boolean(),
@@ -42,6 +47,13 @@ export const AdminBannedData = z.object({
 });
 
 export type AdminBannedData = z.infer<typeof AdminBannedData>;
+
+export const AdminLoginMessage = z.object({
+    type: z.string(),
+    message: z.string(),
+});
+
+export type AdminLoginMessage = z.infer<typeof AdminLoginMessage>;
 
 export const isFetchMemberDataByUuidSuccessResponse = z.object({
     status: extendApi(z.literal("ok"), {
@@ -85,7 +97,7 @@ export const isFetchMemberDataByUuidSuccessResponse = z.object({
     companionTexture: extendApi(CompanionDetail.nullable().optional(), {
         description: "This data represents the companion texture that will be use.",
     }),
-    messages: extendApi(z.array(z.unknown()), {
+    messages: extendApi(z.array(AdminLoginMessage), {
         description:
             "Sets messages that will be displayed when the user logs in to the WA room. These messages are used for ban or ban warning.",
     }),
@@ -108,6 +120,10 @@ export const isFetchMemberDataByUuidSuccessResponse = z.object({
     }),
     chatID: extendApi(z.string().optional(), {
         description: "ChatId of user",
+    }),
+    canRecord: extendApi(z.boolean().optional(), {
+        description:
+            "True if the user can record the room. In addition to this, the user still needs to have the correct tags as defined in the WAM settings.",
     }),
 });
 
@@ -149,25 +165,11 @@ class AdminApi implements AdminInterface {
                 console.info(`Capabilities query successful. Found capabilities: ${JSON.stringify(this.capabilities)}`);
                 resolve(0);
             } catch (ex) {
-                // ignore errors when querying capabilities
-                if (isAxiosError(ex) && ex.response?.status === 404) {
-                    // 404 probably means an older api version
-
-                    this.capabilities = {
-                        "api/woka/list": "v1",
-                    };
-                    this.capabilitiesDeferred.resolve(this.capabilities);
-
-                    resolve(0);
-                    console.warn(`Admin API server does not implement capabilities, default to basic capabilities`);
-                    return;
-                }
-
                 // if we get here, it might be due to connectivity issues
                 if (!warnIssued)
                     console.warn(
                         `Could not reach Admin API server at ${ADMIN_API_URL}, will retry in ${ADMIN_API_RETRY_DELAY} ms`,
-                        ex
+                        ex,
                     );
 
                 warnIssued = true;
@@ -211,7 +213,7 @@ class AdminApi implements AdminInterface {
     async fetchMapDetails(
         playUri: string,
         authToken?: string,
-        locale?: string
+        locale?: string,
     ): Promise<MapDetailsData | RoomRedirect | ErrorApiData> {
         try {
             let userId: string | undefined = undefined;
@@ -219,13 +221,13 @@ class AdminApi implements AdminInterface {
             if (authToken != undefined) {
                 let authTokenData: AuthTokenData;
                 try {
-                    authTokenData = jwtTokenManager.verifyJWTToken(authToken);
+                    authTokenData = await jwtTokenManager.verifyJWTToken(authToken);
                     userId = authTokenData.identifier;
                     accessToken = authTokenData.accessToken;
                     //eslint-disable-next-line @typescript-eslint/no-unused-vars
                 } catch (e) {
                     // Decode token, in this case we don't need to create new token.
-                    authTokenData = jwtTokenManager.verifyJWTToken(authToken, true);
+                    authTokenData = await jwtTokenManager.verifyJWTToken(authToken, true);
                     userId = authTokenData.identifier;
                     accessToken = authTokenData.accessToken;
                     console.info("JWT expire, but decoded:", userId);
@@ -309,7 +311,7 @@ class AdminApi implements AdminInterface {
 
             console.error(
                 "Invalid answer received from the admin for the /api/map endpoint. /api/map answer is not a map details answer because:",
-                mapDetailData.error.issues
+                mapDetailData.error.issues,
             );
             Sentry.captureException(mapDetailData.error.issues);
             console.error("/api/map answer is not a room redirect because:", roomRedirect.error.issues);
@@ -323,7 +325,7 @@ class AdminApi implements AdminInterface {
                 details: "The server answered with an invalid response. The administrator has been notified.",
             };
         } catch (err) {
-            if (err instanceof JsonWebTokenError) {
+            if (err instanceof errors.JWTInvalid || err instanceof errors.JWTExpired) {
                 throw err;
             }
             let message = "Unknown error";
@@ -357,7 +359,7 @@ class AdminApi implements AdminInterface {
         companionTextureId?: string,
         locale?: string,
         tags?: string[],
-        chatID?: string
+        chatID?: string,
     ): Promise<FetchMemberDataByUuidResponse> {
         try {
             /**
@@ -433,7 +435,6 @@ class AdminApi implements AdminInterface {
             if (fetchMemberDataByUuidResponse.success) {
                 return fetchMemberDataByUuidResponse.data;
             }
-
             console.error(fetchMemberDataByUuidResponse.error.format());
             console.error("Message received from /api/room/access is not in the expected format. Message: ", res.data);
             Sentry.captureException(fetchMemberDataByUuidResponse.error.format());
@@ -453,7 +454,7 @@ class AdminApi implements AdminInterface {
                 Sentry.captureException(err);
                 console.error(
                     `An error occurred during call to /room/access endpoint. HTTP Status: ${err.status}.`,
-                    err
+                    err,
                 );
             } else {
                 Sentry.captureException(err);
@@ -477,7 +478,7 @@ class AdminApi implements AdminInterface {
     async fetchMemberDataByToken(
         organizationMemberToken: string,
         playUri: string | null,
-        locale?: string
+        locale?: string,
     ): Promise<AdminApiData> {
         /**
          * @openapi
@@ -547,7 +548,7 @@ class AdminApi implements AdminInterface {
         reportedUserComment: string,
         reporterUserUuid: string,
         roomUrl: string,
-        locale?: string
+        locale?: string,
     ): Promise<unknown> {
         /**
          * @openapi
@@ -594,7 +595,7 @@ class AdminApi implements AdminInterface {
             },
             {
                 headers: { Authorization: `${ADMIN_API_TOKEN}`, "Accept-Language": locale ?? "en" },
-            }
+            },
         );
     }
 
@@ -602,7 +603,7 @@ class AdminApi implements AdminInterface {
         userUuid: string,
         ipAddress: string,
         roomUrl: string,
-        locale?: string
+        locale?: string,
     ): Promise<AdminBannedData> {
         /**
          * @openapi
@@ -662,7 +663,7 @@ class AdminApi implements AdminInterface {
                     encodeURIComponent(userUuid) +
                     "&roomUrl=" +
                     encodeURIComponent(roomUrl),
-                { headers: { Authorization: `${ADMIN_API_TOKEN}`, "Accept-Language": locale ?? "en" } }
+                { headers: { Authorization: `${ADMIN_API_TOKEN}`, "Accept-Language": locale ?? "en" } },
             )
             .then((data) => {
                 return AdminBannedData.parse(data.data);
@@ -673,7 +674,7 @@ class AdminApi implements AdminInterface {
         roomUrl: string,
         locale?: string,
         tags?: string[],
-        bypassTagFilter = false
+        bypassTagFilter = false,
     ): Promise<ShortMapDescriptionList> {
         /**
          * @openapi
@@ -752,14 +753,14 @@ class AdminApi implements AdminInterface {
         playUri: string,
         name: string,
         message: string,
-        byUserUuid: string
+        byUserUuid: string,
     ): Promise<boolean> {
         return axios.post(
             ADMIN_API_URL + "/api/ban",
             { uuidToBan, playUri, name, message, byUserUuid },
             {
                 headers: { Authorization: `${ADMIN_API_TOKEN}` },
-            }
+            },
         );
     }
 
@@ -767,6 +768,158 @@ class AdminApi implements AdminInterface {
         return this.capabilitiesDeferred.promise;
     }
 
+    /**
+     * @openapi
+     * /api/analytics/video-quality-batch:
+     *   post:
+     *     tags: ["AdminAPI"]
+     *     description: Accepts best-effort WebRTC video quality samples sent by pusher.
+     *     security:
+     *      - Bearer: []
+     *     consumes:
+     *      - "application/json"
+     *     produces:
+     *      - "application/json"
+     *     parameters:
+     *      - name: "payload"
+     *        in: "body"
+     *        required: true
+     *        schema:
+     *          type: object
+     *          required:
+     *            - schemaVersion
+     *            - sentAt
+     *            - pusherInstanceId
+     *            - samples
+     *          properties:
+     *            schemaVersion:
+     *              type: integer
+     *              example: 1
+     *            sentAt:
+     *              type: string
+     *              format: date-time
+     *            pusherInstanceId:
+     *              type: string
+     *              example: "pusher-0"
+     *            samples:
+     *              type: array
+     *              items:
+     *                type: object
+     *                required:
+     *                  - clientEventTime
+     *                  - pusherReceivedAt
+     *                  - reporterUserUuid
+     *                  - reporterSpaceUserId
+     *                  - remoteSpaceUserId
+     *                  - spaceName
+     *                  - world
+     *                  - roomId
+     *                  - streamId
+     *                  - streamCategory
+     *                  - transportType
+     *                  - fps
+     *                  - jitter
+     *                  - bandwidthBytesPerSecond
+     *                  - frameWidth
+     *                  - frameHeight
+     *                properties:
+     *                  clientEventTime:
+     *                    type: string
+     *                    format: date-time
+     *                  pusherReceivedAt:
+     *                    type: string
+     *                    format: date-time
+     *                  reporterUserUuid:
+     *                    type: string
+     *                    example: "reporter-uuid"
+     *                  remoteUserUuid:
+     *                    type: string
+     *                  reporterUserId:
+     *                    type: integer
+     *                  reporterSpaceUserId:
+     *                    type: string
+     *                    example: "reporter-space-user"
+     *                  remoteSpaceUserId:
+     *                    type: string
+     *                    example: "remote-space-user"
+     *                  spaceName:
+     *                    type: string
+     *                    example: "world.space"
+     *                  world:
+     *                    type: string
+     *                    example: "world"
+     *                  roomId:
+     *                    type: string
+     *                    example: "https://play.example/@/team/world/room"
+     *                  tabId:
+     *                    type: string
+     *                  reporterClientIp:
+     *                    type: string
+     *                    example: "203.0.113.10"
+     *                  streamId:
+     *                    type: string
+     *                    example: "stream-id"
+     *                  streamCategory:
+     *                    type: string
+     *                    enum: ["video", "screenSharing"]
+     *                  transportType:
+     *                    type: string
+     *                    enum: ["P2P", "Livekit"]
+     *                  relay:
+     *                    type: boolean
+     *                  relayProtocol:
+     *                    type: string
+     *                    enum: ["udp", "tcp", "tls"]
+     *                  livekitServerUrl:
+     *                    type: string
+     *                  fps:
+     *                    type: number
+     *                    format: float
+     *                    example: 24.5
+     *                  fpsStdDev:
+     *                    type: number
+     *                    format: float
+     *                  jitter:
+     *                    type: number
+     *                    format: float
+     *                    example: 0.07
+     *                  bandwidthBytesPerSecond:
+     *                    type: number
+     *                    format: float
+     *                  frameWidth:
+     *                    type: integer
+     *                    example: 1280
+     *                  frameHeight:
+     *                    type: integer
+     *                    example: 720
+     *                  mimeType:
+     *                    type: string
+     *                    example: "video/VP8"
+     *                  sampleSeq:
+     *                    type: integer
+     *                  connectionId:
+     *                    type: string
+     *                  sessionId:
+     *                    type: string
+     *     responses:
+     *       202:
+     *         description: Batch accepted
+     *         schema:
+     *           type: object
+     *           properties:
+     *             status:
+     *               type: string
+     *               example: "accepted"
+     *             acceptedSamples:
+     *               type: integer
+     *               example: 1
+     *       401:
+     *         description: Unauthorized
+     *       413:
+     *         description: Batch too large
+     *       422:
+     *         description: Invalid payload
+     */
     async getTagsList(roomUrl: string): Promise<string[]> {
         /**
          * @openapi
@@ -855,11 +1008,11 @@ class AdminApi implements AdminInterface {
             },
             {
                 headers: { Authorization: `${ADMIN_API_TOKEN}` },
-            }
+            },
         );
         if (response.status !== 204) {
             throw new Error(
-                "Error while saving name. Got unexpected status code. Expected 204, got " + response.status
+                "Error while saving name. Got unexpected status code. Expected 204, got " + response.status,
             );
         }
         return;
@@ -920,11 +1073,11 @@ class AdminApi implements AdminInterface {
             },
             {
                 headers: { Authorization: `${ADMIN_API_TOKEN}` },
-            }
+            },
         );
         if (response.status !== 204) {
             throw new Error(
-                "Error while saving name. Got unexpected status code. Expected 204, got " + response.status
+                "Error while saving name. Got unexpected status code. Expected 204, got " + response.status,
             );
         }
         return;
@@ -983,11 +1136,11 @@ class AdminApi implements AdminInterface {
             },
             {
                 headers: { Authorization: `${ADMIN_API_TOKEN}` },
-            }
+            },
         );
         if (response.status !== 204) {
             throw new Error(
-                "Error while saving name. Got unexpected status code. Expected 204, got " + response.status
+                "Error while saving name. Got unexpected status code. Expected 204, got " + response.status,
             );
         }
         return;
@@ -1043,7 +1196,7 @@ class AdminApi implements AdminInterface {
      *   get:
      *     description: Search members from search term.
      *     tags:
-     *      - Admin endpoint
+     *      - AdminAPI
      *     parameters:
      *      - name: "playUri"
      *        in: "request"
@@ -1090,7 +1243,7 @@ class AdminApi implements AdminInterface {
      *   get:
      *     description: Get member by UUID
      *     tags:
-     *      - Admin endpoint
+     *      - AdminAPI
      *     parameters:
      *      - name: "memberUUID"
      *        in: "path"
@@ -1101,7 +1254,7 @@ class AdminApi implements AdminInterface {
      *       200:
      *        schema:
      *            $ref: '#/definitions/MemberData'
-     *        404:
+     *       404:
      *        description: No member found.
      */
     async getMember(memberUUID: string): Promise<MemberData> {
@@ -1157,7 +1310,7 @@ class AdminApi implements AdminInterface {
             },
             {
                 headers: { Authorization: `${ADMIN_API_TOKEN}` },
-            }
+            },
         );
     }
 
@@ -1167,33 +1320,104 @@ class AdminApi implements AdminInterface {
      *   get:
      *     description: Get the refreshed token from expired one
      *     tags:
-     *      - Admin endpoint
+     *      - AdminAPI
      *     parameters:
      *      - name: "token"
      *        in: "path"
      *        required: true
      *        type: "string"
      *        description: The expired refresh
+     *      - name: "provider"
+     *        in: "query"
+     *        required: false
+     *        type: "string"
+     *        description: The provider of the user
+     *        example: "google"
+     *      - name: "userIdentifier"
+     *        in: "query"
+     *        required: false
+     *        type: "string"
+     *        description: The identifier of the user
+     *        example: "998ce839-3dea-4698-8b41-ebbdf7688ad9"
      *     responses:
      *       200:
      *        schema:
      *            $ref: '#/definitions/OauthRefreshToken'
      */
-    async refreshOauthToken(token: string): Promise<OauthRefreshToken> {
+    async refreshOauthToken(token: string, provider?: string, userIdentifier?: string): Promise<OauthRefreshToken> {
         const response = await axios.post(
             `${ADMIN_URL}/api/oauth/refreshtoken`,
             {
                 accessToken: token,
+                provider: provider,
+                userIdentifier: userIdentifier,
             },
             {
                 headers: { Authorization: `${ADMIN_API_TOKEN}` },
-            }
+            },
         );
         const refreshTokenResponse = isOauthRefreshToken.safeParse(response.data);
         if (refreshTokenResponse.error) {
             throw new Error("Unable to parse refreshTokenResponse");
         }
         return refreshTokenResponse.data;
+    }
+
+    /**
+     * @openapi
+     * /api/ice-servers:
+     *   get:
+     *     tags: ["AdminAPI"]
+     *     description: Returns a list of ICE servers to be used for WebRTC connections
+     *     security:
+     *      - Bearer: []
+     *     produces:
+     *      - "application/json"
+     *     parameters:
+     *      - name: "roomUrl"
+     *        in: "query"
+     *        description: "The full URL to the current WorkAdventure room"
+     *        required: true
+     *        type: "string"
+     *        example: "http://play.workadventure.localhost/@/teamSlug/worldSlug/roomSlug"
+     *      - name: "userIdentifier"
+     *        in: "query"
+     *        description: "The identifier of the current user. It can be undefined, a UUID, or an email."
+     *        type: "string"
+     *        example: "998ce839-3dea-4698-8b41-ebbdf7688ad9"
+     *     responses:
+     *       200:
+     *         description: The list of ice servers
+     *         schema:
+     *           type: array
+     *           items:
+     *             $ref: "#/definitions/IceServer"
+     *       401:
+     *         description: Error while retrieving the data because you are not authorized
+     *         schema:
+     *             $ref: '#/definitions/ErrorApiRedirectData'
+     *       403:
+     *         description: Error while retrieving the data because you are not authorized
+     *         schema:
+     *             $ref: '#/definitions/ErrorApiUnauthorizedData'
+     *       404:
+     *         description: Room not found
+     */
+    async getIceServers(userId: number, userIdentifier: string, roomUrl: string): Promise<IceServer[]> {
+        if (this.capabilities["api/ice-servers"] === undefined) {
+            // ice-servers is not implemented in admin. Fallback to local env vars
+            return iceServersService.generateIceServers(userId.toString());
+        }
+
+        const response = await axios.get(`${ADMIN_URL}/api/ice-servers`, {
+            headers: { Authorization: `${ADMIN_API_TOKEN}` },
+            params: {
+                roomUrl,
+                userIdentifier,
+            },
+        });
+
+        return IceServerSchema.array().parse(response.data);
     }
 }
 

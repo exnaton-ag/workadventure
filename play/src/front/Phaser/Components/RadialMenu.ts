@@ -12,7 +12,12 @@ export const RadialMenuClickEvent = "radialClick";
 export class RadialMenu extends Phaser.GameObjects.Container {
     private resizeCallback: OmitThisParameter<() => void>;
 
-    constructor(scene: Phaser.Scene, x: number, y: number, private items: RadialMenuItem[]) {
+    constructor(
+        scene: Phaser.Scene,
+        x: number,
+        y: number,
+        private items: RadialMenuItem[],
+    ) {
         super(scene, x, y);
         this.setDepth(DEPTH_UI_INDEX);
         this.scene.add.existing(this);
@@ -72,7 +77,7 @@ export class RadialMenu extends Phaser.GameObjects.Container {
     }
 
     public destroy() {
-        this.scene.scale.removeListener(Phaser.Scale.Events.RESIZE, this.resizeCallback);
+        this.scene?.scale.removeListener(Phaser.Scale.Events.RESIZE, this.resizeCallback);
         super.destroy();
     }
 }

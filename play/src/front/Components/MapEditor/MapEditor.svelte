@@ -4,10 +4,10 @@
     import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
     import { mapEditorSelectedToolStore, mapEditorVisibilityStore } from "../../Stores/MapEditorStore";
     import Explorer from "../Exploration/Explorer.svelte";
-    import ArrowBarRight from "../Icons/ArrowBarRight.svelte";
+
     import { windowSize } from "../../Stores/CoWebsiteStore";
-    import ButtonClose from "../Input/ButtonClose.svelte";
-    import { gameManager } from "../../Phaser/Game/GameManager";
+
+    import { blocker } from "../../Utils/screenBlocker";
     import AreaEditor from "./AreaEditor/AreaEditor.svelte";
     import EntityEditor from "./EntityEditor/EntityEditor.svelte";
     import MapEditorSideBar from "./MapEditorSideBar.svelte";
@@ -16,31 +16,21 @@
     import MapEditorResizeHandle from "./MapEditorResizeHandle.svelte";
     import { mapEditorSideBarWidthStore } from "./MapEditorSideBarWidthStore";
 
-    const direction = document.documentElement.getAttribute("dir") || "ltr";
-
     let mapEditor: HTMLElement;
 
-    function hideMapEditor() {
-        mapEditorVisibilityStore.set(false);
-    }
-
-    $: mapEditorSideBarWidth =
+    let mapEditorSideBarWidth = $derived(
         $mapEditorVisibilityStore && $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor
             ? $mapEditorSideBarWidthStore
-            : 0;
+            : 0,
+    );
 
     function onResize(width: number) {
         mapEditorSideBarWidthStore.set(width);
     }
 
-    $: if (mapEditor) {
+    $effect(() => {
         mapEditor.style.width = `${mapEditorSideBarWidth}px`;
-    }
-
-    function closeMapEditor() {
-        mapEditorVisibilityStore.set(false);
-        gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(EditorToolName.CloseMapEditor);
-    }
+    });
 
     onMount(() => {
         const width = Math.min($windowSize.width / 2, Math.max(200, $mapEditorSideBarWidthStore));
@@ -66,6 +56,7 @@
     <div
         id="map-editor-right"
         bind:this={mapEditor}
+        {@attach blocker}
         class={`map-editor relative h-dvh max-w-full md:max-w-[calc(100%-64px)] pointer-events-auto ${$mapEditorSelectedToolStore}`}
     >
         {#if $mapEditorVisibilityStore && $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor}
@@ -78,34 +69,10 @@
                 />
             </div>
             <div
-                class="sidebar h-dvh bg-contrast/80 backdrop-blur-md p-2 md:p-6"
+                class="sidebar h-dvh bg-contrast/80 backdrop-blur-md p-2 md:p-4"
                 in:fly={{ x: 100, duration: 200, delay: 200 }}
                 out:fly={{ x: 100, duration: 200 }}
             >
-                <div class="flex flex-row justify-end w-full md:w-fit md:absolute md:top-4 md:right-2">
-                    <button
-                        class="h-8 w-8 rounded flex items-center justify-center hover:bg-white/20 transition-all aspect-square cursor-pointer text-2xl opacity-50 hover:opacity-100"
-                        class:right-4={direction === "ltr"}
-                        class:left-4={direction === "rtl"}
-                        on:click={hideMapEditor}
-                    >
-                        <ArrowBarRight
-                            height="h-5"
-                            width="w-5"
-                            strokeColor="stroke-white"
-                            fillColor="fill-transparent"
-                            classList={`aspect-ratio transition-all ${direction === "rtl" ? "rotate-180" : ""}`}
-                        />
-                    </button>
-                    <ButtonClose
-                        extraButtonClasses="backdrop-blur-0 backdrop-filter-none opacity-50 hover:opacity-100"
-                        bgColor="bg-transparent"
-                        size="sm"
-                        dataTestId="closeVisitCardButton"
-                        on:click={closeMapEditor}
-                    />
-                </div>
-
                 {#if $mapEditorSelectedToolStore === EditorToolName.TrashEditor}
                     <TrashEditor />
                 {/if}
@@ -123,7 +90,7 @@
     </div>
 </div>
 
-<style lang="scss">
+<style>
     .map-editor {
         top: 0;
         inset-inline-end: 0;
@@ -131,10 +98,6 @@
         z-index: 1999;
         pointer-events: auto;
         color: whitesmoke;
-
-        button.close-window {
-            inset-inline-end: 0.5rem;
-        }
 
         &.WAMSettingsEditor {
             width: 80% !important;

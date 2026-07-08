@@ -4,7 +4,7 @@
 // - converts a WORLD rect to a SCREEN rect each frame,
 // - provides show()/hide() with tweened darkness.
 
-import Phaser from "phaser";
+import * as Phaser from "phaser";
 import { DarkenOutsideAreaPipeline } from "./DarkenOutsideAreaPipeline";
 import Linear = Phaser.Math.Linear;
 
@@ -45,7 +45,7 @@ export class DarkenOutsideAreaEffect {
     constructor(
         scene: Phaser.Scene,
         camera: Phaser.Cameras.Scene2D.Camera = scene.cameras.main,
-        opts: DarkenOutsideOptions = {}
+        opts: DarkenOutsideOptions = {},
     ) {
         this.scene = scene;
         this.camera = camera;
@@ -81,6 +81,7 @@ export class DarkenOutsideAreaEffect {
         const pipeline = pp as DarkenOutsideAreaPipeline;
         // push initial uniforms on next onPreRender
         pipeline.setFeather(this._feather);
+        pipeline.setZoomLevel(this.camera.zoom);
         pipeline.setColor(this._color);
         return pipeline;
     }
@@ -131,6 +132,7 @@ export class DarkenOutsideAreaEffect {
         const syGL = cam.height - (syTop + sh);
 
         this.pipeline.setScreenRect(sx, syGL, sw, sh);
+        this.pipeline.setZoomLevel(cam.zoom);
         // feather/darkness are set via setters or tweens
     }
 

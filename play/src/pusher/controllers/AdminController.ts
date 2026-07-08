@@ -1,6 +1,6 @@
 import { Metadata } from "@grpc/grpc-js";
 import type { Application, Request, Response } from "express";
-import { ChatMessagePrompt, RoomsList } from "@workadventure/messages";
+import type { RoomsList } from "@workadventure/messages";
 import { z } from "zod";
 import Debug from "debug";
 import { apiClientRepository } from "../services/ApiClientRepository";
@@ -11,7 +11,10 @@ import { BaseHttpController } from "./BaseHttpController";
 const debug = Debug("pusher:requests");
 
 export class AdminController extends BaseHttpController {
-    constructor(app: Application, private readonly GRPC_MAX_MESSAGE_SIZE: number) {
+    constructor(
+        app: Application,
+        private readonly GRPC_MAX_MESSAGE_SIZE: number,
+    ) {
         super(app);
     }
 
@@ -19,7 +22,6 @@ export class AdminController extends BaseHttpController {
         this.receiveGlobalMessagePrompt();
         this.receiveRoomEditionPrompt();
         this.getRoomsList();
-        this.sendChatMessagePrompt();
         this.dispatchGlobalEvent();
         this.dispatchExternalModuleEvent();
     }
@@ -69,7 +71,7 @@ export class AdminController extends BaseHttpController {
                                 return;
                             }
                             res();
-                        }
+                        },
                     );
                 });
             });
@@ -151,7 +153,7 @@ export class AdminController extends BaseHttpController {
                                             return;
                                         }
                                         res();
-                                    }
+                                    },
                                 );
                             } else if (type === "capacity") {
                                 roomClient.sendWorldFullWarningToRoom(
@@ -164,12 +166,12 @@ export class AdminController extends BaseHttpController {
                                             return;
                                         }
                                         res();
-                                    }
+                                    },
                                 );
                             }
                         });
                     });
-                })
+                }),
             );
 
             res.send("ok");
@@ -221,9 +223,9 @@ export class AdminController extends BaseHttpController {
                                 } else {
                                     resolve(result);
                                 }
-                            }
+                            },
                         );
-                    })
+                    }),
                 );
             }
 
@@ -240,7 +242,7 @@ export class AdminController extends BaseHttpController {
                 } else {
                     console.warn(
                         "One back server did not respond within one second to the call to 'getRooms': ",
-                        roomsListResult.reason
+                        roomsListResult.reason,
                     );
                 }
             }
@@ -295,7 +297,7 @@ export class AdminController extends BaseHttpController {
                 z.object({
                     name: z.string(),
                     data: z.unknown().optional(),
-                })
+                }),
             );
 
             if (body === undefined) {
@@ -324,9 +326,9 @@ export class AdminController extends BaseHttpController {
                                 } else {
                                     resolve();
                                 }
-                            }
+                            },
                         );
-                    })
+                    }),
                 );
             }
 
@@ -337,78 +339,9 @@ export class AdminController extends BaseHttpController {
                 if (roomsListResult.status === "rejected") {
                     console.warn(
                         "One back server did not respond within one second to the call to 'dispatchGlobalEvent': ",
-                        roomsListResult.reason
+                        roomsListResult.reason,
                     );
                 }
-            }
-
-            res.send("ok");
-            return;
-        });
-    }
-
-    sendChatMessagePrompt(): void {
-        this.app.post("/chat/message", [adminToken], async (req: Request, res: Response) => {
-            debug(`AdminController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`);
-            const body = req.body;
-
-            try {
-                if (typeof body.roomId !== "string") {
-                    throw new Error("Incorrect roomId parameter");
-                } else if (typeof body.type !== "string") {
-                    throw new Error("Incorrect type parameter");
-                } else if (typeof body.mucRoomUrl !== "string") {
-                    throw new Error("Incorrect mucRoomUrl parameter");
-                } else if (typeof body.mucRoomName !== "string" && body.type === "join") {
-                    throw new Error("Incorrect mucRoomName parameter");
-                } else if (typeof body.mucRoomType !== "string" && body.type === "join") {
-                    throw new Error("Incorrect mucRoomType parameter");
-                }
-                const roomId: string = body.roomId;
-                const mucRoomUrl: string = body.mucRoomUrl;
-                const mucRoomName: string = body.mucRoomName;
-                const mucRoomType: string = body.mucRoomType;
-
-                const chatMessagePrompt: ChatMessagePrompt = {
-                    roomId: body.roomId,
-                };
-
-                if (body.type === "join") {
-                    chatMessagePrompt.message = {
-                        $case: "joinMucRoomMessage",
-                        joinMucRoomMessage: {
-                            mucRoomDefinitionMessage: {
-                                url: mucRoomUrl,
-                                name: mucRoomName,
-                                type: mucRoomType,
-                                subscribe: false,
-                            },
-                        },
-                    };
-                } else if (body.type === "leave") {
-                    chatMessagePrompt.message = {
-                        $case: "leaveMucRoomMessage",
-                        leaveMucRoomMessage: {
-                            url: mucRoomUrl,
-                        },
-                    };
-                } else {
-                    throw new Error("Incorrect type parameter value");
-                }
-
-                await apiClientRepository.getClient(roomId, this.GRPC_MAX_MESSAGE_SIZE).then((roomClient) => {
-                    return new Promise<void>((res, rej) => {
-                        roomClient.sendChatMessagePrompt(chatMessagePrompt, (err) => {
-                            if (err) {
-                                rej(err);
-                                return;
-                            }
-                            res();
-                        });
-                    });
-                });
-            } catch (err) {
-                throw new Error("sendChatMessagePrompt => error" + err, { cause: err });
             }
 
             res.send("ok");
@@ -454,7 +387,7 @@ export class AdminController extends BaseHttpController {
                                     return;
                                 }
                                 res();
-                            }
+                            },
                         );
                     });
                 });

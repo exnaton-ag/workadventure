@@ -5,24 +5,32 @@
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { connectionManager } from "../../Connection/ConnectionManager";
 
-    import reload from "../images/reload.png";
     import LL from "../../../i18n/i18n-svelte";
     import { userIsConnected } from "../../Stores/MenuStore";
 
     import logoImg from "../images/logo-min-white.png";
     import LoaderIcon from "../Icons/LoaderIcon.svelte";
+    import type { Room } from "../../Connection/Room";
     import errorGif from "./images/error.gif";
+    import { IconRefresh } from "@wa-icons";
 
     let errorScreen = $errorScreenStore;
 
-    let logoErrorSrc = gameManager?.currentStartedRoom?.loginSceneLogo ?? logoImg;
+    let startRoom: Room | undefined = $state();
+    try {
+        startRoom = gameManager?.currentStartedRoom;
+    } catch {
+        startRoom = undefined;
+    }
+
+    let logoErrorSrc = $derived(startRoom?.loginSceneLogo ?? logoImg);
 
     function click() {
-        if (errorScreen?.type === "unauthorized") void connectionManager.logout();
+        if (errorScreen?.type === "unauthorized") connectionManager.logout();
         else window.location.reload();
     }
     let details = errorScreen?.details ?? "";
-    let timeVar = errorScreen?.timeToRetry ?? 0;
+    let timeVar = $state(errorScreen?.timeToRetry ?? 0);
 
     if (errorScreen?.type === "retry") {
         let interval = setInterval(() => {
@@ -33,20 +41,20 @@
     }
 
     function getBackgroundColor() {
-        if (!gameManager.currentStartedRoom) return undefined;
-        return gameManager.currentStartedRoom.backgroundColor;
+        return startRoom?.backgroundColor;
     }
 
     function logout() {
         connectionManager.logout();
     }
 
-    $: detailsStylized = (details ?? "").replace("{time}", `${timeVar / 1000}`);
+    let detailsStylized = $derived((details ?? "").replace("{time}", `${timeVar / 1000}`));
 </script>
 
 {#if $errorScreenStore}
     <main
-        class="errorScreen bg-contrast h-dvh pointer-events-auto w-full text-white text-center absolute flex flex-wrap items-center justify-center h-full top-0 left-0 right-0 mx-auto overflow-scroll py-5"
+        class="errorScreen bg-contrast pointer-events-auto w-full text-white text-center absolute flex flex-wrap items-center justify-center h-full top-0 left-0 right-0 mx-auto overflow-scroll py-5"
+        data-testid={$errorScreenStore.type === "reconnecting" ? "reconnecting-error-screen" : undefined}
         style={getBackgroundColor() != undefined ? `background-color: ${getBackgroundColor()};` : ""}
         transition:fly={{ y: -200, duration: 500 }}
     >
@@ -63,10 +71,9 @@
                     />
                 {/if}
             </div>
-
             <div class="icon">
                 <img
-                    src={errorScreen?.image ?? gameManager?.currentStartedRoom?.errorSceneLogo ?? errorGif}
+                    src={errorScreen?.image ?? startRoom?.errorSceneLogo ?? errorGif}
                     alt="Error"
                     style="height:125px; max-width:100%;"
                     draggable="false"
@@ -77,27 +84,26 @@
             {#if $errorScreenStore.type !== "retry" && $errorScreenStore.type !== "reconnecting"}<p class="code">
                     Code : {$errorScreenStore.code}
                 </p>{/if}
-            <p class="details flex flex-row items-center justify-center content-center gap-2">
+            <div class="details flex flex-row items-center justify-center content-center gap-2">
                 <span>{detailsStylized}</span>
                 {#if $errorScreenStore.type === "retry"}
-                    <div class="loading" />
+                    <div class="loading"></div>
                 {:else if $errorScreenStore.type === "reconnecting"}
                     <LoaderIcon />
                 {/if}
-            </p>
+            </div>
             <div class="flex gap-2">
                 {#if ($errorScreenStore.type === "retry" && $errorScreenStore.canRetryManual) || $errorScreenStore.type === "unauthorized"}
-                    <button type="button" class="btn-lg btn btn-light btn-border button" on:click={click}>
-                        {#if $errorScreenStore.type === "retry"}<img
-                                src={reload}
-                                alt=""
-                                class="reload mr-2 hover:"
-                                draggable="false"
-                            />{/if}
+                    <button
+                        type="button"
+                        class="btn-lg btn btn-light btn-border button flex items-center gap-2"
+                        onclick={click}
+                    >
+                        {#if $errorScreenStore.type === "retry"}<IconRefresh />{/if}
                         {$errorScreenStore.buttonTitle}
                     </button>
                     {#if $userIsConnected}
-                        <button type="button" class="btn-lg btn btn-secondary button" on:click={logout}>
+                        <button type="button" class="btn-lg btn btn-secondary button" onclick={logout}>
                             {$LL.menu.profile.logout()}
                         </button>
                     {/if}
@@ -107,7 +113,7 @@
     </main>
 {/if}
 
-<style lang="scss">
+<style>
     main.errorScreen {
         min-width: 300px;
         z-index: 700;
@@ -125,11 +131,6 @@
             font-size: 12px;
             opacity: 0.6;
             user-select: text;
-        }
-        p.details {
-            font-size: 12px;
-            max-width: 80%;
-            margin: 0 auto 35px auto;
         }
         .loading {
             display: inline-block;
@@ -151,26 +152,9 @@
             left: 0;
             top: -19px;
         }
-
-        @keyframes ellipsis {
-            to {
-                width: 1.25em;
-            }
-        }
-
-        @-webkit-keyframes ellipsis {
-            to {
-                width: 1.25em;
-            }
-        }
-
         .button {
             cursor: pointer;
             font-size: 14px;
-            .reload {
-                margin-top: -4px;
-                width: 22px;
-            }
         }
     }
 
@@ -183,6 +167,18 @@
             .icon {
                 height: 60px;
             }
+        }
+    }
+
+    @keyframes ellipsis {
+        to {
+            width: 1.25em;
+        }
+    }
+
+    @-webkit-keyframes ellipsis {
+        to {
+            width: 1.25em;
         }
     }
 </style>

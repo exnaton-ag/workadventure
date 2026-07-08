@@ -1,12 +1,12 @@
 <script lang="ts">
     import type { Unsubscriber } from "svelte/store";
     import { get } from "svelte/store";
-    import { onDestroy, onMount, tick } from "svelte";
-    import { Subscription } from "rxjs";
+    import { onDestroy, onMount } from "svelte";
+    import type { Subscription } from "rxjs";
+    import type { AudioManagerVolume } from "../../Stores/AudioManagerStore";
     import {
         audioManagerPlayerState,
         audioManagerRetryPlaySubject,
-        AudioManagerVolume,
         audioManagerFileStore,
         audioManagerVisibilityStore,
         audioManagerVolumeStore,
@@ -18,7 +18,7 @@
     import { activeSecondaryZoneActionBarStore } from "../../Stores/MenuStore";
     import { gameManager } from "../../Phaser/Game/GameManager";
 
-    let HTMLAudioPlayer: HTMLAudioElement;
+    let HTMLAudioPlayer: HTMLAudioElement | undefined;
     let unsubscriberFileStore: Unsubscriber | null = null;
     let unsubscriberVolumeStore: Unsubscriber | null = null;
     let retryPlayStoreSubscription: Subscription | null = null;
@@ -29,19 +29,26 @@
         audioManagerVolumeStore.setMuted(localUserStore.getAudioPlayerMuted());
 
         unsubscriberFileStore = audioManagerFileStore.subscribe((src: string) => {
-            (async () => {
-                if (src == "") {
-                    if (HTMLAudioPlayer) HTMLAudioPlayer.pause();
-                    return;
+            if (src == "") {
+                try {
+                    HTMLAudioPlayer?.pause();
+                } catch (error) {
+                    console.warn("The audio player could not be paused", error);
                 }
-                await tick();
-                HTMLAudioPlayer.pause();
-                HTMLAudioPlayer.src = src;
-                HTMLAudioPlayer.loop = get(audioManagerVolumeStore).loop;
-                HTMLAudioPlayer.volume = get(audioManagerVolumeStore).volume;
-                HTMLAudioPlayer.muted = get(audioManagerVolumeStore).muted;
-                tryPlay();
-            })().catch(console.error);
+                if (HTMLAudioPlayer) {
+                    HTMLAudioPlayer.onprogress = null;
+                    HTMLAudioPlayer.removeAttribute("src");
+                    HTMLAudioPlayer.load();
+                }
+                return;
+            }
+            if (!HTMLAudioPlayer) return;
+            HTMLAudioPlayer.src = src;
+            HTMLAudioPlayer.load();
+            HTMLAudioPlayer.loop = get(audioManagerVolumeStore).loop;
+            HTMLAudioPlayer.volume = get(audioManagerVolumeStore).volume;
+            HTMLAudioPlayer.muted = get(audioManagerVolumeStore).muted;
+            tryPlay();
         });
         unsubscriberVolumeStore = audioManagerVolumeStore.subscribe((audioManager: AudioManagerVolume) => {
             const reduceVolume = audioManager.talking && audioManager.decreaseWhileTalking;
@@ -55,13 +62,24 @@
                 HTMLAudioPlayer.volume = audioManager.volume;
                 HTMLAudioPlayer.muted = audioManager.muted;
                 HTMLAudioPlayer.loop = audioManager.loop;
+                // Use paused attribute to manage audio
+                if (audioManager.paused || audioManager.stopped) {
+                    try {
+                        HTMLAudioPlayer.pause();
+                    } catch (error) {
+                        console.warn("The audio player could not be paused", error);
+                    }
+                    if (audioManager.stopped) {
+                        HTMLAudioPlayer.onprogress = null;
+                    }
+                } else if (get(audioManagerFileStore) !== "") {
+                    HTMLAudioPlayer.muted = false;
+                    HTMLAudioPlayer.play().catch(console.error);
+                }
             }
         });
         retryPlayStoreSubscription = audioManagerRetryPlaySubject.subscribe(() => {
-            (async () => {
-                await tick();
-                tryPlay();
-            })().catch(console.error);
+            tryPlay();
         });
     });
 
@@ -77,6 +95,7 @@
     });
 
     function tryPlay() {
+        if (!HTMLAudioPlayer) return;
         HTMLAudioPlayer.onended = () => {
             // Fixme: this is a hack to close menu when audio is ends without cut the sound
             actionsMenuStore.clear();
@@ -87,6 +106,24 @@
             }
         };
 
+        HTMLAudioPlayer.onloadstart = () => {
+            audioManagerPlayerState.set("loading");
+        };
+        HTMLAudioPlayer.onerror = (event, error) => {
+            console.error("HTMLAudioPlayer.onerror", event, error);
+            const gameScene = gameManager.getCurrentGameScene();
+            if (!gameScene) return;
+            gameScene.CurrentPlayer.playText("audio-not-allowed", $LL.audio.manager.notAllowed(), 10000, () => {
+                // When user click, the message could be removed
+                gameScene.CurrentPlayer.destroyText("audio-not-allowed");
+                // When the user clicks on the message, we try to play the audio again
+                tryPlay();
+            });
+        };
+        HTMLAudioPlayer.onprogress = () => {
+            if ($audioManagerPlayerState === "loading") audioManagerPlayerState.set("playing");
+        };
+
         HTMLAudioPlayer.play()
             .then(() => {
                 audioManagerPlayerState.set("playing");
@@ -94,6 +131,11 @@
                 activeSecondaryZoneActionBarStore.set("audio-manager");
             })
             .catch((e) => {
+                // If the audio is stopped, we don't play it
+                if (get(audioManagerVolumeStore).stopped) {
+                    console.warn("The audio is stopped, so we don't play it. Error: ", e);
+                    return;
+                }
                 if (e instanceof DOMException && e.name === "NotAllowedError") {
                     // The browser does not allow audio to be played, possibly because the user has not interacted with the page yet.
                     // Let's ask the user to interact with the page first.
@@ -112,7 +154,7 @@
                                 gameScene.CurrentPlayer.destroyText("audio-not-allowed");
                                 // When the user clicks on the message, we try to play the audio again
                                 tryPlay();
-                            }
+                            },
                         );
                     }
                 } else {
@@ -125,6 +167,4 @@
     }
 </script>
 
-{#if $audioManagerFileStore}
-    <audio class="audio-manager-audioplayer" bind:this={HTMLAudioPlayer} />
-{/if}
+<audio preload="auto" class="audio-manager-audioplayer" bind:this={HTMLAudioPlayer}></audio>

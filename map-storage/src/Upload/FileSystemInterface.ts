@@ -1,6 +1,6 @@
-import { Archiver } from "archiver";
-import { NextFunction, Response } from "express";
-import * as unzipper from "unzipper";
+import type { NextFunction, Response } from "express";
+import type ZipStream from "zip-stream";
+import type * as unzipper from "unzipper";
 
 export interface FileSystemInterface {
     deleteFiles(path: string): Promise<void>;
@@ -23,7 +23,7 @@ export interface FileSystemInterface {
 
     writeStringAsFile(virtualPath: string, content: string): Promise<void>;
 
-    archiveDirectory(archiver: Archiver, virtualPath: string): Promise<void>;
+    archiveDirectory(archive: ZipStream, virtualPath: string): Promise<void>;
 
     writeByteArrayAsFile(virtualPath: string, content: Uint8Array): Promise<void>;
 }

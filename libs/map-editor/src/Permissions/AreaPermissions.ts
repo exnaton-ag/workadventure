@@ -1,10 +1,10 @@
-import { GameMapAreas } from "../GameMap/GameMapAreas";
+import type { GameMapAreas } from "../GameMap/GameMapAreas";
 
 export class AreaPermissions {
     constructor(
         private gameMapAreas: GameMapAreas,
         private userConnectedTags: string[],
-        private userCanEdit?: boolean
+        private userCanEdit?: boolean,
     ) {}
 
     public isUserHasAreaAccess(areaId: string): boolean {

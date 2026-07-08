@@ -1,10 +1,11 @@
 import crypto from "crypto";
-import {
-    AnswerMessage,
+import type {
+    ZoneMessage,
     AskPositionMessage,
     BanUserMessage,
-    BatchToPusherMessage,
-    ChatMessagePrompt,
+    MeetingInvitationRequestMessage,
+    MeetingInvitationResponseMessage,
+    BatchToPusherRoomMessage,
     EditMapCommandMessage,
     EditMapCommandsArrayMessage,
     EmoteEventMessage,
@@ -12,7 +13,6 @@ import {
     FollowAbortMessage,
     FollowConfirmationMessage,
     FollowRequestMessage,
-    GroupUpdateZoneMessage,
     ItemEventMessage,
     ItemStateMessage,
     JitsiJwtAnswer,
@@ -25,16 +25,14 @@ import {
     PlayerDetailsUpdatedMessage,
     QueryMessage,
     RoomDescription,
-    RoomJoinedMessage,
     RoomsList,
     SendEventQuery,
     SendUserMessage,
     SetPlayerDetailsMessage,
-    SubToPusherMessage,
+    SubToPusherRoomMessage,
     UpdateMapToNewestWithKeyMessage,
-    UpdateSpaceMetadataMessage,
+    UpdateSpaceMetadataPusherToBackMessage,
     UpdateSpaceUserMessage,
-    UserJoinedZoneMessage,
     UserMovesMessage,
     VariableMessage,
     Zone as ProtoZone,
@@ -43,53 +41,79 @@ import {
     LeaveSpaceMessage,
     JoinSpaceMessage,
     ExternalModuleMessage,
-    FilterType,
     SyncSpaceUsersMessage,
     SpaceQueryMessage,
     AddSpaceUserToNotifyMessage,
     DeleteSpaceUserToNotifyMessage,
-    RequestFullSyncMessage,
     AbortQueryMessage,
+    SetAreaPropertyVariableMessage,
+    BackEventMessage,
+    ConnectToRoomMessage,
+    HandleLivekitWebhookRequest,
 } from "@workadventure/messages";
-import Jwt from "jsonwebtoken";
+import {
+    AnswerMessage,
+    RoomJoinedMessage,
+    UserJoinedZoneMessage,
+    FilterType,
+    AskPositionMessage_AskType,
+} from "@workadventure/messages";
+import { SignJWT } from "jose";
 import BigbluebuttonJs from "bigbluebutton-js";
 import Debug from "debug";
 import * as Sentry from "@sentry/node";
-import { WAMSettingsUtils } from "@workadventure/map-editor";
 import { z } from "zod";
-import { ServiceError } from "@grpc/grpc-js";
+import type { ServiceError } from "@grpc/grpc-js";
 import { asError } from "catch-unknown";
+import type { Movable } from "@workadventure/shared-utils";
 import { GameRoom } from "../Model/GameRoom";
-import { User, UserSocket } from "../Model/User";
+import type { UserSocket } from "../Model/User";
+import { User } from "../Model/User";
 import { ProtobufUtils } from "../Model/Websocket/ProtobufUtils";
 import { Group } from "../Model/Group";
-import { GROUP_RADIUS, MINIMUM_DISTANCE, TURN_STATIC_AUTH_SECRET } from "../Enum/EnvironmentVariable";
-import { Movable } from "../Model/Movable";
-import { PositionInterface } from "../Model/PositionInterface";
-import { EventSocket, RoomSocket, VariableSocket, ZoneSocket } from "../RoomManager";
-import { Zone } from "../Model/Zone";
-import { Admin } from "../Model/Admin";
-import { webRTCCredentialsService } from "../Model/Services/WebRTCCredentialsService";
+import { GROUP_RADIUS, MINIMUM_DISTANCE } from "../Enum/EnvironmentVariable";
+import type { PositionInterface } from "../Model/PositionInterface";
+import type { EventSocket, RoomSocket, VariableSocket } from "../RoomManager";
+import type { Zone, ZonePosition } from "../Model/Zone";
+import type { Admin } from "../Model/Admin";
 import { Space } from "../Model/Space";
-import { SpacesWatcher } from "../Model/SpacesWatcher";
+import type { SpacesWatcher } from "../Model/SpacesWatcher";
 import { eventProcessor } from "../Model/EventProcessorInit";
 import { gaugeManager } from "./GaugeManager";
 import { clientEventsEmitter } from "./ClientEventsEmitter";
 import { getMapStorageClient } from "./MapStorageClient";
-import { emitError } from "./MessageHelpers";
+import { emitError, endUserConnectionWithReason } from "./MessageHelpers";
 import { cpuTracker } from "./CpuTracker";
 
 const debug = Debug("socketmanager");
 
-function emitZoneMessage(subMessage: SubToPusherMessage, socket: ZoneSocket): void {
+function emitZoneMessage(subMessage: SubToPusherRoomMessage, socket: RoomSocket): void {
     // TODO: should we batch those every 100ms?
-    const batchMessage: BatchToPusherMessage = {
+    const batchMessage: BatchToPusherRoomMessage = {
         payload: [subMessage],
     };
     socket.write(batchMessage);
 }
 
 export class SocketManager {
+    /**
+     * Helper to generate a SubToPusherRoomMessage zoneMessage
+     */
+    private static toZoneMessage(
+        zonePosition: ZonePosition,
+        zonePayload: ZoneMessage["message"],
+    ): SubToPusherRoomMessage {
+        return {
+            message: {
+                $case: "zoneMessage",
+                zoneMessage: {
+                    x: zonePosition.x,
+                    y: zonePosition.y,
+                    message: zonePayload,
+                },
+            },
+        };
+    }
     /**
      * List of rooms already loaded (note: never use this directly).
      * It is only here for the very specific getAllRooms case that needs to return all available rooms
@@ -101,14 +125,15 @@ export class SocketManager {
 
     private spaces = new Map<string, Space>();
 
-    public async handleJoinRoom(
+    public async handleConnectToRoom(
         socket: UserSocket,
-        joinRoomMessage: JoinRoomMessage
-    ): Promise<{ room: GameRoom; user: User }> {
-        //join new previous room
-        const { room, user } = await this.joinRoom(socket, joinRoomMessage);
-        const lastCommandId = joinRoomMessage.lastCommandId;
-        let commandsToApply: EditMapCommandMessage[] | undefined = undefined;
+        connectToRoomMessage: ConnectToRoomMessage,
+    ): Promise<GameRoom> {
+        const roomId = connectToRoomMessage.roomId;
+        const lastCommandId = connectToRoomMessage.lastCommandId;
+        let commandsToApply: EditMapCommandMessage[] = [];
+
+        const room = await socketManager.getOrCreateRoom(roomId);
 
         if (room.wamUrl) {
             const updateMapToNewestWithKeyMessage: UpdateMapToNewestWithKeyMessage = {
@@ -123,29 +148,50 @@ export class SocketManager {
                     updateMapToNewestWithKeyMessage,
                     (err: ServiceError | null, message: EditMapCommandsArrayMessage) => {
                         if (err) {
-                            emitError(user.socket, err);
+                            emitError(socket, err);
                             reject(err);
                             return;
                         }
                         resolve(message.editMapCommands);
-                    }
+                    },
                 );
             });
         }
 
+        await new Promise<void>((resolve, reject) => {
+            socket.write(
+                {
+                    message: {
+                        $case: "roomConnectedMessage",
+                        roomConnectedMessage: {
+                            editMapCommandsArrayMessage: {
+                                editMapCommands: commandsToApply,
+                            },
+                            tag: connectToRoomMessage.tag,
+                        },
+                    },
+                },
+                (error: unknown) => {
+                    if (error) {
+                        reject(asError(error));
+                        return;
+                    }
+                    resolve();
+                },
+            );
+        });
+
+        return room;
+    }
+
+    public async handleJoinRoom(socket: UserSocket, room: GameRoom, joinRoomMessage: JoinRoomMessage): Promise<User> {
+        const user = await room.join(socket, joinRoomMessage);
+
+        clientEventsEmitter.clientJoinSubject.next({ clientUUid: user.uuid, roomId: room.roomUrl });
+
         if (!socket.writable) {
             console.warn("Socket was aborted");
-            return {
-                room,
-                user,
-            };
-        }
-
-        let editMapCommandsArrayMessage: EditMapCommandsArrayMessage | undefined = undefined;
-        if (commandsToApply) {
-            editMapCommandsArrayMessage = {
-                editMapCommands: commandsToApply,
-            };
+            return user;
         }
 
         const itemStateMessage: ItemStateMessage[] = [];
@@ -176,44 +222,29 @@ export class SocketManager {
             });
         }
 
+        // Get area property variables for initial state
+        const areaPropertyVariables = room.getAreaPropertyVariables();
+
         const roomJoinedMessage: Partial<RoomJoinedMessage> = {
-            tag: joinRoomMessage.tag,
             userRoomToken: joinRoomMessage.userRoomToken,
             characterTextures: joinRoomMessage.characterTextures,
             companionTexture: joinRoomMessage.companionTexture,
             canEdit: joinRoomMessage.canEdit,
-            editMapCommandsArrayMessage,
             item: itemStateMessage,
             variable: variablesMessage,
             currentUserId: user.id,
             activatedInviteUser: user.activatedInviteUser != undefined ? user.activatedInviteUser : true,
             applications: user.applications ?? [],
             playerVariable: playerVariablesMessage,
-            megaphoneSettings: {
-                enabled: WAMSettingsUtils.canUseMegaphone(room.wamSettings, user.tags),
-                url: WAMSettingsUtils.getMegaphoneUrl(
-                    room.wamSettings,
-                    room.roomGroup ?? new URL(room.roomUrl).host,
-                    room.roomUrl
-                ),
-            },
+            areaPropertyVariable: areaPropertyVariables,
         };
-
-        if (TURN_STATIC_AUTH_SECRET) {
-            const { webRtcUserName, webRtcPassword } = webRTCCredentialsService.generateCredentials(user.id.toString());
-            roomJoinedMessage.webRtcUserName = webRtcUserName;
-            roomJoinedMessage.webRtcPassword = webRtcPassword;
-        }
 
         user.write({
             $case: "roomJoinedMessage",
             roomJoinedMessage: RoomJoinedMessage.fromPartial(roomJoinedMessage),
         });
 
-        return {
-            room,
-            user,
-        };
+        return user;
     }
 
     handleUserMovesMessage(room: GameRoom, user: User, userMoves: UserMovesMessage) {
@@ -262,6 +293,31 @@ export class SocketManager {
         return room.setVariable(variableMessage.name, variableMessage.value, user);
     }
 
+    async handleSetAreaPropertyVariableEvent(
+        room: GameRoom,
+        user: User,
+        message: SetAreaPropertyVariableMessage,
+    ): Promise<void> {
+        const result = await room.setAreaPropertyVariableWithPermissionCheck(
+            user.tags,
+            message.areaId,
+            message.propertyId,
+            message.key,
+            message.value,
+        );
+
+        if (!result.success) {
+            // Log the permission denial for monitoring
+            console.warn(
+                `User ${user.uuid} denied permission to set area property variable: ` +
+                    `areaId=${message.areaId}, propertyId=${message.propertyId}, key=${message.key}. ` +
+                    `User tags: [${user.tags.join(", ")}]. Error: ${result.error}`,
+            );
+            // Note: We don't send an error back to the client as this is a security check
+            // The client should have already verified permissions before allowing the action
+        }
+    }
+
     async readVariable(roomUrl: string, variable: string): Promise<string | undefined> {
         const room = await this.getOrCreateRoom(roomUrl);
         // Info: Admin tag is given to bypass the tags checking
@@ -299,28 +355,36 @@ export class SocketManager {
                 },
                 MINIMUM_DISTANCE,
                 GROUP_RADIUS,
-                (thing: Movable, fromZone: Zone | null, listener: ZoneSocket) => {
-                    this.onZoneEnter(thing, fromZone, listener);
+                (thing: Movable, currentZone: ZonePosition, fromZone: Zone | null, listener: RoomSocket) => {
+                    this.onZoneEnter(thing, currentZone, fromZone, listener);
                 },
-                (thing: Movable, position: PositionInterface, listener: ZoneSocket) =>
-                    this.onClientMove(thing, position, listener),
-                (thing: Movable, newZone: Zone | null, listener: ZoneSocket) =>
-                    this.onClientLeave(thing, newZone, listener),
-                (emoteEventMessage: EmoteEventMessage, listener: ZoneSocket) =>
-                    this.onEmote(emoteEventMessage, listener),
-                (groupId: number, listener: ZoneSocket) => {
-                    this.onLockGroup(groupId, listener, roomPromise).catch((e) => {
+                (thing: Movable, currentZone: ZonePosition, position: PositionInterface, listener: RoomSocket) =>
+                    this.onClientMove(thing, currentZone, position, listener),
+                (thing: Movable, currentZone: ZonePosition, newZone: Zone | null, listener: RoomSocket) =>
+                    this.onClientLeave(thing, currentZone, newZone, listener),
+                (emoteEventMessage: EmoteEventMessage, currentZone: ZonePosition, listener: RoomSocket) =>
+                    this.onEmote(emoteEventMessage, currentZone, listener),
+                (currentZone: ZonePosition, groupId: number, listener: RoomSocket) => {
+                    this.onLockGroup(currentZone, groupId, listener, roomPromise).catch((e) => {
                         console.error("An error happened while handling a lock group event:", e);
                         Sentry.captureException(e);
                     });
                 },
-                (playerDetailsUpdatedMessage: PlayerDetailsUpdatedMessage, listener: ZoneSocket) =>
-                    this.onPlayerDetailsUpdated(playerDetailsUpdatedMessage, listener),
-                (group: Group, listener: ZoneSocket) => {
-                    this.onUserEntersOrLeavesBubble(group, listener);
-                }
+                (
+                    currentZone: ZonePosition,
+                    playerDetailsUpdatedMessage: PlayerDetailsUpdatedMessage,
+                    listener: RoomSocket,
+                ) => this.onPlayerDetailsUpdated(currentZone, playerDetailsUpdatedMessage, listener),
+                (currentZone: ZonePosition, group: Group, listener: RoomSocket) => {
+                    this.onUserEntersOrLeavesBubble(currentZone, group, listener);
+                },
             )
                 .then((gameRoom) => {
+                    // The room may have been invalidated while it was still loading.
+                    if (this.roomsPromises.get(roomId) !== roomPromise) {
+                        gameRoom.destroy();
+                        return gameRoom;
+                    }
                     gaugeManager.incNbRoomGauge();
                     this.resolvedRooms.set(roomId, gameRoom);
                     return gameRoom;
@@ -334,36 +398,24 @@ export class SocketManager {
         return roomPromise;
     }
 
-    private async joinRoom(
-        socket: UserSocket,
-        joinRoomMessage: JoinRoomMessage
-    ): Promise<{ room: GameRoom; user: User }> {
-        const roomId = joinRoomMessage.roomId;
-
-        const room = await socketManager.getOrCreateRoom(roomId);
-
-        //join world
-        const user = await room.join(socket, joinRoomMessage);
-
-        clientEventsEmitter.clientJoinSubject.next({ clientUUid: user.uuid, roomId: roomId });
-
-        return { room, user };
-    }
-
-    private onZoneEnter(thing: Movable, fromZone: Zone | null, listener: ZoneSocket) {
+    private onZoneEnter(thing: Movable, currentZone: ZonePosition, fromZone: Zone | null, listener: RoomSocket) {
         if (thing instanceof User) {
-            const subMessage = SocketManager.toUserJoinedZoneMessage(thing, fromZone);
+            const subMessage = SocketManager.toUserJoinedZoneMessage(thing, currentZone, fromZone);
             emitZoneMessage(subMessage, listener);
             //listener.emitInBatch(subMessage);
         } else if (thing instanceof Group) {
-            this.emitCreateUpdateGroupEvent(listener, fromZone, thing);
+            this.emitCreateUpdateGroupEvent(listener, currentZone, fromZone, thing);
         } else {
             console.error("Unexpected type for Movable.");
             Sentry.captureException("Unexpected type for Movable.");
         }
     }
 
-    private static toUserJoinedZoneMessage(user: User, fromZone?: Zone | null): SubToPusherMessage {
+    private static toUserJoinedZoneMessage(
+        user: User,
+        currentZone: ZonePosition,
+        fromZone?: Zone | null,
+    ): SubToPusherRoomMessage {
         if (!Number.isInteger(user.id)) {
             throw new Error(`clientUser.userId is not an integer ${user.id}`);
         }
@@ -401,78 +453,85 @@ export class SocketManager {
         }
         userJoinedZoneMessage.sayMessage = user.getSayMessage();
 
-        return {
-            message: {
-                $case: "userJoinedZoneMessage",
-                userJoinedZoneMessage: UserJoinedZoneMessage.fromPartial(userJoinedZoneMessage),
-            },
-        };
+        return SocketManager.toZoneMessage(currentZone, {
+            $case: "userJoinedZoneMessage",
+            userJoinedZoneMessage: UserJoinedZoneMessage.fromPartial(userJoinedZoneMessage),
+        });
     }
 
-    private onClientMove(thing: Movable, position: PositionInterface, listener: ZoneSocket): void {
+    private onClientMove(
+        thing: Movable,
+        currentZone: ZonePosition,
+        position: PositionInterface,
+        listener: RoomSocket,
+    ): void {
         if (thing instanceof User) {
+            // Note: the position parameter is not used because the thing has already been User.setPosition
+            const posMsg = ProtobufUtils.toPositionMessage(thing.getPosition());
+            /*const posMsg = ProtobufUtils.toPositionMessage({
+                x: position.x,
+                y: position.y,
+                direction: "down",
+                moving: false,
+            });*/
             emitZoneMessage(
-                {
-                    message: {
-                        $case: "userMovedMessage",
-                        userMovedMessage: {
-                            userId: thing.id,
-                            position: ProtobufUtils.toPositionMessage(thing.getPosition()),
-                        },
+                SocketManager.toZoneMessage(currentZone, {
+                    $case: "userMovedMessage",
+                    userMovedMessage: {
+                        userId: thing.id,
+                        position: posMsg,
                     },
-                },
-                listener
+                }),
+                listener,
             );
         } else if (thing instanceof Group) {
-            this.emitCreateUpdateGroupEvent(listener, null, thing);
+            this.emitCreateUpdateGroupEvent(listener, currentZone, null, thing);
         } else {
             console.error("Unexpected type for Movable.");
             Sentry.captureException("Unexpected type for Movable.");
         }
     }
 
-    private onClientLeave(thing: Movable, newZone: Zone | null, listener: ZoneSocket) {
+    private onClientLeave(thing: Movable, currentZone: ZonePosition, newZone: Zone | null, listener: RoomSocket) {
         if (thing instanceof User) {
-            this.emitUserLeftEvent(listener, thing.id, newZone);
+            this.emitUserLeftEvent(listener, currentZone, thing.id, newZone);
         } else if (thing instanceof Group) {
-            this.emitDeleteGroupEvent(listener, thing.getId(), newZone);
+            this.emitDeleteGroupEvent(listener, currentZone, thing.getId(), newZone);
         } else {
             console.error("Unexpected type for Movable.");
             Sentry.captureException("Unexpected type for Movable.");
         }
     }
 
-    private onUserEntersOrLeavesBubble(group: Group, client: ZoneSocket) {
+    private onUserEntersOrLeavesBubble(currentZone: ZonePosition, group: Group, client: RoomSocket) {
         emitZoneMessage(
-            {
-                message: {
-                    $case: "groupUsersUpdateMessage",
-                    groupUsersUpdateMessage: {
-                        groupId: group.getId(),
-                        userIds: group.getUsers().map((user) => user.id),
-                    },
+            SocketManager.toZoneMessage(currentZone, {
+                $case: "groupUsersUpdateMessage",
+                groupUsersUpdateMessage: {
+                    groupId: group.getId(),
+                    userIds: group.getUsers().map((user) => user.id),
                 },
-            },
-            client
+            }),
+            client,
         );
     }
 
-    private onEmote(emoteEventMessage: EmoteEventMessage, client: ZoneSocket) {
+    private onEmote(emoteEventMessage: EmoteEventMessage, currentZone: ZonePosition, client: RoomSocket) {
+        // Ideally, we should pass the position of the concerned user
         emitZoneMessage(
-            {
-                message: {
-                    $case: "emoteEventMessage",
-                    emoteEventMessage,
-                },
-            },
-            client
+            SocketManager.toZoneMessage(currentZone, {
+                $case: "emoteEventMessage",
+                emoteEventMessage,
+            }),
+            client,
         );
     }
 
     private async onLockGroup(
+        currentZone: ZonePosition,
         groupId: number,
-        client: ZoneSocket,
-        roomPromise: PromiseLike<GameRoom> | undefined
+        client: RoomSocket,
+        roomPromise: PromiseLike<GameRoom> | undefined,
     ): Promise<void> {
         if (!roomPromise) {
             return;
@@ -481,71 +540,83 @@ export class SocketManager {
         if (!group) {
             return;
         }
-        this.emitCreateUpdateGroupEvent(client, null, group);
+        this.emitCreateUpdateGroupEvent(client, currentZone, null, group);
     }
 
-    private onPlayerDetailsUpdated(playerDetailsUpdatedMessage: PlayerDetailsUpdatedMessage, client: ZoneSocket) {
+    private onPlayerDetailsUpdated(
+        currentZone: ZonePosition,
+        playerDetailsUpdatedMessage: PlayerDetailsUpdatedMessage,
+        client: RoomSocket,
+    ) {
+        // Ideally, we should pass the position of the concerned user
         emitZoneMessage(
-            {
-                message: {
-                    $case: "playerDetailsUpdatedMessage",
-                    playerDetailsUpdatedMessage,
-                },
-            },
-            client
+            SocketManager.toZoneMessage(currentZone, {
+                $case: "playerDetailsUpdatedMessage",
+                playerDetailsUpdatedMessage,
+            }),
+            client,
         );
     }
 
-    private emitCreateUpdateGroupEvent(client: ZoneSocket, fromZone: Zone | null, group: Group): void {
+    private emitCreateUpdateGroupEvent(
+        client: RoomSocket,
+        currentZone: ZonePosition,
+        fromZone: Zone | null,
+        group: Group,
+    ): void {
         const position = group.getPosition();
         emitZoneMessage(
-            {
-                message: {
-                    $case: "groupUpdateZoneMessage",
-                    groupUpdateZoneMessage: {
-                        groupId: group.getId(),
-                        position: {
-                            x: Math.floor(position.x),
-                            y: Math.floor(position.y),
-                        },
-                        groupSize: group.getSize,
-                        fromZone: SocketManager.toProtoZone(fromZone),
-                        locked: group.isLocked(),
-                        userIds: group.getUsers().map((user) => user.id),
+            SocketManager.toZoneMessage(currentZone, {
+                $case: "groupUpdateZoneMessage",
+                groupUpdateZoneMessage: {
+                    groupId: group.getId(),
+                    position: {
+                        x: Math.floor(position.x),
+                        y: Math.floor(position.y),
                     },
+                    groupSize: group.getSize,
+                    fromZone: SocketManager.toProtoZone(fromZone),
+                    locked: group.isLocked(),
+                    userIds: group.getUsers().map((user) => user.id),
                 },
-            },
-            client
+            }),
+            client,
         );
     }
 
-    private emitDeleteGroupEvent(client: ZoneSocket, groupId: number, newZone: Zone | null): void {
+    private emitDeleteGroupEvent(
+        client: RoomSocket,
+        currentZone: ZonePosition,
+        groupId: number,
+        newZone: Zone | null,
+    ): void {
         emitZoneMessage(
-            {
-                message: {
-                    $case: "groupLeftZoneMessage",
-                    groupLeftZoneMessage: {
-                        groupId,
-                        toZone: SocketManager.toProtoZone(newZone),
-                    },
+            SocketManager.toZoneMessage(currentZone, {
+                $case: "groupLeftZoneMessage",
+                groupLeftZoneMessage: {
+                    groupId,
+                    toZone: SocketManager.toProtoZone(newZone),
                 },
-            },
-            client
+            }),
+            client,
         );
     }
 
-    private emitUserLeftEvent(client: ZoneSocket, userId: number, newZone: Zone | null): void {
+    private emitUserLeftEvent(
+        client: RoomSocket,
+        currentZone: ZonePosition,
+        userId: number,
+        newZone: Zone | null,
+    ): void {
         emitZoneMessage(
-            {
-                message: {
-                    $case: "userLeftZoneMessage",
-                    userLeftZoneMessage: {
-                        userId,
-                        toZone: SocketManager.toProtoZone(newZone),
-                    },
+            SocketManager.toZoneMessage(currentZone, {
+                $case: "userLeftZoneMessage",
+                userLeftZoneMessage: {
+                    userId,
+                    toZone: SocketManager.toProtoZone(newZone),
                 },
-            },
-            client
+            }),
+            client,
         );
     }
 
@@ -603,7 +674,7 @@ export class SocketManager {
                     const answer = await this.handleQueryJitsiJwtMessage(
                         gameRoom,
                         user,
-                        queryMessage.query.jitsiJwtQuery
+                        queryMessage.query.jitsiJwtQuery,
                     );
                     answerMessage.answer = {
                         $case: "jitsiJwtAnswer",
@@ -615,7 +686,7 @@ export class SocketManager {
                     const answer = await this.handleJoinBBBMeetingMessage(
                         gameRoom,
                         user,
-                        queryMessage.query.joinBBBMeetingQuery
+                        queryMessage.query.joinBBBMeetingQuery,
                     );
                     answerMessage.answer = {
                         $case: "joinBBBMeetingAnswer",
@@ -632,14 +703,7 @@ export class SocketManager {
                     };
                     break;
                 }
-                case "turnCredentialsQuery": {
-                    const answer = webRTCCredentialsService.generateCredentials(user.id.toString());
-                    answerMessage.answer = {
-                        $case: "turnCredentialsAnswer",
-                        turnCredentialsAnswer: answer,
-                    };
-                    break;
-                }
+                case "iceServersQuery":
                 case "embeddableWebsiteQuery":
                 case "roomTagsQuery":
                 case "roomsFromSameWorldQuery":
@@ -651,6 +715,11 @@ export class SocketManager {
                 case "joinSpaceQuery":
                 case "leaveSpaceQuery":
                 case "mapStorageJwtQuery":
+                case "getRecordingsQuery":
+                case "deleteRecordingQuery":
+                case "getSignedUrlQuery":
+                case "startRecordingQuery":
+                case "stopRecordingQuery":
                 case "enterChatRoomAreaQuery": {
                     break;
                 }
@@ -690,7 +759,7 @@ export class SocketManager {
     public async handleQueryJitsiJwtMessage(
         gameRoom: GameRoom,
         user: User,
-        queryJitsiJwtMessage: JitsiJwtQuery
+        queryJitsiJwtMessage: JitsiJwtQuery,
     ): Promise<JitsiJwtAnswer> {
         const jitsiRoom = queryJitsiJwtMessage.jitsiRoom;
         const jitsiSettings = gameRoom.getJitsiSettings();
@@ -710,37 +779,41 @@ export class SocketManager {
             }
         }
 
-        const jwt = Jwt.sign(
-            {
-                aud: "jitsi",
-                context: {
-                    user: {
-                        id: user.id,
-                        name: user.name,
-                    },
-                    features: {
-                        livestreaming: isAdmin,
-                        recording: isAdmin,
-                    },
+        // Jitsi has two prosody plugins that can grant moderator rights from a JWT:
+        //   - token_moderation reads `moderator` at the top level of the token,
+        //   - token_affiliation reads `context.user.moderator`.
+        // Emit both so deployments using either plugin (#5135) work unchanged.
+        // Dropping the top-level field would break installs still on
+        // token_moderation; adding the context-level field is a no-op for them.
+        const jwt = new SignJWT({
+            context: {
+                user: {
+                    id: user.id,
+                    name: user.name,
+                    moderator: isAdmin,
                 },
-                iss: jitsiSettings.iss,
-                sub: jitsiSettings.url,
-                room: jitsiRoom,
-                moderator: isAdmin,
+                features: {
+                    livestreaming: isAdmin,
+                    recording: isAdmin,
+                },
             },
-            jitsiSettings.secret,
-            {
-                expiresIn: "1d",
-                algorithm: "HS256",
-                header: {
-                    alg: "HS256",
-                    typ: "JWT",
-                },
-            }
-        );
+            sub: jitsiSettings.url,
+            room: jitsiRoom,
+            moderator: isAdmin,
+        })
+            .setProtectedHeader({
+                alg: "HS256",
+                typ: "JWT",
+            })
+            .setAudience("jitsi")
+            .setExpirationTime("1d");
+
+        if (jitsiSettings.iss) {
+            jwt.setIssuer(jitsiSettings.iss);
+        }
 
         return {
-            jwt,
+            jwt: await jwt.sign(new TextEncoder().encode(jitsiSettings.secret)),
             url: jitsiSettings.url,
         };
     }
@@ -748,7 +821,7 @@ export class SocketManager {
     public async handleJoinBBBMeetingMessage(
         gameRoom: GameRoom,
         user: User,
-        joinBBBMeetingQuery: JoinBBBMeetingQuery
+        joinBBBMeetingQuery: JoinBBBMeetingQuery,
     ): Promise<JoinBBBMeetingAnswer> {
         const meetingId = joinBBBMeetingQuery.meetingId;
         const localMeetingId = joinBBBMeetingQuery.localMeetingId;
@@ -758,7 +831,7 @@ export class SocketManager {
         if (bbbSettings === undefined) {
             throw new Error(
                 "Unable to join the conference because either " +
-                    "the BBB_URL or BBB_SECRET environment variables are not set."
+                    "the BBB_URL or BBB_SECRET environment variables are not set.",
             );
         }
 
@@ -795,7 +868,7 @@ export class SocketManager {
             .slice(0, maxPWLen);
 
         // This is idempotent, so we call it on each join in order to be sure that the meeting exists.
-        const createOptions = { attendeePW, moderatorPW, record: true };
+        const createOptions = { attendeePW, moderatorPW, record: true, "meta_worka-room-url": gameRoom.roomUrl };
         const createURL = api.administration.create(meetingName, meetingId, createOptions);
         await BigbluebuttonJs.http(createURL);
 
@@ -811,7 +884,7 @@ export class SocketManager {
         debug(
             `User "${user.name}" (${user.uuid}) joined the BBB meeting "${meetingName}" as ${
                 isAdmin ? "Admin" : "Participant"
-            }.`
+            }.`,
         );
 
         return {
@@ -836,12 +909,11 @@ export class SocketManager {
         setTimeout(() => {
             // Let's leave the room now.
             room.leave(user);
-            // Let's close the connection when the user is banned.
-            user.socket.end();
+            endUserConnectionWithReason(user.socket, `User was banned: ${banUserMessageToSend.message}`);
         }, 10000);
     }
 
-    public async addZoneListener(call: ZoneSocket, roomId: string, x: number, y: number): Promise<void> {
+    public async addZoneListener(call: RoomSocket, roomId: string, x: number, y: number): Promise<void> {
         const room = await this.roomsPromises.get(roomId);
         if (!room) {
             throw new Error("In addZoneListener, could not find room with id '" + roomId + "'");
@@ -849,28 +921,32 @@ export class SocketManager {
 
         const things = room.addZoneListener(call, x, y);
 
-        const batchMessage: BatchToPusherMessage = {
+        const batchMessage: BatchToPusherRoomMessage = {
             payload: [],
         };
 
         for (const thing of things) {
             if (thing instanceof User) {
-                const subMessage = SocketManager.toUserJoinedZoneMessage(thing);
-
+                const subMessage = SocketManager.toUserJoinedZoneMessage(thing, { x, y });
                 batchMessage.payload.push(subMessage);
             } else if (thing instanceof Group) {
-                const groupUpdateMessage: Partial<GroupUpdateZoneMessage> = {
-                    groupId: thing.getId(),
-                    position: ProtobufUtils.toPointMessage(thing.getPosition()),
-                    locked: thing.isLocked(),
-                };
-
-                batchMessage.payload.push({
-                    message: {
-                        $case: "groupUpdateZoneMessage",
-                        groupUpdateZoneMessage: GroupUpdateZoneMessage.fromPartial(groupUpdateMessage),
-                    },
-                });
+                const position = thing.getPosition();
+                batchMessage.payload.push(
+                    SocketManager.toZoneMessage(
+                        { x, y },
+                        {
+                            $case: "groupUpdateZoneMessage",
+                            groupUpdateZoneMessage: {
+                                groupId: thing.getId(),
+                                position: ProtobufUtils.toPointMessage(position),
+                                groupSize: thing.getSize,
+                                fromZone: undefined,
+                                locked: thing.isLocked(),
+                                userIds: thing.getUsers().map((user) => user.id),
+                            },
+                        },
+                    ),
+                );
             } else {
                 console.error("Unexpected type for Movable returned by setViewport");
                 Sentry.captureException("Unexpected type for Movable returned by setViewport");
@@ -880,7 +956,7 @@ export class SocketManager {
         call.write(batchMessage);
     }
 
-    async removeZoneListener(call: ZoneSocket, roomId: string, x: number, y: number): Promise<void> {
+    async removeZoneListener(call: RoomSocket, roomId: string, x: number, y: number): Promise<void> {
         const room = await this.roomsPromises.get(roomId);
         if (!room) {
             console.warn("In removeZoneListener, could not find room with id '" + roomId + "'");
@@ -946,9 +1022,10 @@ export class SocketManager {
         this.cleanupRoomIfEmpty(room);
     }
 
-    private cleanupRoomIfEmpty(room: GameRoom): void {
+    public cleanupRoomIfEmpty(room: GameRoom): void {
         if (room.isEmpty()) {
             this.roomsPromises.delete(room.roomUrl);
+            this.resolvedRooms.get(room.roomUrl)?.destroy();
             const deleted = this.resolvedRooms.delete(room.roomUrl);
             if (deleted) {
                 gaugeManager.decNbRoomGauge();
@@ -957,18 +1034,34 @@ export class SocketManager {
         }
     }
 
+    public forceRemoveRoom(roomId: string): void {
+        this.roomsPromises.delete(roomId);
+
+        const room = this.resolvedRooms.get(roomId);
+        if (!room) {
+            return;
+        }
+
+        room.destroy();
+        const deleted = this.resolvedRooms.delete(roomId);
+        if (deleted) {
+            gaugeManager.decNbRoomGauge();
+        }
+        debug('Room "%s" was forcefully deleted from cache', roomId);
+    }
+
     public async sendAdminMessage(roomId: string, recipientUuid: string, message: string, type: string): Promise<void> {
         const room = await this.roomsPromises.get(roomId);
         if (!room) {
             console.error(
                 "In sendAdminMessage, could not find room with id '" +
                     roomId +
-                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?"
+                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?",
             );
             Sentry.captureException(
                 "In sendAdminMessage, could not find room with id '" +
                     roomId +
-                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?"
+                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?",
             );
             return;
         }
@@ -978,12 +1071,12 @@ export class SocketManager {
             console.error(
                 "In sendAdminMessage, could not find user with id '" +
                     recipientUuid +
-                    "'. Maybe the user left the room a few milliseconds ago and there was a race condition?"
+                    "'. Maybe the user left the room a few milliseconds ago and there was a race condition?",
             );
             Sentry.captureException(
                 "In sendAdminMessage, could not find user with id '" +
                     recipientUuid +
-                    "'. Maybe the user left the room a few milliseconds ago and there was a race condition?"
+                    "'. Maybe the user left the room a few milliseconds ago and there was a race condition?",
             );
             return;
         }
@@ -1005,12 +1098,12 @@ export class SocketManager {
             console.error(
                 "In banUser, could not find room with id '" +
                     roomId +
-                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?"
+                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?",
             );
             Sentry.captureException(
                 "In banUser, could not find room with id '" +
                     roomId +
-                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?"
+                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?",
             );
             return;
         }
@@ -1020,12 +1113,12 @@ export class SocketManager {
             console.error(
                 "In banUser, could not find user with id '" +
                     recipientUuid +
-                    "'. Maybe the user left the room a few milliseconds ago and there was a race condition?"
+                    "'. Maybe the user left the room a few milliseconds ago and there was a race condition?",
             );
             Sentry.captureException(
                 "In banUser, could not find user with id '" +
                     recipientUuid +
-                    "'. Maybe the user left the room a few milliseconds ago and there was a race condition?"
+                    "'. Maybe the user left the room a few milliseconds ago and there was a race condition?",
             );
             return;
         }
@@ -1042,7 +1135,7 @@ export class SocketManager {
                     type: "banned",
                 },
             });
-            recipient.socket.end();
+            endUserConnectionWithReason(recipient.socket, `User was banned: ${message}`);
         }
     }
 
@@ -1053,12 +1146,12 @@ export class SocketManager {
             console.error(
                 "In sendAdminRoomMessage, could not find room with id '" +
                     roomId +
-                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?"
+                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?",
             );
             Sentry.captureException(
                 "In sendAdminRoomMessage, could not find room with id '" +
                     roomId +
-                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?"
+                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?",
             );
             return;
         }
@@ -1081,12 +1174,12 @@ export class SocketManager {
             console.error(
                 "In dispatchWorldFullWarning, could not find room with id '" +
                     roomId +
-                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?"
+                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?",
             );
             Sentry.captureException(
                 "In dispatchWorldFullWarning, could not find room with id '" +
                     roomId +
-                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?"
+                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?",
             );
             return;
         }
@@ -1151,11 +1244,20 @@ export class SocketManager {
     }
 
     handleFollowAbortMessage(room: GameRoom, user: User, message: FollowAbortMessage) {
+        const leader = room.getUserById(message.leader);
         if (user.id === message.leader) {
-            user?.group?.leader?.stopLeading();
+            // Leader is aborting: notify confirmed followers
+            leader?.stopLeading();
+
+            // Also broadcast to the group to notify users who received the request but haven't accepted yet
+            room.sendToOthersInGroupIncludingUser(user, {
+                message: {
+                    $case: "followAbortMessage",
+                    followAbortMessage: message,
+                },
+            });
         } else {
-            // Forward message
-            const leader = room.getUserById(message.leader);
+            // Follower is aborting: forward message to leader
             leader?.delFollower(user);
         }
     }
@@ -1186,7 +1288,7 @@ export class SocketManager {
                         },
                     });
                 }
-            }
+            },
         );
     }
 
@@ -1209,13 +1311,36 @@ export class SocketManager {
 
     handleAskPositionMessage(room: GameRoom, user: User, askPositionMessage: AskPositionMessage) {
         if (room) {
-            const userToJoin = room.getUserByUuid(askPositionMessage.userIdentifier);
+            // Get user by uuid, is obligatory. If userId is provided, use it to get the user.
+            let userToJoin = room.getUserByUuid(askPositionMessage.userIdentifier);
+            if (userToJoin === undefined) {
+                return;
+            }
+            if (askPositionMessage.userId !== undefined) {
+                // Try to get user by id, if it exists.
+                // Improve multi user connected management.
+                // If the user is connected twice, have the same uuid.
+                // In this case, we could apply an ask poition message to the user by id to be more efficient.
+                const userToJoinById = room.getUserById(askPositionMessage.userId);
+                if (userToJoinById !== undefined) {
+                    userToJoin = userToJoinById;
+                }
+            }
             const position = userToJoin?.getPosition();
-            if (position) {
+            if (position && askPositionMessage.askType === AskPositionMessage_AskType.MOVE) {
                 user.write({
                     $case: "moveToPositionMessage",
                     moveToPositionMessage: {
                         position: ProtobufUtils.toPositionMessage(position),
+                    },
+                });
+            } else if (userToJoin && position && askPositionMessage.askType === AskPositionMessage_AskType.LOCATE) {
+                user.write({
+                    $case: "locatePositionMessage",
+                    locatePositionMessage: {
+                        position: ProtobufUtils.toPositionMessage(position),
+                        userId: userToJoin.id,
+                        userUuid: userToJoin.uuid,
                     },
                 });
             }
@@ -1226,27 +1351,83 @@ export class SocketManager {
         }
     }
 
-    async dispatchChatMessagePrompt(chatMessagePrompt: ChatMessagePrompt): Promise<boolean> {
-        const room = await this.roomsPromises.get(chatMessagePrompt.roomId);
-
-        if (!room) {
-            return false;
+    handleMeetingInvitationRequestMessage(
+        room: GameRoom,
+        sender: User,
+        message: MeetingInvitationRequestMessage,
+    ): void {
+        const isAdmin = sender.tags.includes("admin");
+        if (!isAdmin && room.isMeetingInvitationRequestTooHigh(sender.uuid, message.receiverUserUuid)) {
+            sender.write({
+                $case: "meetingInvitationRequestTooHighMessage",
+                meetingInvitationRequestTooHighMessage: {},
+            });
+            return;
         }
-
-        if (!chatMessagePrompt.message) {
-            console.error("ChatMessagePrompt has no message");
-            Sentry.captureException("ChatMessagePrompt has no message");
-            return false;
+        if (!isAdmin) {
+            room.logMeetingInvitationRequest(sender.uuid, message.receiverUserUuid);
         }
-        switch (chatMessagePrompt.message.$case) {
-            case "joinMucRoomMessage":
-            case "leaveMucRoomMessage": {
-                room.sendSubMessageToRoom(chatMessagePrompt);
-                break;
+        const invitees = room.getUsersByUuid(message.receiverUserUuid);
+        if (invitees.size === 0) {
+            return;
+        }
+        for (const invitee of invitees) {
+            if (invitee.id === sender.id) {
+                continue;
             }
+            invitee.write({
+                $case: "meetingInvitationRequestReceivedMessage",
+                meetingInvitationRequestReceivedMessage: {
+                    senderUserUuid: sender.uuid,
+                    senderPlayUri: room.roomUrl,
+                    senderName: sender.name,
+                    senderUserId: sender.id,
+                },
+            });
+        }
+    }
+
+    handleMeetingInvitationResponseMessage(
+        room: GameRoom,
+        responder: User,
+        message: MeetingInvitationResponseMessage,
+    ): void {
+        const requesters = room.getUsersByUuid(message.requestSenderUserUuid);
+        if (requesters.size === 0) {
+            return;
+        }
+        for (const requester of requesters) {
+            if (requester.id === responder.id) {
+                continue;
+            }
+            requester.write({
+                $case: "meetingInvitationResponseReceivedMessage",
+                meetingInvitationResponseReceivedMessage: {
+                    accepted: message.accept,
+                    responderName: responder.name,
+                },
+            });
         }
 
-        return true;
+        // When the invitee accepts, reset the sender's antispam counter
+        if (message.accept) {
+            room.clearMeetingInvitationRequestLog(message.requestSenderUserUuid);
+        }
+
+        // Clear the invitation if the user accepts or declines the invitation
+        const responders = room.getUsersByUuid(responder.uuid);
+        if (responders.size === 0) {
+            return;
+        }
+        for (const responder_ of responders) {
+            if (responder_.id === responder.id) {
+                continue;
+            }
+            responder_.write({
+                $case: "meetingInvitationRequestClosedMessage",
+                meetingInvitationRequestClosedMessage: {},
+            });
+        }
     }
 
     handleJoinSpaceMessage(pusher: SpacesWatcher, joinSpaceMessage: JoinSpaceMessage) {
@@ -1260,7 +1441,7 @@ export class SocketManager {
                 joinSpaceMessage.filterType,
                 eventProcessor,
                 joinSpaceMessage.propertiesToSync,
-                joinSpaceMessage.world
+                joinSpaceMessage.world,
             );
             this.spaces.set(joinSpaceMessage.spaceName, space);
             clientEventsEmitter.newSpaceSubject.next(space);
@@ -1271,16 +1452,20 @@ export class SocketManager {
         }
 
         pusher.watchSpace(space.name);
-
-        if (!joinSpaceMessage.isRetry) {
+        try {
             space.addWatcher(pusher);
+        } catch (e) {
+            pusher.unwatchSpace(space.name);
+            throw e;
         }
     }
 
     handleLeaveSpaceMessage(pusher: SpacesWatcher, leaveSpaceMessage: LeaveSpaceMessage) {
         const space: Space | undefined = this.spaces.get(leaveSpaceMessage.spaceName);
         if (!space) {
-            throw new Error("Cant unwatch space, space not found");
+            throw new Error(
+                `In handleLeaveSpaceMessage, can't unwatch space ${leaveSpaceMessage.spaceName}, space not found`,
+            );
         }
         this.removeSpaceWatcher(pusher, space);
     }
@@ -1289,7 +1474,7 @@ export class SocketManager {
         pusher.spacesWatched.forEach((spaceName) => {
             const space = this.spaces.get(spaceName);
             if (!space) {
-                console.error("Cant unwatch space, space not found");
+                console.error(`In handleUnwatchAllSpaces, can't unwatch space ${spaceName}, space not found`);
                 return;
             }
             this.removeSpaceWatcher(pusher, space);
@@ -1297,12 +1482,17 @@ export class SocketManager {
     }
 
     private removeSpaceWatcher(watcher: SpacesWatcher, space: Space) {
+        watcher.unwatchSpace(space.name);
         space.removeWatcher(watcher);
-        // If no anymore watchers we delete the space
+
+        // If there are no more watchers, we delete the space
         if (space.canBeDeleted()) {
             debug("[space] Space %s => deleted", space.name);
+            const spaceToDelete = this.spaces.get(space.name);
+            if (spaceToDelete) {
+                spaceToDelete.destroy();
+            }
             this.spaces.delete(space.name);
-            watcher.unwatchSpace(space.name);
             clientEventsEmitter.deleteSpaceSubject.next(space);
         }
     }
@@ -1325,7 +1515,10 @@ export class SocketManager {
         space.updateUser(pusher, updateSpaceUserMessage.user, updateMask);
     }
 
-    handleUpdateSpaceMetadataMessage(pusher: SpacesWatcher, updateSpaceMetadataMessage: UpdateSpaceMetadataMessage) {
+    handleUpdateSpaceMetadataMessage(
+        pusher: SpacesWatcher,
+        updateSpaceMetadataMessage: UpdateSpaceMetadataPusherToBackMessage,
+    ) {
         const space = this.spaces.get(updateSpaceMetadataMessage.spaceName);
 
         const isMetadata = z.record(z.string(), z.unknown()).safeParse(JSON.parse(updateSpaceMetadataMessage.metadata));
@@ -1335,7 +1528,10 @@ export class SocketManager {
         }
 
         if (space) {
-            space.updateMetadata(pusher, isMetadata.data);
+            space.updateMetadata(isMetadata.data, updateSpaceMetadataMessage.senderId).catch((error) => {
+                console.error("Error updating metadata", error);
+                Sentry.captureException(error);
+            });
         }
     }
 
@@ -1369,7 +1565,10 @@ export class SocketManager {
         if (!space) {
             throw new Error(`Could not find space ${publicEvent.spaceName} to dispatch public event`);
         }
-        space.dispatchPublicEvent(publicEvent);
+        space.dispatchPublicEvent(publicEvent).catch((error) => {
+            console.error(error);
+            Sentry.captureException(error);
+        });
     }
 
     handlePrivateEvent(pusher: SpacesWatcher, privateEvent: PrivateEvent) {
@@ -1378,6 +1577,17 @@ export class SocketManager {
             throw new Error(`Could not find space ${privateEvent.spaceName} to dispatch public event`);
         }
         space.dispatchPrivateEvent(privateEvent);
+    }
+
+    handleBackEvent(pusher: SpacesWatcher, backEvent: BackEventMessage) {
+        const space = this.spaces.get(backEvent.spaceName);
+        if (!space) {
+            throw new Error(`Could not find space ${backEvent.spaceName} to dispatch back event`);
+        }
+        if (!backEvent.backEvent) {
+            throw new Error(`Back event is undefined in BackEventMessage`);
+        }
+        space.handleBackEvent(backEvent);
     }
 
     private handleSendEventQuery(gameRoom: GameRoom, user: User, sendEventQuery: SendEventQuery) {
@@ -1455,7 +1665,7 @@ export class SocketManager {
             console.info(
                 "In handleExternalModuleMessage, could not find room with id '" +
                     roomId +
-                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?"
+                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?",
             );
             return;
         }
@@ -1465,17 +1675,15 @@ export class SocketManager {
             console.info(
                 "In handleExternalModuleMessage, could not find user with id '" +
                     recipientUuid +
-                    "'. Maybe the user left the room a few milliseconds ago and there was a race condition?"
+                    "'. Maybe the user left the room a few milliseconds ago and there was a race condition?",
             );
             return;
         }
 
         for (const recipient of recipients) {
-            recipient.socket.write({
-                message: {
-                    $case: "externalModuleMessage",
-                    externalModuleMessage: externalModuleMessage,
-                },
+            recipient.write({
+                $case: "externalModuleMessage",
+                externalModuleMessage: externalModuleMessage,
             });
         }
     }
@@ -1493,7 +1701,7 @@ export class SocketManager {
         clientEventsEmitter.deleteSpaceSubject.next(space);
     }
 
-    handleSpaceQueryMessage(pusher: SpacesWatcher, spaceQueryMessage: SpaceQueryMessage) {
+    async handleSpaceQueryMessage(pusher: SpacesWatcher, spaceQueryMessage: SpaceQueryMessage) {
         const space = this.spaces.get(spaceQueryMessage.spaceName);
 
         if (!space) {
@@ -1507,7 +1715,7 @@ export class SocketManager {
         }
 
         try {
-            const answer = space.handleQuery(pusher, spaceQueryMessage);
+            const answer = await space.handleQuery(pusher, spaceQueryMessage);
             pusher.write({
                 message: {
                     $case: "spaceAnswerMessage",
@@ -1525,6 +1733,17 @@ export class SocketManager {
         }
     }
 
+    async handleLivekitWebhook(request: HandleLivekitWebhookRequest): Promise<void> {
+        const space = this.spaces.get(request.spaceName);
+        if (!space) {
+            // Retrying cannot recreate a space that is already gone, so the pusher should acknowledge this as ignored.
+            console.warn(`Received LiveKit webhook for missing space ${request.spaceName}. Ignoring.`);
+            return;
+        }
+
+        await space.handleLivekitWebhook(request);
+    }
+
     handleAddSpaceUserToNotifyMessage(pusher: SpacesWatcher, addSpaceUserToNotifyMessage: AddSpaceUserToNotifyMessage) {
         const space = this.spaces.get(addSpaceUserToNotifyMessage.spaceName);
         if (!space) {
@@ -1538,26 +1757,18 @@ export class SocketManager {
 
     handleDeleteSpaceUserToNotifyMessage(
         pusher: SpacesWatcher,
-        deleteSpaceUserToNotifyMessage: DeleteSpaceUserToNotifyMessage
+        deleteSpaceUserToNotifyMessage: DeleteSpaceUserToNotifyMessage,
     ) {
         const space = this.spaces.get(deleteSpaceUserToNotifyMessage.spaceName);
         if (!space) {
             throw new Error(
-                `Could not find space ${deleteSpaceUserToNotifyMessage.spaceName} to delete user to notify`
+                `Could not find space ${deleteSpaceUserToNotifyMessage.spaceName} to delete user to notify`,
             );
         }
         if (!deleteSpaceUserToNotifyMessage.user) {
             throw new Error(`User to delete from notify is undefined in DeleteSpaceUserToNotifyMessage`);
         }
         space.deleteUserToNotify(pusher, deleteSpaceUserToNotifyMessage.user);
-    }
-
-    handleRequestFullSyncMessage(pusher: SpacesWatcher, { spaceName, users, senderUserId }: RequestFullSyncMessage) {
-        const space = this.spaces.get(spaceName);
-        if (!space) {
-            throw new Error(`Could not find space ${spaceName} to handle request full sync`);
-        }
-        space.syncUsersAndNotify(pusher, users, senderUserId);
     }
 }
 

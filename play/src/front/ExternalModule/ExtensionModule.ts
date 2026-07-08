@@ -1,21 +1,21 @@
-import { AvailabilityStatus, ExternalModuleMessage, OauthRefreshToken } from "@workadventure/messages";
-import { Readable, Updater, Writable } from "svelte/store";
-import { CalendarEventInterface, TodoListInterface } from "@workadventure/shared-utils";
-import { ComponentProps, ComponentType, SvelteComponentTyped } from "svelte";
-import { AreaData, AreaDataProperties } from "@workadventure/map-editor";
-import { Observable } from "rxjs";
+import type { AvailabilityStatus, ExternalModuleMessage, OauthRefreshToken } from "@workadventure/messages";
+import type { Readable, Updater, Writable } from "svelte/store";
+import type { CalendarEventInterface, TodoListInterface } from "@workadventure/shared-utils";
+import type { AreaData, AreaDataProperties } from "@workadventure/map-editor";
+import type { Observable } from "rxjs";
 import { z } from "zod";
-import { OpenCoWebsiteObject } from "../Chat/Utils";
-import { SpaceRegistryInterface } from "../Space/SpaceRegistry/SpaceRegistryInterface";
-import { ExternalComponentZones } from "../Stores/Utils/externalSvelteComponentService";
-import { HasPlayerMovedInterface } from "../Api/Events/HasPlayerMovedInterface";
+import type { OpenCoWebsiteObject } from "../Chat/Utils";
+import type { SpaceRegistryInterface } from "../Space/SpaceRegistry/SpaceRegistryInterface";
+import type { ExternalComponentZones } from "../Stores/Utils/externalSvelteComponentService";
+import type { HasPlayerMovedInterface } from "../Api/Events/HasPlayerMovedInterface";
+import type { WorkAdventureComponent, WorkAdventureComponentProps } from "../../types/component";
 
 export interface ExternalSvelteComponentServiceInterface {
-    addComponentToZone<Component extends SvelteComponentTyped>(
+    addComponentToZone(
         zone: ExternalComponentZones,
         key: string,
-        componentType: ComponentType<Component>,
-        props?: ComponentProps<Component>
+        componentType: WorkAdventureComponent,
+        props?: WorkAdventureComponentProps,
     ): void;
     removeComponentFromZone(zone: ExternalComponentZones, key: string): void;
 }
@@ -31,19 +31,23 @@ export interface ExtensionModuleOptions {
     openCoWebSite: (openCoWebsiteObject: OpenCoWebsiteObject, source: MessageEventSource | null) => { id: string };
     closeCoWebsite: (id: string) => unknown;
     adminUrl?: string;
-    getOauthRefreshToken?: (tokenToRefresh: string) => Promise<OauthRefreshToken>;
+    getOauthRefreshToken?: (
+        tokenToRefresh: string,
+        provider?: string,
+        userIdentifier?: string,
+    ) => Promise<OauthRefreshToken>;
     spaceRegistry?: SpaceRegistryInterface;
     calendarEventsStoreUpdate?: (this: void, updater: Updater<Map<string, CalendarEventInterface>>) => void;
     todoListStoreUpdate?: (this: void, updater: Updater<Map<string, TodoListInterface>>) => void;
     openErrorScreen?(error: Error): void;
     logoutCallback?(): void;
-    showComponentInChat(component: ComponentType, props?: Record<string, unknown>): void;
+    showComponentInChat(component: WorkAdventureComponent, props?: WorkAdventureComponentProps): void;
     onPlayerMovementEnded?: (callback: (event: HasPlayerMovedInterface) => void) => void;
 }
 
 export interface ExtensionModuleAreaProperty {
-    AreaPropertyEditor: ComponentType;
-    AddAreaPropertyButton: ComponentType;
+    AreaPropertyEditor: WorkAdventureComponent;
+    AddAreaPropertyButton: WorkAdventureComponent;
     handleAreaPropertyOnEnter: (area: AreaData, signal: AbortSignal) => void;
     handleAreaPropertyOnLeave: (area?: AreaData) => void;
     shouldDisplayButton: (areaProperties: AreaDataProperties) => boolean;
@@ -54,14 +58,14 @@ export interface ExtensionModule {
     init: (roomMetadata: unknown, options: ExtensionModuleOptions) => void;
     destroy: () => void;
     areaMapEditor?: () => { [key: string]: ExtensionModuleAreaProperty } | undefined;
-    components?: () => ComponentType[];
+    components?: () => WorkAdventureComponent[];
     openPopupMeeting?: (
         subject: string,
         joinWebUrl: string,
         meetingId: string,
         startDateTime: Date,
         endDateTime: Date,
-        passcode?: string
+        passcode?: string,
     ) => void;
     calendarSynchronised: boolean;
     todoListSynchronized: boolean;
@@ -80,7 +84,7 @@ export const RoomMetadataType = z.object({
                             .optional()
                             .nullable()
                             .describe("Scopes associated with the token, separated by spaces"),
-                    })
+                    }),
                 )
                 .optional(),
         })

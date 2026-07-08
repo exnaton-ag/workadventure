@@ -1,13 +1,16 @@
 <script lang="ts">
     import { fly } from "svelte/transition";
     import { onMount } from "svelte";
-    import { Notification, notificationPlayingStore } from "../../Stores/NotificationStore";
+    import type { Notification } from "../../Stores/NotificationStore";
+    import { notificationPlayingStore } from "../../Stores/NotificationStore";
     import microphoneOffImg from "../images/mic.svg";
     import cameraOffImg from "../images/cam.svg";
     import jistiImg from "../images/jitsi.png";
     import waImg from "../images/icon-workadventure-white.png";
     import AreaToolImg from "../images/icon-tool-area.png";
     import megaphoneImg from "./images/megaphone.svg";
+    import recordingStopImg from "./images/recording-stop.svg";
+    import recordingStartImg from "./images/recording-start.svg";
 
     const icons = new Map<string, string>([
         ["microphone-off.png", microphoneOffImg],
@@ -15,9 +18,15 @@
         ["jitsi.png", jistiImg],
         ["icon-tool-area.png", AreaToolImg],
         ["megaphone", megaphoneImg],
+        ["recording-stop", recordingStopImg],
+        ["recording-start", recordingStartImg],
     ]);
 
-    export let notification: Notification;
+    interface Props {
+        notification: Notification;
+    }
+
+    let { notification }: Props = $props();
 
     onMount(() => {
         // Clear notification after 5 seconds
@@ -28,11 +37,11 @@
 </script>
 
 <div
-    class="notification-playing bg-contrast/80 p-1 backdrop-blur rounded-lg mr-2"
+    class="notification-playing bg-contrast/80 p-1 backdrop-blur rounded-lg mr-3"
     transition:fly={{ x: 210, duration: 500 }}
 >
     <img
-        src={notification.icon ? icons.get(notification.icon) ?? notification.icon : waImg}
+        src={notification.icon ? (icons.get(notification.icon) ?? notification.icon) : waImg}
         alt="Audio playing"
         class="bg-white/10 rounded-md h-12"
         draggable="false"
@@ -40,18 +49,16 @@
     <p>{notification.text}</p>
 </div>
 
-<style lang="scss">
+<style>
     /*audio html when audio message playing*/
     .notification-playing {
         top: 40px;
         transition: all 0.1s ease-out;
-        //background-color: black;
         display: inline-flex;
         align-items: center;
         z-index: 750;
 
         img {
-            //border-radius: 50%;
             padding: 5px;
         }
 

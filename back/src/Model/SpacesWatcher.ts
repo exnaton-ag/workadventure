@@ -1,7 +1,7 @@
-import { BackToPusherSpaceMessage } from "@workadventure/messages";
+import type { BackToPusherSpaceMessage } from "@workadventure/messages";
 import * as Sentry from "@sentry/node";
 import Debug from "debug";
-import { SpaceSocket } from "../SpaceManager";
+import type { SpaceSocket } from "../SpaceManager";
 import { socketManager } from "../Services/SocketManager";
 
 const debug = Debug("space");
@@ -15,7 +15,11 @@ export class SpacesWatcher {
     private _spacesWatched: Set<string>;
     private pingInterval: NodeJS.Timeout | undefined;
     private pongTimeout: NodeJS.Timeout | undefined;
-    public constructor(public readonly id: string, private readonly socket: SpaceSocket, private timeout = 30) {
+    public constructor(
+        public readonly id: string,
+        private readonly socket: SpaceSocket,
+        private timeout = 30,
+    ) {
         this._spacesWatched = new Set<string>();
         // Send first ping and then send the second one
         this.sendPing();

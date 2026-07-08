@@ -1,12 +1,6 @@
 import axios, { isAxiosError } from "axios";
-import {
-    isMapDetailsData,
-    MapDetailsData,
-    isRoomRedirect,
-    RoomRedirect,
-    isErrorApiErrorData,
-    ErrorApiData,
-} from "@workadventure/messages";
+import type { MapDetailsData, RoomRedirect, ErrorApiData } from "@workadventure/messages";
+import { isMapDetailsData, isRoomRedirect, isErrorApiErrorData } from "@workadventure/messages";
 import * as Sentry from "@sentry/node";
 import { ADMIN_API_TOKEN, ADMIN_API_URL } from "../Enum/EnvironmentVariable";
 import { LivekitCredentialsResponse } from "./Repository/LivekitCredentialsResponse";
@@ -67,7 +61,7 @@ class AdminApi {
 
             console.error(
                 "Invalid answer received from the admin for the /api/map endpoint. Errors:",
-                mapDetailData.error.issues
+                mapDetailData.error.issues,
             );
             Sentry.captureException(mapDetailData.error.issues);
             console.error(roomRedirect.error.issues);
@@ -86,11 +80,11 @@ class AdminApi {
                 Sentry.captureException(
                     `An error occurred during call to /api/map endpoint. HTTP Status: ${err.status ?? "none"}. ${
                         err.message
-                    }`
+                    }`,
                 );
                 console.error(
                     `An error occurred during call to /api/map endpoint. HTTP Status: ${err.status ?? "none"}.`,
-                    err
+                    err,
                 );
             } else {
                 Sentry.captureException(`An error occurred during call to /api/map endpoint.`);

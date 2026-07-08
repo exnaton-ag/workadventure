@@ -1,12 +1,16 @@
-import { MatrixEvent, Relations, RelationsEvent } from "matrix-js-sdk";
-import { MatrixChatMessage } from "./MatrixChatMessage";
+import type { MatrixEvent, Relations } from "matrix-js-sdk";
+import { RelationsEvent } from "matrix-js-sdk";
+import type { MatrixChatMessage } from "./MatrixChatMessage";
 
 export class MatrixChatRelation {
     private handleRelationAdd: (event: MatrixEvent) => void;
     private handleRelationRemove: (event: MatrixEvent) => void;
     private handleRelationRedaction: (event: MatrixEvent) => void;
 
-    constructor(private message: MatrixChatMessage, private relation: Relations) {
+    constructor(
+        private message: MatrixChatMessage,
+        private relation: Relations,
+    ) {
         this.handleRelationAdd = this.onClientEventAddRelation.bind(this);
         this.handleRelationRemove = this.onClientEventRemoveRelation.bind(this);
         this.handleRelationRedaction = this.onClientEventRedactionRelation.bind(this);

@@ -1,6 +1,11 @@
-import { JitsiRoomPropertyData, WAMFileFormat } from "@workadventure/map-editor";
+import type { JitsiRoomPropertyData, WAMFileFormat } from "@workadventure/map-editor";
 import { slugifyJitsiRoomName } from "@workadventure/shared-utils/src/Jitsi/slugify";
-import { ITiledMap, ITiledMapLayer, ITiledMapProperty, ITiledMapTileset } from "@workadventure/tiled-map-type-guard";
+import type {
+    ITiledMap,
+    ITiledMapLayer,
+    ITiledMapProperty,
+    ITiledMapTileset,
+} from "@workadventure/tiled-map-type-guard";
 
 export class ModeratorTagFinder {
     /**
@@ -12,7 +17,7 @@ export class ModeratorTagFinder {
         private map: ITiledMap,
         private parseProperty: (properties: ITiledMapProperty[]) => { mainValue: string; tagValue: string } | undefined,
         private roomId?: string,
-        private wamFileProperties?: WAMFileFormat
+        private wamFileProperties?: WAMFileFormat,
     ) {
         for (const layer of map.layers) {
             this.findModeratorTagInLayer(layer);

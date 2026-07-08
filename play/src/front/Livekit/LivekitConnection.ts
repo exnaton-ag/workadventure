@@ -1,14 +1,13 @@
 import Debug from "debug";
 import { ConnectionError } from "livekit-client";
-import { Subscription } from "rxjs";
+import type { Subscription } from "rxjs";
 import * as Sentry from "@sentry/svelte";
-import { Readable } from "svelte/store";
-import { SpaceInterface } from "../Space/SpaceInterface";
-import { StreamableSubjects } from "../Space/SpacePeerManager/SpacePeerManager";
-import { Streamable } from "../Stores/StreamableCollectionStore";
+import type { Readable } from "svelte/store";
+import type { SpaceInterface } from "../Space/SpaceInterface";
+import type { StreamableSubjects } from "../Space/SpacePeerManager/SpacePeerManager";
 import { CommunicationMessageType } from "../Space/SpacePeerManager/CommunicationMessageType";
-import { streamingMegaphoneStore } from "../Stores/MediaStore";
-import { LiveKitRoomInterface } from "./LiveKitRoomInterface";
+import { streamingMegaphoneStore, type LocalStreamStoreValue } from "../Stores/MediaStore";
+import type { LiveKitRoomInterface } from "./LiveKitRoomInterface";
 import { LiveKitRoom } from "./LiveKitRoom";
 
 const debug = Debug("LivekitConnection");
@@ -28,7 +27,8 @@ export class LivekitConnection {
         private space: SpaceInterface,
         private _streamableSubjects: StreamableSubjects,
         private _blockedUsersStore: Readable<Set<string>>,
-        private _streamingMegaphoneStore = streamingMegaphoneStore
+        private _screenSharingLocalStreamStore: Readable<LocalStreamStoreValue | undefined>,
+        private _streamingMegaphoneStore = streamingMegaphoneStore,
     ) {
         this.initialize();
     }
@@ -36,7 +36,7 @@ export class LivekitConnection {
     private createLivekitRoom(
         serverUrl: string,
         token: string,
-        shutdownAbortSignal: AbortSignal
+        shutdownAbortSignal: AbortSignal,
     ): LiveKitRoomInterface {
         this.livekitRoom = new LiveKitRoom(
             serverUrl,
@@ -44,7 +44,8 @@ export class LivekitConnection {
             this.space,
             this._streamableSubjects,
             this._blockedUsersStore,
-            shutdownAbortSignal
+            shutdownAbortSignal,
+            this._screenSharingLocalStreamStore,
         );
         this._streamingMegaphoneStore.set(true);
         return this.livekitRoom;
@@ -82,20 +83,20 @@ export class LivekitConnection {
                     console.error("An error occurred in LivekitConnection initialize", err);
                     Sentry.captureException(err);
                 });
-            })
+            }),
         );
         this.unsubscribers.push(
             this.space.observePrivateEvent(CommunicationMessageType.LIVEKIT_DISCONNECT_MESSAGE).subscribe((message) => {
                 if (!this.livekitRoom) {
                     console.error("LivekitRoom not found");
-                    Sentry.captureException(new Error("LivekitRoom not found"));
+                    // Sentry.captureException(new Error("LivekitRoom not found"));
                     return;
                 }
                 this.shutdownAbortController?.abort();
                 this.shutdownAbortController = undefined;
                 this.livekitRoom?.destroy();
                 this.livekitRoom = undefined;
-            })
+            }),
         );
     }
 
@@ -112,13 +113,6 @@ export class LivekitConnection {
             Sentry.captureException(err);
             throw err;
         }
-    }
-
-    getVideoForUser(spaceUserId: string): Streamable | undefined {
-        return this.livekitRoom?.getVideoForUser(spaceUserId);
-    }
-    getScreenSharingForUser(spaceUserId: string): Streamable | undefined {
-        return this.livekitRoom?.getScreenSharingForUser(spaceUserId);
     }
 
     destroy() {
@@ -147,5 +141,18 @@ export class LivekitConnection {
     shutdown() {
         this.shutdownAbortController?.abort();
         this.shutdownAbortController = undefined;
+    }
+
+    /**
+     * [DEBUG] Forces the WebSocket connection to close to test reconnection mechanism.
+     * This method is for development/testing purposes only.
+     * @returns true if the WebSocket was closed, false if no connection exists
+     */
+    forceWebSocketClose(): boolean {
+        if (!this.livekitRoom) {
+            console.warn("[DEBUG] No LiveKit room found to force WebSocket close");
+            return false;
+        }
+        return this.livekitRoom.forceWebSocketClose();
     }
 }

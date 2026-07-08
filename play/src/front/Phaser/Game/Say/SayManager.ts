@@ -1,6 +1,7 @@
 import { SayMessageType } from "@workadventure/messages";
-import { RoomConnection } from "../../../Connection/RoomConnection";
-import { hasMovedEventName, Player } from "../../Player/Player";
+import type { RoomConnection } from "../../../Connection/RoomConnection";
+import type { Player } from "../../Player/Player";
+import { hasMovedEventName } from "../../Player/Player";
 import type { HasPlayerMovedInterface } from "../../../Api/Events/HasPlayerMovedInterface";
 
 let lastSayPopupCloseDate: number | undefined = undefined;
@@ -20,7 +21,10 @@ export function isPopupJustClosed(): boolean {
 export class SayManager {
     private bubbleDestroyTimeout: ReturnType<typeof setTimeout> | undefined = undefined;
 
-    public constructor(private roomConnection: RoomConnection, private currentPlayer: Player) {}
+    public constructor(
+        private roomConnection: RoomConnection,
+        private currentPlayer: Player,
+    ) {}
 
     public say(text: string, type: SayMessageType, duration: number | undefined): void {
         if (this.bubbleDestroyTimeout) {

@@ -1,5 +1,5 @@
 import { MatrixRoomPropertyData } from "@workadventure/map-editor";
-import { Request, Response } from "express";
+import type { Request, Response } from "express";
 import Debug from "debug";
 import { matrixProvider } from "../services/MatrixProvider";
 import { validatePostQuery } from "../services/QueryValidator";
@@ -52,7 +52,7 @@ export class MatrixRoomAreaController extends BaseHttpController {
          */
         this.app.post("/roomArea", [mapStorageToken], async (req: Request, res: Response) => {
             debug(
-                `MatrixRoomAreaController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`
+                `MatrixRoomAreaController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`,
             );
             try {
                 const body = validatePostQuery(req, res, MatrixRoomPropertyData);
@@ -113,7 +113,7 @@ export class MatrixRoomAreaController extends BaseHttpController {
          */
         this.app.delete("/roomArea", [mapStorageToken], async (req: Request, res: Response) => {
             debug(
-                `MatrixRoomAreaController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`
+                `MatrixRoomAreaController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`,
             );
             try {
                 const body = req.body;
@@ -160,7 +160,7 @@ export class MatrixRoomAreaController extends BaseHttpController {
          */
         this.app.patch("/roomArea", [mapStorageToken], async (req: Request, res: Response) => {
             debug(
-                `MatrixRoomAreaController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`
+                `MatrixRoomAreaController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`,
             );
             try {
                 const body = req.body;
@@ -174,7 +174,7 @@ export class MatrixRoomAreaController extends BaseHttpController {
                 if (isMatrixRoomPropertyData.data.serverData?.matrixRoomId) {
                     await matrixProvider.changeRoomName(
                         isMatrixRoomPropertyData.data.serverData.matrixRoomId,
-                        isMatrixRoomPropertyData.data.displayName
+                        isMatrixRoomPropertyData.data.displayName,
                     );
                 }
                 res.status(200).send("Room name updated successfully");

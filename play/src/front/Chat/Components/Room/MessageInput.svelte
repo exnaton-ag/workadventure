@@ -1,33 +1,62 @@
 <script lang="ts">
-    import { createEventDispatcher } from "svelte";
+    interface Props {
+        message: string;
+        inputClass: string;
+        dataText: string;
+        dataTestid: string;
+        messageInput?: HTMLDivElement;
+        onkeydown?: (event: KeyboardEvent) => void;
+        oninput?: () => void;
+        disabled?: boolean;
+        focusin?: (event: FocusEvent) => void;
+        focusout?: (event: FocusEvent) => void;
+        pasteFiles?: (files: FileList) => void;
+    }
 
-    export let message: string;
-    export let inputClass = "";
-    export let dataText = "";
-    export let dataTestid = "";
-    export let messageInput: HTMLDivElement;
-    export let onKeyDown: ((event: KeyboardEvent) => void) | undefined = undefined;
-    export let onInput = () => {};
-    export let disabled = false;
-    export let focusin = (event: FocusEvent) => {
-        console.info("Not used focusin", event);
-    };
-    export let focusout = (event: FocusEvent) => {
-        console.info("Not used focusout", event);
-    };
+    let {
+        message = $bindable(),
+        inputClass = "",
+        dataText = "",
+        dataTestid = "",
+        messageInput = $bindable(),
+        onkeydown = undefined,
+        oninput = () => {},
+        disabled = false,
+        focusin = (event: FocusEvent) => {
+            console.info("Not used focusin", event);
+        },
+        focusout = (event: FocusEvent) => {
+            console.info("Not used focusout", event);
+        },
+        pasteFiles = () => {},
+    }: Props = $props();
 
-    const dispatch = createEventDispatcher<{
-        pasteFiles: FileList;
-    }>();
+    let isComposing = false;
+
+    function onCompositionStart() {
+        isComposing = true;
+    }
+
+    function onCompositionEnd() {
+        // Defer to next tick: some browsers fire keydown(Enter) after compositionend when the user
+        // confirms IME conversion. If we set isComposing = false here immediately, that Enter would
+        // be treated as "send" instead of "confirm"; deferring keeps the confirming Enter ignored.
+        setTimeout(() => {
+            isComposing = false;
+        }, 0);
+    }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-        if (onKeyDown) {
-            onKeyDown(event);
+        if (event.key === "Enter" && (event.isComposing || isComposing)) {
+            return;
+        }
+        if (onkeydown) {
+            onkeydown(event);
         }
     };
     function onPasteHandler(event: ClipboardEvent) {
         if (event.clipboardData?.files && event.clipboardData.files.length > 0) {
-            dispatch("pasteFiles", event.clipboardData.files);
+            pasteFiles(event.clipboardData.files);
         }
 
         if (!event.clipboardData) return;
@@ -35,7 +64,7 @@
         const text = event.clipboardData.getData("text");
 
         insertTextAtCursor(text);
-        message = messageInput.innerHTML;
+        message = messageInput?.innerHTML ?? "";
         event.preventDefault();
     }
     function insertTextAtCursor(text: string) {
@@ -79,18 +108,20 @@
         bind:innerHTML={message}
         contenteditable="true"
         bind:this={messageInput}
-        on:keydown={handleKeyDown}
-        on:input={onInput}
-        on:paste={onPasteHandler}
-        on:focusin={focusin}
-        on:focusout={focusout}
+        onkeydown={handleKeyDown}
+        oncompositionstart={onCompositionStart}
+        oncompositionend={onCompositionEnd}
+        {oninput}
+        onpaste={onPasteHandler}
+        onfocusin={focusin}
+        onfocusout={focusout}
         class={inputClass}
         data-text={dataText}
         role="textbox"
         tabindex="0"
         dir="auto"
         lang=""
-    />
+    ></div>
 {:else}
     <div
         data-testid={dataTestid}
@@ -98,10 +129,10 @@
         contenteditable="false"
         bind:this={messageInput}
         class={`${inputClass} opacity-70/50 cursor-not-allowed`}
-    />
+    ></div>
 {/if}
 
-<style lang="scss">
+<style>
     .message-input::before {
         content: attr(data-text);
         color: rgba(211, 211, 211, 0.5);

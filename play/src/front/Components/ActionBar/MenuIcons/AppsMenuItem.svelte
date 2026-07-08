@@ -28,13 +28,13 @@
             placement: "bottom-start",
             //strategy: 'fixed',
         },
-        8
+        8,
     );
 </script>
 
 {#if !inProfileMenu}
     <ActionBarButton
-        on:click={() => {
+        onclick={() => {
             if ($roomListVisibilityStore) return roomListVisibilityStore.set(false);
             openedMenuStore.toggle("appMenu");
         }}
@@ -51,7 +51,7 @@
         <AppsIcon
             strokeColor={$openedMenuStore === "appMenu" || $roomListVisibilityStore
                 ? "stroke-white fill-white"
-                : "stroke-white fill-transparent"}
+                : "stroke-white fill-transparent group-hover/btn-apps:fill-white"}
             hover="group-hover/btn-apps:fill-white"
         />
     </ActionBarButton>
@@ -64,8 +64,8 @@
                 openedMenuStore.close("appMenu");
             }}
         >
-            <div class="flex justify-center m-[unset]">
-                <div use:arrowAction />
+            <div class="flex justify-center m-[unset]" data-testid="apps-menu">
+                <div use:arrowAction></div>
                 <div class="bottom-action-bar">
                     <div
                         class="bottom-action-section flex flex-col animate bg-contrast/80 backdrop-blur rounded-md p-1"

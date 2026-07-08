@@ -1,9 +1,13 @@
+import * as Phaser from "phaser";
+globalThis.Phaser = Phaser;
+
 import { describe, expect, it, vi } from "vitest";
-import { FilterType, SpaceUser } from "@workadventure/messages";
-import { get } from "svelte/store";
-import { RoomConnection } from "../../Connection/RoomConnection";
+import type { SpaceUser } from "@workadventure/messages";
+import { FilterType } from "@workadventure/messages";
+import { get, writable } from "svelte/store";
+import type { RoomConnection } from "../../Connection/RoomConnection";
 import { Space } from "../Space";
-import { SpaceUserExtended } from "../SpaceInterface";
+import type { SpaceUserExtended } from "../SpaceInterface";
 
 const defaultRoomConnectionMock = {
     emitUserJoinSpace: vi.fn(),
@@ -18,55 +22,18 @@ const defaultRoomConnectionMock = {
 //     getPeer: vi.fn(),
 // };
 
-// Mock the PeerStore module
-vi.mock("../../Stores/PeerStore", () => ({
-    screenSharingPeerStore: {
-        getSpaceStore: vi.fn(),
-        removePeer: vi.fn(),
-        getPeer: vi.fn(),
-    },
-    videoStreamStore: {
-        subscribe: vi.fn().mockImplementation((fn: (v: unknown) => void) => {
-            // send a default value immediately
-            fn([]);
-            return () => {};
-        }),
-    },
-    videoStreamElementsStore: {
-        subscribe: vi.fn().mockImplementation((fn: (v: unknown[]) => void) => {
-            // send a default value immediately
-            fn([]);
-            return () => {};
-        }),
-    },
-    screenShareStreamElementsStore: {
-        subscribe: vi.fn().mockImplementation((fn: (v: unknown[]) => void) => {
-            // send a default value immediately
-            fn([]);
-            return () => {};
-        }),
+// Mock the entire GameManager module
+vi.mock("../../Phaser/Game/GameManager", () => ({
+    gameManager: {
+        getCurrentGameScene: vi.fn(() => ({
+            getRemotePlayersRepository: () => ({
+                getPlayer: vi.fn(),
+            }),
+            roomUrl: "test-room",
+        })),
     },
 }));
 
-vi.mock("../../Phaser/Entity/CharacterLayerManager", () => {
-    return {
-        CharacterLayerManager: {
-            wokaBase64(): Promise<string> {
-                return Promise.resolve("");
-            },
-        },
-    };
-});
-
-vi.mock("../../Phaser/Game/GameManager", () => {
-    return {
-        gameManager: {
-            getCurrentGameScene: () => ({
-                getRemotePlayersRepository: vi.fn(),
-            }),
-        },
-    };
-});
 // Mock SimplePeer
 vi.mock("../../WebRtc/SimplePeer", () => ({
     SimplePeer: vi.fn().mockImplementation(() => ({
@@ -75,21 +42,72 @@ vi.mock("../../WebRtc/SimplePeer", () => ({
     })),
 }));
 
-vi.mock("../../Enum/EnvironmentVariable.ts", () => {
+vi.mock("../../Stores/ScreenSharingStore", () => {
+    const requested = writable(false);
     return {
-        MATRIX_ADMIN_USER: "admin",
-        MATRIX_DOMAIN: "domain",
-        STUN_SERVER: "stun:test.com:19302",
-        TURN_SERVER: "turn:test.com:19302",
-        TURN_USER: "user",
-        TURN_PASSWORD: "password",
-        POSTHOG_API_KEY: "test-api-key",
-        POSTHOG_URL: "https://test.com",
-        MAX_USERNAME_LENGTH: 10,
-        PEER_SCREEN_SHARE_RECOMMENDED_BANDWIDTH: 1000,
-        PEER_VIDEO_RECOMMENDED_BANDWIDTH: 1000,
+        requestedScreenSharingState: {
+            subscribe: requested.subscribe,
+            enableScreenSharing: () => requested.set(true),
+            disableScreenSharing: () => requested.set(false),
+        },
+        screenSharingLocalStreamStore: writable({ type: "success" }),
+        screenSharingConstraintsStore: writable({ video: false, audio: false }),
+        screenSharingAvailableStore: writable(false),
+        screenSharingLocalVideoBox: writable(undefined),
+        screenShareQualityStore: {
+            subscribe: writable("recommended").subscribe,
+            setQuality: vi.fn(),
+        },
+        screenSharingLocalMedia: writable(undefined),
     };
 });
+
+vi.mock("../../Stores/MegaphoneStore", () => {
+    return {
+        liveStreamingEnabledStore: writable(false),
+        requestedMegaphoneStore: writable(false),
+        megaphoneSpaceStore: writable(undefined),
+        megaphoneCanBeUsedStore: writable(false),
+    };
+});
+
+vi.mock("../../Stores/MenuStore", () => {
+    return {
+        menuIconVisiblilityStore: writable(false),
+        menuVisiblilityStore: writable(false),
+        screenSharingActivatedStore: writable(false),
+        inviteUserActivated: writable(false),
+        mapEditorActivated: writable(false),
+        roomListActivated: writable(false),
+    };
+});
+
+vi.mock("../../WebRtc/MediaManager", () => {
+    return {
+        MediaManager: vi.fn(),
+        mediaManager: {
+            enableMyCamera: vi.fn(),
+            disableMyCamera: vi.fn(),
+            enableMyMicrophone: vi.fn(),
+            disableMyMicrophone: vi.fn(),
+            enableProximityMeeting: vi.fn(),
+            disableProximityMeeting: vi.fn(),
+        },
+    };
+});
+
+vi.mock("../../Stores/MediaStore", async (importOriginal) => {
+    const actual: object = await importOriginal();
+    return {
+        ...actual,
+        isSpeakerStore: writable(false),
+    };
+});
+
+vi.mock(
+    "../../Enum/EnvironmentVariable.ts",
+    () => import("../../../../tests/front/mocks/frontEnvironmentVariableMock"),
+);
 
 const signal = new AbortController().signal;
 
@@ -105,7 +123,7 @@ describe("SpaceFilter", () => {
                 signal,
                 {
                     metadata: new Map<string, unknown>(),
-                }
+                },
             );
             const spaceUserId = "foo_0";
             const user: Pick<SpaceUserExtended, "spaceUserId"> = {
@@ -125,7 +143,7 @@ describe("SpaceFilter", () => {
                 signal,
                 {
                     metadata: new Map<string, unknown>(),
-                }
+                },
             );
             const spaceUserId = "foo_1";
 
@@ -154,7 +172,7 @@ describe("SpaceFilter", () => {
                 signal,
                 {
                     metadata: new Map<string, unknown>(),
-                }
+                },
             );
             const spaceUserId = "";
 
@@ -186,7 +204,7 @@ describe("SpaceFilter", () => {
                 signal,
                 {
                     metadata: new Map<string, unknown>(),
-                }
+                },
             );
             const spaceUserId = "";
 
@@ -223,7 +241,7 @@ describe("SpaceFilter", () => {
                 FilterType.ALL_USERS,
                 defaultRoomConnectionMock,
                 [],
-                new AbortController().signal
+                new AbortController().signal,
             );
             const spaceUserId = "";
 
@@ -256,16 +274,9 @@ describe("SpaceFilter", () => {
                 emitJoinSpace: vi.fn(),
             } as unknown as RoomConnection;
 
-            const space = await Space.create(
-                "space-name",
-                FilterType.ALL_USERS,
-                mockRoomConnection as unknown as RoomConnection,
-                [],
-                signal,
-                {
-                    metadata: new Map<string, unknown>(),
-                }
-            );
+            const space = await Space.create("space-name", FilterType.ALL_USERS, mockRoomConnection, [], signal, {
+                metadata: new Map<string, unknown>(),
+            });
 
             const unsubscribe = space.usersStore.subscribe(() => {});
 
@@ -288,16 +299,9 @@ describe("SpaceFilter", () => {
                 emitJoinSpace: vi.fn(),
             } as unknown as RoomConnection;
 
-            const space = await Space.create(
-                "space-name",
-                FilterType.ALL_USERS,
-                mockRoomConnection as unknown as RoomConnection,
-                [],
-                signal,
-                {
-                    metadata: new Map<string, unknown>(),
-                }
-            );
+            const space = await Space.create("space-name", FilterType.ALL_USERS, mockRoomConnection, [], signal, {
+                metadata: new Map<string, unknown>(),
+            });
 
             const unsubscribe = space.usersStore.subscribe(() => {});
             unsubscribe();

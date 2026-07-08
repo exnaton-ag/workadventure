@@ -1,8 +1,9 @@
-import { EditMapCommandMessage } from "@workadventure/messages";
+import type { EditMapCommandMessage } from "@workadventure/messages";
 import debug from "debug";
-import { Unsubscriber, get } from "svelte/store";
-import { AreaData, AreaDescriptionPropertyData } from "@workadventure/map-editor";
-import { GameMapFrontWrapper } from "../../GameMap/GameMapFrontWrapper";
+import type { Unsubscriber } from "svelte/store";
+import { get } from "svelte/store";
+import type { AreaData, AreaDescriptionPropertyData } from "@workadventure/map-editor";
+import type { GameMapFrontWrapper } from "../../GameMap/GameMapFrontWrapper";
 import { analyticsClient } from "../../../../Administration/AnalyticsClient";
 import {
     mapEditorVisibilityStore,
@@ -12,14 +13,14 @@ import {
     mapExplorationObjectSelectedStore,
 } from "../../../../Stores/MapEditorStore";
 import { gameManager } from "../../GameManager";
-import { GameScene } from "../../GameScene";
+import type { GameScene } from "../../GameScene";
 import { Entity } from "../../../ECS/Entity";
-import { MapEditorModeManager } from "../MapEditorModeManager";
-import { EntitiesManager } from "../../GameMap/EntitiesManager";
+import type { MapEditorModeManager } from "../MapEditorModeManager";
+import type { EntitiesManager } from "../../GameMap/EntitiesManager";
 import { AreaPreview } from "../../../Components/MapEditor/AreaPreview";
 import { waScaleManager } from "../../../Services/WaScaleManager";
 import { enableUserInputsStore } from "../../../../Stores/UserInputStore";
-import { MapEditorTool } from "./MapEditorTool";
+import type { MapEditorTool } from "./MapEditorTool";
 
 const logger = debug("explorer-tool");
 
@@ -73,7 +74,7 @@ export class ExplorerTool implements MapEditorTool {
         gameObjects: Phaser.GameObjects.GameObject[],
         deltaX: number,
         deltaY: number,
-        deltaZ: number
+        deltaZ: number,
     ) => {
         this.scene.handleMouseWheel(deltaY);
     };
@@ -125,7 +126,10 @@ export class ExplorerTool implements MapEditorTool {
         this.scene.markDirty();
     };
 
-    constructor(private mapEditorModeManager: MapEditorModeManager, private readonly scene: GameScene) {
+    constructor(
+        private mapEditorModeManager: MapEditorModeManager,
+        private readonly scene: GameScene,
+    ) {
         this.entitiesManager = this.scene.getGameMapFrontWrapper().getEntitiesManager();
     }
 
@@ -154,6 +158,7 @@ export class ExplorerTool implements MapEditorTool {
 
         // Restore controls of the scene
         this.scene.userInputManager.restoreControls("explorerTool");
+        this.scene.userInputManager.restoreRightClick();
 
         // Remove all controls for the exploration mode
         this.scene.input.keyboard?.off("keydown", this.keyDownHandler);
@@ -183,7 +188,11 @@ export class ExplorerTool implements MapEditorTool {
         }
 
         // Restore camera mode
-        cameraManager.startFollowPlayer(this.scene.CurrentPlayer, 1000, targetZoom);
+        cameraManager.startFollowPlayer(this.scene.CurrentPlayer, 1000);
+        if (targetZoom) {
+            const targetZoomFactor = targetZoom / waScaleManager.zoomModifier;
+            cameraManager.zoomByFactor(targetZoomFactor, 1000);
+        }
 
         // Make all entities non interactive
         this.setAllEntitiesNotInteractive();
@@ -237,7 +246,7 @@ export class ExplorerTool implements MapEditorTool {
 
         // Disable controls of the scene
         this.scene.userInputManager.disableControls("explorerTool");
-
+        this.scene.userInputManager.disableRightClick();
         // Implement all controls for the exploration mode
         this.scene.input.setTopOnly(false);
         this.scene.input.keyboard?.on("keydown", this.keyDownHandler);
@@ -258,9 +267,6 @@ export class ExplorerTool implements MapEditorTool {
 
         // Mark the scene as dirty
         this.scene.markDirty();
-
-        // Create flash animation
-        this.scene.cameras.main.flash();
     }
     public destroy(): void {
         this.clear();
@@ -274,7 +280,7 @@ export class ExplorerTool implements MapEditorTool {
     public handleIncomingCommandMessage(editMapCommandMessage: EditMapCommandMessage): Promise<void> {
         // Refresh the entities store
         mapExplorationEntitiesStore.set(
-            gameManager.getCurrentGameScene().getGameMapFrontWrapper().getEntitiesManager().getEntities()
+            gameManager.getCurrentGameScene().getGameMapFrontWrapper().getEntitiesManager().getEntities(),
         );
         return Promise.resolve();
     }

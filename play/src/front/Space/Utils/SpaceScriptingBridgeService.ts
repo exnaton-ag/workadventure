@@ -1,7 +1,7 @@
 import { FilterType } from "@workadventure/messages";
 import * as Sentry from "@sentry/svelte";
-import { SpaceInterface } from "../SpaceInterface";
-import { SpaceRegistryInterface } from "../SpaceRegistry/SpaceRegistryInterface";
+import type { SpaceInterface } from "../SpaceInterface";
+import type { SpaceRegistryInterface } from "../SpaceRegistry/SpaceRegistryInterface";
 import { iframeListener } from "../../Api/IframeListener";
 import { SpaceScriptingBridge } from "./SpaceScriptingBridge";
 
@@ -23,7 +23,7 @@ export class SpaceScriptingBridgeService {
                 space = spaceRegistry.get(data.spaceName);
                 if (space.filterType !== this.getFilterType(data.filterType)) {
                     throw new Error(
-                        `Cannot join space ${data.spaceName} with filter type ${data.filterType}, expected ${space.filterType}`
+                        `Cannot join space ${data.spaceName} with filter type ${data.filterType}, expected ${space.filterType}`,
                     );
                 }
                 const counterObj = this.spaceJoinedCounter.get(data.spaceName);
@@ -37,7 +37,7 @@ export class SpaceScriptingBridgeService {
                     data.spaceName,
                     this.getFilterType(data.filterType),
                     data.propertiesToSync,
-                    abortController.signal
+                    abortController.signal,
                 );
                 this.spaceJoinedCounter.set(data.spaceName, {
                     counter: 1,
@@ -78,12 +78,14 @@ export class SpaceScriptingBridgeService {
         });
     }
 
-    private getFilterType(filterTypeValue: "everyone" | "streaming"): FilterType {
+    private getFilterType(filterTypeValue: "everyone" | "streaming" | "streamingWithFeedback"): FilterType {
         switch (filterTypeValue) {
             case "everyone":
                 return FilterType.ALL_USERS;
             case "streaming":
                 return FilterType.LIVE_STREAMING_USERS;
+            case "streamingWithFeedback":
+                return FilterType.LIVE_STREAMING_USERS_WITH_FEEDBACK;
         }
     }
 

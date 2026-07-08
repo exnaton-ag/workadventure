@@ -1,23 +1,26 @@
 <script lang="ts">
-    import { afterUpdate, onMount } from "svelte";
+    import { onMount } from "svelte";
     import { writable } from "svelte/store";
     import { highlightedEmbedScreen } from "../../../Stores/HighlightedEmbedScreenStore";
     import CamerasContainer from "../CamerasContainer.svelte";
     import MediaBox from "../../Video/MediaBox.svelte";
-    import ListenerBox from "../../Video/ListenerBox.svelte";
     import { inExternalServiceStore, proximityMeetingStore } from "../../../Stores/MyMediaStore";
     import { streamableCollectionStore } from "../../../Stores/StreamableCollectionStore";
     import { highlightFullScreen } from "../../../Stores/ActionsCamStore";
-    import { isOnOneLine } from "../../../Stores/VideoLayoutStore";
+    import { isOnOneLine, playerMovedInTheLast10Seconds } from "../../../Stores/VideoLayoutStore";
     import PictureInPictureActionBar from "../../ActionBar/PictureInPictureActionBar.svelte";
     import { activePictureInPictureStore } from "../../../Stores/PeerStore";
-    import { isListenerStore } from "../../../Stores/MediaStore";
 
-    export let inPictureInPicture: boolean;
+    interface Props {
+        inPictureInPicture: boolean;
+    }
 
-    let camContainer: HTMLDivElement;
-    let highlightScreen: HTMLDivElement;
-    let containerHeight = 0;
+    let { inPictureInPicture }: Props = $props();
+
+    let camContainer: HTMLDivElement | undefined = $state();
+    let highlightScreen: HTMLDivElement | undefined = $state();
+    let containerWidth = $state(0);
+    let containerHeight = $state(0);
 
     const windowSize = writable({
         height: window.innerHeight,
@@ -36,7 +39,7 @@
         resizeHeight();
     };
 
-    afterUpdate(() => {
+    $effect(() => {
         modifySizeCamIfScreenShare();
     });
 
@@ -56,8 +59,11 @@
         }
     }
 
-    $: if ($highlightedEmbedScreen) modifySizeCamIfScreenShare();
-    $: if ($highlightFullScreen) modifySizeCamIfScreenShare();
+    $effect(() => {
+        if ($highlightedEmbedScreen || $highlightFullScreen) {
+            modifySizeCamIfScreenShare();
+        }
+    });
 
     function modifySizeCamIfScreenShare() {
         /*if (camContainer) {
@@ -73,46 +79,92 @@
         }*/
     }
 
-    $: oneLineMaxHeight = containerHeight * 0.2;
+    let oneLineMaxHeight = $derived(containerHeight * 0.2);
+    let pipHighlightLayoutEnabled = $derived(
+        inPictureInPicture && $activePictureInPictureStore && $highlightedEmbedScreen != undefined,
+    );
+    let pipHighlightLandscape = $derived(pipHighlightLayoutEnabled && containerWidth > containerHeight);
+    let pipCameraContainerStyle = $derived(
+        pipHighlightLayoutEnabled
+            ? pipHighlightLandscape
+                ? "flex: 0 0 20%; max-width: 20%; min-width: 20%;"
+                : "flex: 0 0 20%; max-height: 20%; min-height: 20%;"
+            : "",
+    );
+    let pipHighlightContainerStyle = $derived(
+        pipHighlightLayoutEnabled
+            ? pipHighlightLandscape
+                ? "flex: 0 0 80%; max-width: 80%; min-width: 80%;"
+                : "flex: 0 0 80%; max-height: 80%; min-height: 80%;"
+            : "",
+    );
+    let pipOneLineMode: "vertical" | "horizontal" = $derived(
+        pipHighlightLayoutEnabled
+            ? pipHighlightLandscape
+                ? "vertical"
+                : "horizontal"
+            : inPictureInPicture
+              ? "vertical"
+              : "horizontal",
+    );
 </script>
 
 {#if $proximityMeetingStore === true && !$inExternalServiceStore}
     <div
-        class="presentation-layout flex flex-col pointer-events-none h-full w-full absolute mobile:mt-3"
+        class="presentation-layout flex pointer-events-none h-full w-full absolute mobile:mt-3"
+        class:flex-col={!pipHighlightLayoutEnabled || !pipHighlightLandscape}
+        class:flex-row-reverse={pipHighlightLayoutEnabled && pipHighlightLandscape}
+        style={inPictureInPicture && $highlightedEmbedScreen != undefined ? "height: calc(100vh - 80px);" : ""}
+        bind:clientWidth={containerWidth}
         bind:clientHeight={containerHeight}
     >
         {#if $streamableCollectionStore.size > 0}
             <div
                 class="justify-end md:justify-center w-full relative"
                 class:max-height-quarter={$isOnOneLine && !inPictureInPicture}
-                class:h-full={!$isOnOneLine || inPictureInPicture}
+                class:h-full={!$isOnOneLine || (inPictureInPicture && !pipHighlightLayoutEnabled)}
                 class:overflow-y-auto={inPictureInPicture}
+                class:flex-1={inPictureInPicture && $highlightedEmbedScreen != undefined && !pipHighlightLayoutEnabled}
+                style={pipCameraContainerStyle}
                 bind:this={camContainer}
             >
-                <CamerasContainer
-                    {oneLineMaxHeight}
-                    isOnOneLine={$isOnOneLine}
-                    oneLineMode={inPictureInPicture ? "vertical" : "horizontal"}
-                />
+                <CamerasContainer {oneLineMaxHeight} isOnOneLine={$isOnOneLine} oneLineMode={pipOneLineMode} />
             </div>
         {/if}
 
-        {#if $streamableCollectionStore.size > 0 && $highlightedEmbedScreen && !inPictureInPicture}
-            <div id="highlighted-media" class="mb-8 md:mb-0 flex-1" bind:this={highlightScreen}>
+        {#if $streamableCollectionStore.size > 0 && $highlightedEmbedScreen && !$playerMovedInTheLast10Seconds}
+            <div
+                id="highlighted-media"
+                class="md:mb-0"
+                class:flex-1={!inPictureInPicture || $highlightedEmbedScreen == undefined}
+                class:flex-[4]={inPictureInPicture &&
+                    $highlightedEmbedScreen != undefined &&
+                    !pipHighlightLayoutEnabled}
+                class:mb-8={!inPictureInPicture || $highlightedEmbedScreen == undefined}
+                class:mb-0={inPictureInPicture && $highlightedEmbedScreen != undefined}
+                style={pipHighlightContainerStyle}
+                bind:this={highlightScreen}
+            >
                 {#key $highlightedEmbedScreen.uniqueId}
-                    <MediaBox isHighlighted={true} videoBox={$highlightedEmbedScreen} />
+                    <MediaBox videoBox={$highlightedEmbedScreen} />
                 {/key}
             </div>
         {/if}
 
         {#if $activePictureInPictureStore}
-            <div class="flex-none">
+            <div
+                class="flex-none"
+                class:fixed={inPictureInPicture && $highlightedEmbedScreen != undefined}
+                class:bottom-0={inPictureInPicture && $highlightedEmbedScreen != undefined}
+                class:left-0={inPictureInPicture && $highlightedEmbedScreen != undefined}
+                class:right-0={inPictureInPicture && $highlightedEmbedScreen != undefined}
+                class:w-full={inPictureInPicture && $highlightedEmbedScreen != undefined}
+                class:transition-all={inPictureInPicture && $highlightedEmbedScreen != undefined}
+                class:pointer-events-none={inPictureInPicture && $highlightedEmbedScreen != undefined}
+                style="z-index: 20;"
+            >
                 <PictureInPictureActionBar />
             </div>
-        {/if}
-
-        {#if $streamableCollectionStore.size == 0 && $isListenerStore}
-            <ListenerBox />
         {/if}
     </div>
 {/if}

@@ -2,11 +2,14 @@
   "name": "workadventure",
   "private": true,
   "devDependencies": {
-    "husky": "^7.0.1",
-    "typescript": "5.8.3"
+    "husky": "^9.1.7",
+    "typescript": "^5.9.3"
   },
   "scripts": {
-    "prepare": "husky install || echo 'Husky not found. Maybe you are installing only a subproject.'"
+    "prepare": "husky install || echo 'Husky not found. Maybe you are installing only a subproject.'",
+    "generate-env-docs": "npm run generate --workspace=contrib/tools/generate-env-docs",
+    "check-env-docs": "npm run check --workspace=contrib/tools/generate-env-docs",
+    "e2e:report": "npm exec --workspace=@workadventure/e2e-report -- tsx src/cli.ts"
   },
   "workspaces": [
     "play",
@@ -16,44 +19,8 @@
     "benchmark",
     "uploader",
     "play/packages/iframe-api-typings",
-    "tests"
-  ],
-  "overrides": {
-    "sass": "1.78.0",
-    "typescript": "5.8.3",
-    "@smarttools/eslint-plugin-rxjs": {
-      "typescript": "5.8.3"
-    },
-    "ts-jest": {
-      "typescript": "5.8.3"
-    },
-    "ts-node": {
-      "typescript": "5.8.3"
-    },
-    "ts-loader": {
-      "typescript": "5.8.3"
-    },
-    "svelte-preprocess": {
-      "typescript": "5.8.3"
-    },
-    "svelte-check": {
-      "typescript": "5.8.3"
-    },
-    "typesafe-i18n": {
-      "typescript": "5.8.3"
-    },
-    "ts-essentials": {
-      "typescript": "5.8.3"
-    },
-    "@antfu/install-pkg": "0.3.3",
-    "package-manager-detector": "1.1.0",
-
-    "unplugin-icons": {
-      ".": "0.19.0",
-      "@iconify/utils": {
-        ".": "2.1.24",
-        "@antfu/install-pkg": "0.1.1"
-      }
-    }
-  }
+    "tests",
+    "contrib/tools/generate-env-docs",
+    "contrib/tools/e2e-report"
+  ]
 }

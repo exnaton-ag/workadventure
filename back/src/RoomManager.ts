@@ -1,54 +1,49 @@
 import { clearInterval } from "timers";
-import {
+import type {
     AdminGlobalMessage,
     AdminMessage,
     AdminPusherToBackMessage,
     AdminRoomMessage,
     BanMessage,
-    BatchToPusherMessage,
     BatchToPusherRoomMessage,
-    ChatMessagePrompt,
     EventRequest,
     EventResponse,
+    ExternalModuleMessage,
+    MapStorageClearAfterUploadMessage,
+    MapStorageDeleteMessage,
     PingMessage,
     PusherToBackMessage,
+    PusherToBackRoomMessage,
     RefreshRoomPromptMessage,
-    RoomMessage,
     RoomsList,
     ServerToAdminClientMessage,
     ServerToClientMessage,
     VariableRequest,
     WorldFullWarningToRoomMessage,
-    ZoneMessage,
 } from "@workadventure/messages";
-import { RoomManagerServer } from "@workadventure/messages/src/ts-proto-generated/services";
-import {
-    sendUnaryData,
-    ServerDuplexStream,
-    ServerErrorResponse,
-    ServerUnaryCall,
-    ServerWritableStream,
-} from "@grpc/grpc-js";
+import type { RoomManagerServer } from "@workadventure/messages/src/ts-proto-generated/services";
+
+import type { sendUnaryData, ServerDuplexStream, ServerUnaryCall, ServerWritableStream } from "@grpc/grpc-js";
 import Debug from "debug";
-import { Empty } from "@workadventure/messages/src/ts-proto-generated/google/protobuf/empty";
+import type { Empty } from "@workadventure/messages/src/ts-proto-generated/google/protobuf/empty";
 import * as Sentry from "@sentry/node";
+import { asError } from "catch-unknown";
 import { socketManager } from "./Services/SocketManager";
 import {
     emitError,
     emitErrorOnAdminSocket,
     emitErrorOnRoomSocket,
-    emitErrorOnZoneSocket,
+    endUserConnectionWithReason,
 } from "./Services/MessageHelpers";
-import { User, UserSocket } from "./Model/User";
-import { GameRoom } from "./Model/GameRoom";
+import type { User, UserSocket } from "./Model/User";
+import type { GameRoom } from "./Model/GameRoom";
 import { Admin } from "./Model/Admin";
 import { getMapStorageClient } from "./Services/MapStorageClient";
 
 const debug = Debug("roommanager");
 
 export type AdminSocket = ServerDuplexStream<AdminPusherToBackMessage, ServerToAdminClientMessage>;
-export type ZoneSocket = ServerWritableStream<ZoneMessage, BatchToPusherMessage>;
-export type RoomSocket = ServerWritableStream<RoomMessage, BatchToPusherRoomMessage>;
+export type RoomSocket = ServerDuplexStream<PusherToBackRoomMessage, BatchToPusherRoomMessage>;
 export type VariableSocket = ServerWritableStream<VariableRequest, unknown>;
 export type EventSocket = ServerWritableStream<EventRequest, EventResponse>;
 
@@ -58,10 +53,183 @@ const PONG_TIMEOUT = 70000; // PONG_TIMEOUT is > 1 minute because of Chrome heav
 const PING_INTERVAL = 80000;
 
 const roomManager = {
-    joinRoom: (call: UserSocket): void => {
+    connectToRoom: (call: UserSocket): void => {
         let room: GameRoom | null = null;
         let user: User | null = null;
         let pongTimeoutId: NodeJS.Timeout | undefined;
+        let messageProcessingPromise = Promise.resolve();
+        const setRoom = (gameRoom: GameRoom | null) => {
+            room = gameRoom;
+        };
+        const setUser = (myUser: User | null) => {
+            user = myUser;
+        };
+
+        const handleMessage = async (message: PusherToBackMessage) => {
+            if (!message.message) {
+                console.error("Empty message received");
+                Sentry.captureException(`Empty message received ${JSON.stringify(room)}`);
+                return;
+            }
+
+            try {
+                if (room === null || user === null) {
+                    if (message.message.$case === "connectToRoomMessage") {
+                        const gameRoom = await socketManager.handleConnectToRoom(
+                            call,
+                            message.message.connectToRoomMessage,
+                        );
+                        if (call.writable) {
+                            setRoom(gameRoom);
+                        } else {
+                            // Connection may have been closed before the init was finished, so we have to manually disconnect the user.
+                            socketManager.cleanupRoomIfEmpty(gameRoom);
+                        }
+                    } else if (message.message.$case === "joinRoomMessage") {
+                        if (room === null) {
+                            console.error("joinRoomMessage received before connectToRoomMessage");
+                            Sentry.captureMessage("joinRoomMessage received before connectToRoomMessage");
+                            emitError(call, new Error("joinRoomMessage received before connectToRoomMessage"));
+                            call.end();
+                            return;
+                        }
+                        const myUser = await socketManager.handleJoinRoom(call, room, message.message.joinRoomMessage);
+                        if (call.writable) {
+                            setUser(myUser);
+                        } else {
+                            // Connection may have been closed before the init was finished, so we have to manually disconnect the user.
+                            if (room) {
+                                socketManager.leaveRoom(room, myUser);
+                            }
+                        }
+                    } else if (message.message.$case !== "pingMessage") {
+                        throw new Error(
+                            `The first message sent MUST be of type ConnectToRoomMessage and the second message joinRoomMessage. Got ${message.message.$case}`,
+                        );
+                    }
+                } else {
+                    switch (message.message.$case) {
+                        case "connectToRoomMessage": {
+                            throw new Error("Cannot call ConnectToRoomMessage twice!");
+                        }
+                        case "joinRoomMessage": {
+                            throw new Error("Cannot call JoinRoomMessage twice!");
+                        }
+                        case "userMovesMessage": {
+                            socketManager.handleUserMovesMessage(room, user, message.message.userMovesMessage);
+                            break;
+                        }
+                        case "itemEventMessage": {
+                            socketManager.handleItemEvent(room, user, message.message.itemEventMessage);
+                            break;
+                        }
+                        case "variableMessage": {
+                            await socketManager.handleVariableEvent(room, user, message.message.variableMessage);
+                            break;
+                        }
+                        case "queryMessage": {
+                            await socketManager.handleQueryMessage(room, user, message.message.queryMessage);
+                            break;
+                        }
+                        case "abortQueryMessage": {
+                            socketManager.handleAbortQueryMessage(room, user, message.message.abortQueryMessage);
+                            break;
+                        }
+                        case "emotePromptMessage": {
+                            socketManager.handleEmoteEventMessage(room, user, message.message.emotePromptMessage);
+                            break;
+                        }
+                        case "followRequestMessage": {
+                            socketManager.handleFollowRequestMessage(room, user, message.message.followRequestMessage);
+                            break;
+                        }
+                        case "followConfirmationMessage": {
+                            socketManager.handleFollowConfirmationMessage(
+                                room,
+                                user,
+                                message.message.followConfirmationMessage,
+                            );
+                            break;
+                        }
+                        case "followAbortMessage": {
+                            socketManager.handleFollowAbortMessage(room, user, message.message.followAbortMessage);
+                            break;
+                        }
+                        case "lockGroupPromptMessage": {
+                            socketManager.handleLockGroupPromptMessage(
+                                room,
+                                user,
+                                message.message.lockGroupPromptMessage,
+                            );
+                            break;
+                        }
+                        case "editMapCommandMessage": {
+                            room.forwardEditMapCommandMessage(user, message.message.editMapCommandMessage);
+                            break;
+                        }
+                        case "sendUserMessage": {
+                            socketManager.handleSendUserMessage(user, message.message.sendUserMessage);
+                            break;
+                        }
+                        case "banUserMessage": {
+                            socketManager.handleBanUserMessage(room, user, message.message.banUserMessage);
+                            break;
+                        }
+                        case "setPlayerDetailsMessage": {
+                            socketManager.handleSetPlayerDetails(room, user, message.message.setPlayerDetailsMessage);
+                            break;
+                        }
+                        case "pingMessage": {
+                            // Do nothing (we are already removing the "pong timeout" when any message is received)
+                            break;
+                        }
+                        case "askPositionMessage": {
+                            socketManager.handleAskPositionMessage(room, user, message.message.askPositionMessage);
+                            break;
+                        }
+                        case "meetingInvitationRequestMessage": {
+                            socketManager.handleMeetingInvitationRequestMessage(
+                                room,
+                                user,
+                                message.message.meetingInvitationRequestMessage,
+                            );
+                            break;
+                        }
+                        case "meetingInvitationResponseMessage": {
+                            socketManager.handleMeetingInvitationResponseMessage(
+                                room,
+                                user,
+                                message.message.meetingInvitationResponseMessage,
+                            );
+                            break;
+                        }
+                        case "publicEvent":
+                        case "privateEvent": {
+                            throw new Error("Cannot reach here, this is handled by the space manager");
+                        }
+                        case "setAreaPropertyVariableMessage": {
+                            await socketManager.handleSetAreaPropertyVariableEvent(
+                                room,
+                                user,
+                                message.message.setAreaPropertyVariableMessage,
+                            );
+                            break;
+                        }
+                        default: {
+                            const _exhaustiveCheck: never = message.message;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(
+                    "An error occurred while managing a message of type PusherToBackMessage:" + message.message.$case,
+                    e,
+                );
+                Sentry.captureException(e);
+                emitError(call, e);
+                closeConnection(`Error while handling joinRoom message: ${asError(e).message}`);
+            }
+        };
 
         call.on("data", (message: PusherToBackMessage) => {
             // On each message, let's reset the pong timeout
@@ -70,151 +238,15 @@ const roomManager = {
                 pongTimeoutId = undefined;
             }
 
-            (async () => {
-                if (!message.message) {
-                    console.error("Empty message received");
-                    Sentry.captureException(`Empty message received ${JSON.stringify(room)}`);
-                    return;
-                }
-
-                try {
-                    if (room === null || user === null) {
-                        if (message.message.$case === "joinRoomMessage") {
-                            socketManager
-                                .handleJoinRoom(call, message.message.joinRoomMessage)
-                                .then(({ room: gameRoom, user: myUser }) => {
-                                    if (call.writable) {
-                                        room = gameRoom;
-                                        user = myUser;
-                                    } else {
-                                        // Connection may have been closed before the init was finished, so we have to manually disconnect the user.
-                                        // TODO: Remove this debug line
-                                        console.info(
-                                            "message handleJoinRoom connection have been closed before. Check 'call.writable': ",
-                                            call.writable
-                                        );
-                                        socketManager.leaveRoom(gameRoom, myUser);
-                                    }
-                                })
-                                .catch((e) => {
-                                    console.error("message handleJoinRoom error: ", e);
-                                    Sentry.captureException(e);
-                                    emitError(call, e);
-                                });
-                        } else if (message.message.$case !== "pingMessage") {
-                            throw new Error("The first message sent MUST be of type JoinRoomMessage");
-                        }
-                    } else {
-                        switch (message.message.$case) {
-                            case "joinRoomMessage": {
-                                throw new Error("Cannot call JoinRoomMessage twice!");
-                            }
-                            case "userMovesMessage": {
-                                socketManager.handleUserMovesMessage(room, user, message.message.userMovesMessage);
-                                break;
-                            }
-                            case "itemEventMessage": {
-                                socketManager.handleItemEvent(room, user, message.message.itemEventMessage);
-                                break;
-                            }
-                            case "variableMessage": {
-                                await socketManager.handleVariableEvent(room, user, message.message.variableMessage);
-                                break;
-                            }
-                            case "queryMessage": {
-                                await socketManager.handleQueryMessage(room, user, message.message.queryMessage);
-                                break;
-                            }
-                            case "abortQueryMessage": {
-                                socketManager.handleAbortQueryMessage(room, user, message.message.abortQueryMessage);
-                                break;
-                            }
-                            case "emotePromptMessage": {
-                                socketManager.handleEmoteEventMessage(room, user, message.message.emotePromptMessage);
-                                break;
-                            }
-                            case "followRequestMessage": {
-                                socketManager.handleFollowRequestMessage(
-                                    room,
-                                    user,
-                                    message.message.followRequestMessage
-                                );
-                                break;
-                            }
-                            case "followConfirmationMessage": {
-                                socketManager.handleFollowConfirmationMessage(
-                                    room,
-                                    user,
-                                    message.message.followConfirmationMessage
-                                );
-                                break;
-                            }
-                            case "followAbortMessage": {
-                                socketManager.handleFollowAbortMessage(room, user, message.message.followAbortMessage);
-                                break;
-                            }
-                            case "lockGroupPromptMessage": {
-                                socketManager.handleLockGroupPromptMessage(
-                                    room,
-                                    user,
-                                    message.message.lockGroupPromptMessage
-                                );
-                                break;
-                            }
-                            case "editMapCommandMessage": {
-                                room.forwardEditMapCommandMessage(user, message.message.editMapCommandMessage);
-                                break;
-                            }
-                            case "sendUserMessage": {
-                                socketManager.handleSendUserMessage(user, message.message.sendUserMessage);
-                                break;
-                            }
-                            case "banUserMessage": {
-                                socketManager.handleBanUserMessage(room, user, message.message.banUserMessage);
-                                break;
-                            }
-                            case "setPlayerDetailsMessage": {
-                                socketManager.handleSetPlayerDetails(
-                                    room,
-                                    user,
-                                    message.message.setPlayerDetailsMessage
-                                );
-                                break;
-                            }
-                            case "pingMessage": {
-                                // Do nothing
-                                break;
-                            }
-                            case "askPositionMessage": {
-                                socketManager.handleAskPositionMessage(room, user, message.message.askPositionMessage);
-                                break;
-                            }
-                            case "publicEvent":
-                            case "privateEvent": {
-                                throw new Error("Cannot reach here, this is handled by the space manager");
-                            }
-                            default: {
-                                const _exhaustiveCheck: never = message.message;
-                            }
-                        }
-                    }
-                } catch (e) {
-                    console.error(
-                        "An error occurred while managing a message of type PusherToBackMessage:" +
-                            message.message.$case,
-                        e
-                    );
+            messageProcessingPromise = messageProcessingPromise
+                .then(() => handleMessage(message))
+                .catch((e) => {
+                    console.error(e);
                     Sentry.captureException(e);
-                    emitError(call, e);
-                    call.end();
-                }
-            })().catch((e) => {
-                console.error(e);
-                Sentry.captureException(e);
-            });
+                });
         });
 
-        const closeConnection = () => {
+        const closeConnection = (reason?: string) => {
             if (user !== null && room !== null) {
                 socketManager.leaveRoom(room, user);
             }
@@ -225,9 +257,13 @@ const roomManager = {
                 clearTimeout(pongTimeoutId);
                 pongTimeoutId = undefined;
             }
-            call.end();
-            room = null;
-            user = null;
+            if (reason !== undefined) {
+                endUserConnectionWithReason(call, reason);
+            } else {
+                call.end();
+            }
+            setRoom(null);
+            setUser(null);
         };
 
         call.on("end", () => {
@@ -279,87 +315,153 @@ const roomManager = {
                     "in room",
                     room?.roomUrl,
                     "at : ",
-                    today.toLocaleString("en-GB")
+                    today.toLocaleString("en-GB"),
                 );
+                const reason =
+                    "Connection lost with user. The user did not send a pong message in time. You should never see this message in the browser.";
                 call.write({
                     message: {
                         $case: "errorMessage",
                         errorMessage: {
-                            message:
-                                "Connection lost with user. The user did not send a pong message in time. You should never see this message in the browser.",
+                            message: reason,
                         },
                     },
                 });
-                closeConnection();
+                closeConnection(reason);
             }, PONG_TIMEOUT);
         }, PING_INTERVAL);
     },
 
-    listenZone(call: ZoneSocket): void {
-        debug("listenZone called");
-        const zoneMessage = call.request;
-
-        socketManager.addZoneListener(call, zoneMessage.roomId, zoneMessage.x, zoneMessage.y).catch((e) => {
-            emitErrorOnZoneSocket(call, e);
-        });
-
-        call.on("cancelled", () => {
-            debug("listenZone cancelled");
-            socketManager.removeZoneListener(call, zoneMessage.roomId, zoneMessage.x, zoneMessage.y).catch((e) => {
-                console.error(e);
-                Sentry.captureException(e);
-            });
-            call.end();
-        });
-
-        call.on("close", () => {
-            debug("listenZone connection closed");
-            socketManager.removeZoneListener(call, zoneMessage.roomId, zoneMessage.x, zoneMessage.y).catch((e) => {
-                console.error(e);
-                Sentry.captureException(e);
-            });
-        }).on("error", (e) => {
-            console.error("An error occurred in listenZone stream:", e);
-            Sentry.captureException(`An error occurred in listenZone stream: ${JSON.stringify(e)}`);
-            socketManager.removeZoneListener(call, zoneMessage.roomId, zoneMessage.x, zoneMessage.y).catch((e) => {
-                console.error(e);
-                Sentry.captureException(e);
-            });
-            call.end();
-        });
-    },
-
     listenRoom(call: RoomSocket): void {
         debug("listenRoom called");
-        const roomMessage = call.request;
+        let roomId: string | null = null;
+        const subscribedZones = new Map<string, { x: number; y: number }>();
+        // We use this promise to serialize the processing of incoming messages. Only one message is processed at a time.
+        let messageProcessingPromise = Promise.resolve();
 
-        socketManager.addRoomListener(call, roomMessage.roomId).catch((e) => {
-            emitErrorOnRoomSocket(call, e);
+        call.on("data", (message: PusherToBackRoomMessage) => {
+            messageProcessingPromise = messageProcessingPromise
+                .then(async () => {
+                    if (!message.message) {
+                        console.error("Empty message received in listenRoom");
+                        Sentry.captureException("Empty message received in listenRoom");
+                        return;
+                    }
+
+                    try {
+                        switch (message.message.$case) {
+                            case "initRoomMessage": {
+                                const initMessage = message.message.initRoomMessage;
+                                roomId = initMessage.roomId;
+                                await socketManager.addRoomListener(call, roomId);
+                                break;
+                            }
+                            case "subscribeZoneMessage": {
+                                const subscribeMessage = message.message.subscribeZoneMessage;
+                                if (roomId === null) {
+                                    throw new Error(`subscribeZoneMessage called before initRoomMessage`);
+                                }
+
+                                const zoneKey = `${subscribeMessage.x},${subscribeMessage.y}`;
+                                if (subscribedZones.has(zoneKey)) {
+                                    console.warn(
+                                        `WARNING: Double subscription to zone (${subscribeMessage.x},${subscribeMessage.y}) in room ${roomId}. This indicates a bug in the pusher.`,
+                                    );
+                                    return;
+                                }
+
+                                subscribedZones.set(zoneKey, { x: subscribeMessage.x, y: subscribeMessage.y });
+                                await socketManager.addZoneListener(
+                                    call,
+                                    roomId,
+                                    subscribeMessage.x,
+                                    subscribeMessage.y,
+                                );
+                                break;
+                            }
+                            case "unsubscribeZoneMessage": {
+                                const unsubscribeMessage = message.message.unsubscribeZoneMessage;
+                                if (roomId === null) {
+                                    throw new Error(`unsubscribeZoneMessage called before initRoomMessage`);
+                                }
+
+                                const zoneKey = `${unsubscribeMessage.x},${unsubscribeMessage.y}`;
+                                if (!subscribedZones.has(zoneKey)) {
+                                    console.warn(
+                                        `Attempting to unsubscribe from non-subscribed zone (${unsubscribeMessage.x},${unsubscribeMessage.y})`,
+                                    );
+                                    return;
+                                }
+
+                                subscribedZones.delete(zoneKey);
+                                await socketManager.removeZoneListener(
+                                    call,
+                                    roomId,
+                                    unsubscribeMessage.x,
+                                    unsubscribeMessage.y,
+                                );
+                                break;
+                            }
+                            default: {
+                                const _exhaustiveCheck: never = message.message;
+                            }
+                        }
+                    } catch (e) {
+                        console.error("An error occurred while managing a listenRoom message:", e);
+                        Sentry.captureException(e);
+                        emitErrorOnRoomSocket(call, e);
+                    }
+                })
+                .catch((e) => {
+                    console.error(e);
+                    Sentry.captureException(e, { tags: { roomId: roomId || "unknown" } });
+                });
         });
+
+        const cleanupAllZones = async () => {
+            if (roomId !== null) {
+                try {
+                    await socketManager.removeRoomListener(call, roomId);
+                } finally {
+                    const theRoomId = roomId;
+                    await Promise.all(
+                        Array.from(subscribedZones.values()).map((zone) =>
+                            socketManager.removeZoneListener(call, theRoomId, zone.x, zone.y),
+                        ),
+                    );
+                }
+            }
+        };
 
         call.on("cancelled", () => {
             debug("listenRoom cancelled");
-            socketManager.removeRoomListener(call, roomMessage.roomId).catch((e) => {
-                console.error(e);
-                Sentry.captureException(e);
-            });
-            call.end();
+            cleanupAllZones()
+                .catch((e) => {
+                    console.error(e);
+                    Sentry.captureException(e);
+                })
+                .finally(() => {
+                    call.end();
+                });
         });
 
         call.on("close", () => {
             debug("listenRoom connection closed");
-            socketManager.removeRoomListener(call, roomMessage.roomId).catch((e) => {
+            cleanupAllZones().catch((e) => {
                 console.error(e);
                 Sentry.captureException(e);
             });
         }).on("error", (e) => {
             console.error("An error occurred in listenRoom stream:", e);
             Sentry.captureException(`An error occurred in listenRoom stream: ${JSON.stringify(e)}`);
-            socketManager.removeRoomListener(call, roomMessage.roomId).catch((e) => {
-                console.error(e);
-                Sentry.captureException(e);
-            });
-            call.end();
+            cleanupAllZones()
+                .catch((e) => {
+                    console.error(e);
+                    Sentry.captureException(e);
+                })
+                .finally(() => {
+                    call.end();
+                });
         });
     },
 
@@ -387,7 +489,7 @@ const roomManager = {
                                 Sentry.captureException(e);
                             });
                     } else {
-                        throw new Error("The first message sent MUST be of type JoinRoomMessage");
+                        throw new Error("The first message sent MUST be of type subscribeToRoom");
                     }
                 }
             } catch (e) {
@@ -407,7 +509,7 @@ const roomManager = {
 
         call.on("error", (err: Error) => {
             console.error("An error occurred in joinAdminRoom stream:", err);
-            Sentry.captureException(`An error occurred in joinAdminRoom stream: ${JSON.stringify(err)}`);
+            Sentry.captureException(err);
         });
     },
     sendAdminMessage(call: ServerUnaryCall<AdminMessage, Empty>, callback: sendUnaryData<Empty>): void {
@@ -445,7 +547,7 @@ const roomManager = {
     },
     sendWorldFullWarningToRoom(
         call: ServerUnaryCall<WorldFullWarningToRoomMessage, Empty>,
-        callback: sendUnaryData<Empty>
+        callback: sendUnaryData<Empty>,
     ): void {
         // FIXME: we could improve return message by returning a Success|ErrorMessage message
         socketManager.dispatchWorldFullWarning(call.request.roomId).catch((e) => {
@@ -456,7 +558,7 @@ const roomManager = {
     },
     sendRefreshRoomPrompt(
         call: ServerUnaryCall<RefreshRoomPromptMessage, Empty>,
-        callback: sendUnaryData<Empty>
+        callback: sendUnaryData<Empty>,
     ): void {
         // FIXME: we could improve return message by returning a Success|ErrorMessage message
         socketManager.dispatchRoomRefresh(call.request.roomId).catch((e) => {
@@ -471,26 +573,16 @@ const roomManager = {
     ping(call: ServerUnaryCall<PingMessage, Empty>, callback: sendUnaryData<PingMessage>): void {
         callback(null, call.request);
     },
-    sendChatMessagePrompt(call: ServerUnaryCall<ChatMessagePrompt, Empty>, callback: sendUnaryData<Empty>): void {
-        socketManager
-            .dispatchChatMessagePrompt(call.request)
-            .then(() => {
-                callback(null, {});
-            })
-            .catch((err) => {
-                console.error(err);
-                Sentry.captureException(err);
-                callback(err as ServerErrorResponse, {});
-            });
-    },
     readVariable(call, callback) {
         socketManager
             .readVariable(call.request.room, call.request.name)
             .then((value) => {
                 callback(null, value === undefined ? undefined : JSON.parse(value));
             })
-            .catch((error) => {
-                throw error;
+            .catch((error: unknown) => {
+                console.error(error);
+                Sentry.captureException(error);
+                callback(asError(error));
             });
     },
     listenVariable(call) {
@@ -523,15 +615,18 @@ const roomManager = {
         socketManager
             .saveVariable(call.request.room, call.request.name, JSON.stringify(call.request.value))
             .then(() => {
-                callback(null);
+                callback(null, {});
             })
-            .catch((error) => {
+            .catch((error: unknown) => {
                 console.error(error);
                 Sentry.captureException(error);
-                throw error;
+                callback(asError(error));
             });
     },
-    handleMapStorageUploadMapDetected(call) {
+    handleMapStorageUploadMapDetected(
+        call: ServerUnaryCall<MapStorageClearAfterUploadMessage, Empty>,
+        callback: sendUnaryData<Empty>,
+    ): void {
         /**
          * We are calling the mapstorage connected to this back server and asking to purge the wamUrl from memory.
          * We are not sure this particular mapstorage has this particular WAM map in memory. But since the message
@@ -545,6 +640,7 @@ const roomManager = {
                 if (err) {
                     console.error(err);
                     Sentry.captureException(err);
+                    callback(err);
                     return;
                 }
                 Promise.all(socketManager.getWorlds().values())
@@ -554,25 +650,47 @@ const roomManager = {
                                 gameRoom.sendRefreshRoomMessageToUsers();
                             }
                         }
+                        callback(null, {});
                     })
-                    .catch((error) => {
+                    .catch((error: unknown) => {
                         console.error(error);
                         Sentry.captureException(error);
+                        callback(asError(error));
                     });
-            }
+            },
         );
+    },
+    handleMapStorageDeleteMapDetected(
+        call: ServerUnaryCall<MapStorageDeleteMessage, Empty>,
+        callback: sendUnaryData<Empty>,
+    ): void {
+        Promise.all(socketManager.getWorlds().values())
+            .then((gameRooms) => {
+                for (const gameRoom of gameRooms) {
+                    if (gameRoom.wamUrl === call.request.wamUrl) {
+                        gameRoom.sendMapDeletedMessageToUsers();
+                        socketManager.forceRemoveRoom(gameRoom.roomUrl);
+                    }
+                }
+                callback(null, {});
+            })
+            .catch((error: unknown) => {
+                console.error(error);
+                Sentry.captureException(error);
+                callback(asError(error));
+            });
     },
     /** Dispatch an event to all users in the room */
     dispatchEvent(call, callback) {
         socketManager
             .dispatchEvent(call.request.room, call.request.name, call.request.data, call.request.targetUserIds)
             .then(() => {
-                callback(null);
+                callback(null, {});
             })
-            .catch((error) => {
+            .catch((error: unknown) => {
                 console.error(error);
                 Sentry.captureException(error);
-                throw error;
+                callback(asError(error));
             });
     },
     /** Listen to events dispatched in the room */
@@ -605,12 +723,30 @@ const roomManager = {
         });
     },
     dispatchGlobalEvent(call, callback) {
-        socketManager.dispatchGlobalEvent(call.request.name, call.request.value);
-        callback(null);
+        try {
+            socketManager.dispatchGlobalEvent(call.request.name, call.request.value);
+            callback(null, {});
+        } catch (error) {
+            console.error(error);
+            Sentry.captureException(error);
+            callback(asError(error));
+        }
     },
     /** Dispatch external module event */
-    dispatchExternalModuleMessage(call) {
-        socketManager.handleExternalModuleMessage(call.request).catch((e) => console.error(e));
+    dispatchExternalModuleMessage(
+        call: ServerUnaryCall<ExternalModuleMessage, Empty>,
+        callback: sendUnaryData<Empty>,
+    ): void {
+        socketManager
+            .handleExternalModuleMessage(call.request)
+            .then(() => {
+                callback(null, {});
+            })
+            .catch((e: unknown) => {
+                console.error(e);
+                Sentry.captureException(e);
+                callback(asError(e));
+            });
     },
 } satisfies RoomManagerServer;
 

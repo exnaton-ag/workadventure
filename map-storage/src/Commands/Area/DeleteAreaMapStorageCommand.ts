@@ -1,19 +1,20 @@
-import { DeleteAreaCommand, GameMap } from "@workadventure/map-editor";
+import type { WamFile } from "@workadventure/map-editor";
+import { DeleteAreaCommand } from "@workadventure/map-editor";
 import pLimit from "p-limit";
 import { _axios } from "../../Services/axiosInstance";
-import { HookManager } from "../../Modules/HookManager";
+import type { HookManager } from "../../Modules/HookManager";
 
 const limit = pLimit(10);
 
 export class DeleteAreaMapStorageCommand extends DeleteAreaCommand {
     constructor(
-        gameMap: GameMap,
+        wamFile: WamFile,
         id: string,
         commandId: string | undefined,
         private hostname: string,
-        private hookManager: HookManager
+        private hookManager: HookManager,
     ) {
-        super(gameMap, id, commandId);
+        super(wamFile, id, commandId);
     }
     public async execute(): Promise<void> {
         await super.execute();
@@ -26,7 +27,7 @@ export class DeleteAreaMapStorageCommand extends DeleteAreaCommand {
                             await this.hookManager.fireAreaPropertyDelete(this.areaConfig, property, this.hostname);
                         }
                         if (resourceUrl) return _axios.delete(resourceUrl, { data: property });
-                    })
+                    }),
                 );
 
                 return acc;

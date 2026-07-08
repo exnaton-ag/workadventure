@@ -1,8 +1,8 @@
 import { get, writable } from "svelte/store";
 import { AvailabilityStatus } from "@workadventure/messages";
 import { describe, expect, it } from "vitest";
-import { UserProviderInterface } from "../UserProvider/UserProviderInterface";
-import { PartialChatUser } from "../Connection/ChatConnection";
+import type { UserProviderInterface } from "../UserProvider/UserProviderInterface";
+import type { PartialChatUser } from "../Connection/ChatConnection";
 import { UserProviderMerger } from "./UserProviderMerger";
 
 describe("UserProviderMerger", () => {
@@ -57,14 +57,14 @@ describe("UserProviderMerger", () => {
         expect(usersByRoom?.get("playUri1")?.roomName).toBe("Room1");
 
         expect(get(usersByRoom.get("playUri1")?.users[0].availabilityStatus || writable())).toBe(
-            AvailabilityStatus.ONLINE
+            AvailabilityStatus.ONLINE,
         );
 
         expect(usersByRoom?.get("playUri1")?.users[1].username).toBe("Eve");
         expect(usersByRoom?.get(undefined)?.users[0].username).toBe("Charlie");
 
         expect(get(usersByRoom.get(undefined)?.users[0].availabilityStatus || writable())).toBe(
-            AvailabilityStatus.UNCHANGED
+            AvailabilityStatus.UNCHANGED,
         );
     });
 });

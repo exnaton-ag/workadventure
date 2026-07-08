@@ -11,10 +11,26 @@ import {
 
 export const EnvironmentVariables = z.object({
     API_URL: z.string().min(1).describe("The URI(s) of the back server"),
-    AWS_ACCESS_KEY_ID: z.string().optional().transform(emptyStringToUndefined),
-    AWS_SECRET_ACCESS_KEY: z.string().optional().transform(emptyStringToUndefined),
-    AWS_DEFAULT_REGION: z.string().optional().transform(emptyStringToUndefined),
-    AWS_BUCKET: z.string().optional().transform(emptyStringToUndefined),
+    AWS_ACCESS_KEY_ID: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("AWS access key ID for S3 storage. If empty, local storage is used instead."),
+    AWS_SECRET_ACCESS_KEY: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("AWS secret access key for S3 storage. If empty, local storage is used instead."),
+    AWS_DEFAULT_REGION: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("AWS region for S3 storage (e.g., 'us-east-1', 'eu-west-1')"),
+    AWS_BUCKET: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("S3 bucket name for map storage. If empty, local storage is used instead."),
     AWS_URL: z
         .string()
         .url()
@@ -32,11 +48,13 @@ export const EnvironmentVariables = z.object({
         .transform((val) => toNumber(val, 60000))
         .describe("The timeout in milliseconds for the S3 requests in milliseconds. Defaults to 60000 (60 seconds)."),
     //UPLOADER_AWS_SIGNED_URL_EXPIRATION: PositiveIntAsString.optional(),
-    S3_UPLOAD_CONCURRENCY_LIMIT: PositiveIntAsString.optional().transform((val) => toNumber(val, 100)),
+    S3_UPLOAD_CONCURRENCY_LIMIT: PositiveIntAsString.optional()
+        .transform((val) => toNumber(val, 100))
+        .describe("Maximum number of concurrent S3 upload operations. Defaults to 100"),
     MAX_UNCOMPRESSED_SIZE: PositiveIntAsString.optional()
         .transform((val) => toNumber(val, 1024 * 1024 * 1024))
         .describe(
-            "The maximum size of an uploaded file. This the total size of the uncompressed file (not the ZIP file). Defaults to 1GB"
+            "The maximum size of an uploaded file. This the total size of the uncompressed file (not the ZIP file). Defaults to 1GB",
         ),
     USE_DOMAIN_NAME_IN_PATH: BoolAsString.optional()
         .transform((val) => toBool(val, false))
@@ -45,7 +63,7 @@ export const EnvironmentVariables = z.object({
         .string()
         .optional()
         .describe(
-            "The prefix to strip if a reverse proxy is proxying calls to the map-storage from a path, e.g. /map-storage"
+            "The prefix to strip if a reverse proxy is proxying calls to the map-storage from a path, e.g. /map-storage",
         )
         .transform(emptyStringToUndefined),
     STORAGE_DIRECTORY: z
@@ -58,7 +76,7 @@ export const EnvironmentVariables = z.object({
         .optional()
         .transform(emptyStringToDefault("public, s-max-age=10"))
         .describe(
-            'The cache-control HTTP header to be used for "normal" resources. Note: resources containing a hash in the name will be set to "immutable", whatever this setting is.'
+            'The cache-control HTTP header to be used for "normal" resources. Note: resources containing a hash in the name will be set to "immutable", whatever this setting is.',
         ),
     ENABLE_WEB_HOOK: BoolAsString.optional()
         .transform((val) => toBool(val, true))
@@ -67,20 +85,20 @@ export const EnvironmentVariables = z.object({
         .string()
         .optional()
         .describe(
-            "The URL of the webhook to call when a WAM file is created / updated / deleted. The URL will be called using POST."
+            "The URL of the webhook to call when a WAM file is created / updated / deleted. The URL will be called using POST.",
         )
         .transform(emptyStringToUndefined),
     WEB_HOOK_API_TOKEN: z
         .string()
         .optional()
         .describe(
-            "The (optional) API token to use when calling the webhook. The token will be sent in the Authorization header of the POST request."
+            "The (optional) API token to use when calling the webhook. The token will be sent in the Authorization header of the POST request.",
         )
         .transform(emptyStringToUndefined),
     MAX_SIMULTANEOUS_FS_READS: PositiveIntAsString.optional()
         .transform((val) => toNumber(val, 100))
         .describe(
-            "The maximum number of simultaneous file system (local or S3) reads when regenerating the cache file. Defaults to 100."
+            "The maximum number of simultaneous file system (local or S3) reads when regenerating the cache file. Defaults to 100.",
         ),
     SENTRY_DSN: z
         .string()
@@ -106,13 +124,13 @@ export const EnvironmentVariables = z.object({
         .union([z.literal("Bearer"), z.literal("Basic"), z.literal("Digest"), z.literal("")])
         .optional()
         .describe(
-            "Deprecated. Use ENABLE_BEARER_AUTHENTICATION, ENABLE_BASIC_AUTHENTICATION or ENABLE_DIGEST_AUTHENTICATION instead"
+            "Deprecated. Use ENABLE_BEARER_AUTHENTICATION, ENABLE_BASIC_AUTHENTICATION or ENABLE_DIGEST_AUTHENTICATION instead",
         )
         .transform(emptyStringToUndefined),
     ENABLE_BEARER_AUTHENTICATION: BoolAsString.optional()
         .transform((val) => toBool(val, false))
         .describe(
-            "Enables bearer authentication. When true, you need to set either AUTHENTICATION_TOKEN or AUTHENTICATION_VALIDATOR_URL"
+            "Enables bearer authentication. When true, you need to set either AUTHENTICATION_TOKEN or AUTHENTICATION_VALIDATOR_URL",
         ),
     AUTHENTICATION_TOKEN: z
         .string()
@@ -129,15 +147,23 @@ export const EnvironmentVariables = z.object({
     ENABLE_BASIC_AUTHENTICATION: BoolAsString.optional()
         .transform((val) => toBool(val, false))
         .describe(
-            "Enables basic authentication. When true, you need to set both AUTHENTICATION_USER and AUTHENTICATION_PASSWORD"
+            "Enables basic authentication. When true, you need to set both AUTHENTICATION_USER and AUTHENTICATION_PASSWORD",
         ),
     ENABLE_DIGEST_AUTHENTICATION: BoolAsString.optional()
         .transform((val) => toBool(val, false))
         .describe(
-            "Enables basic authentication. When true, you need to set both AUTHENTICATION_USER and AUTHENTICATION_PASSWORD"
+            "Enables basic authentication. When true, you need to set both AUTHENTICATION_USER and AUTHENTICATION_PASSWORD",
         ),
-    AUTHENTICATION_USER: z.string().optional().transform(emptyStringToUndefined),
-    AUTHENTICATION_PASSWORD: z.string().optional().transform(emptyStringToUndefined),
+    AUTHENTICATION_USER: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("Username for Basic or Digest authentication"),
+    AUTHENTICATION_PASSWORD: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("Password for Basic or Digest authentication"),
     WAM_TEMPLATE_URL: z
         .string()
         .url()
@@ -151,20 +177,21 @@ export const EnvironmentVariables = z.object({
         .or(z.literal(""))
         .optional()
         .describe(
-            "A comma separated list of entity collection URLs to be used when a new TMJ map is uploaded. Note: ignored if WAM_TEMPLATE_URL is set."
+            "A comma separated list of entity collection URLs to be used when a new TMJ map is uploaded. Note: ignored if WAM_TEMPLATE_URL is set.",
         )
         .transform(emptyStringToUndefined),
-    MAP_STORAGE_API_TOKEN: z.string(),
-    PUSHER_URL: AbsoluteOrRelativeUrl,
+    MAP_STORAGE_API_TOKEN: z.string().describe("API token to access the map-storage REST API"),
+    PUSHER_URL: AbsoluteOrRelativeUrl.describe("URL of the pusher service"),
     WHITELISTED_RESOURCE_URLS: z
         .string()
         .optional()
-        .transform((val) => (val && val.trim().length > 0 ? val.split(",") : [])),
+        .transform((val) => (val && val.trim().length > 0 ? val.split(",") : []))
+        .describe("Comma-separated list of allowed URLs for loading external resources"),
     SECRET_KEY: z
         .string()
         .optional()
         .describe(
-            "The JWT token to use when the map-storage is used as a file server. This token will be used to authenticate the user when accessing files."
+            "The JWT token to use when the map-storage is used as a file server. This token will be used to authenticate the user when accessing files.",
         ),
     GRPC_MAX_MESSAGE_SIZE: PositiveIntAsString.optional()
         .or(z.string().max(0))
@@ -175,7 +202,7 @@ export const EnvironmentVariables = z.object({
         .optional()
         .transform(emptyStringToDefault("100mb"))
         .describe(
-            "The maximum size of JSON request bodies accepted by the body parser (used in PUT / PATCH HTTP requests). Defaults to 100mb. Examples: '50mb', '200mb', '1gb'"
+            "The maximum size of JSON request bodies accepted by the body parser (used in PUT / PATCH HTTP requests). Defaults to 100mb. Examples: '50mb', '200mb', '1gb'",
         ),
 });
 

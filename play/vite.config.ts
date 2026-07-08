@@ -1,13 +1,13 @@
-import { basename } from "path";
+import path from "path";
+import { fileURLToPath } from "url";
 import fs from "fs";
 import { defineConfig, loadEnv } from "vite";
-import { svelte } from "@sveltejs/vite-plugin-svelte";
-import sveltePreprocess from "svelte-preprocess";
-import legacy from "@vitejs/plugin-legacy";
+import { svelte, vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
+import { noiseSuppressionAudioWorkletVitePlugin } from "@workadventure/noise-suppression/vite";
+import tailwindcss from "@tailwindcss/vite";
 import Icons from "unplugin-icons/vite";
 import tsconfigPaths from "vite-tsconfig-paths";
-import NodeGlobalsPolyfillPlugin from "@esbuild-plugins/node-globals-polyfill";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
 
 // https://vitejs.dev/config/
@@ -31,18 +31,27 @@ export default defineConfig(({ mode }) => {
             sourcemap: env.GENERATE_SOURCEMAP !== "false",
             outDir: "./dist/public",
             rollupOptions: {
-                plugins: [NodeGlobalsPolyfillPlugin({ buffer: true }), mediapipe_workaround()],
-                // external: ["@mediapipe/tasks-vision", "@mediapipe/selfie_segmentation"],
+                input: {
+                    main: path.resolve(process.cwd(), "index.html"),
+                    pipLayoutTest: path.resolve(process.cwd(), "pip-layout-test.html"),
+                },
+                // external: ["@mediapipe/tasks-vision"],
                 //plugins: [inject({ Buffer: ["buffer/", "Buffer"] })],
             },
             assetsInclude: ["**/*.tflite", "**/*.wasm"],
         },
         plugins: [
+            tailwindcss(),
+            mediapipe_workaround(),
+            noiseSuppressionAudioWorkletVitePlugin(),
             nodePolyfills({
-                include: ["events"],
+                include: ["events", "buffer"],
+                globals: {
+                    Buffer: true,
+                },
             }),
             svelte({
-                preprocess: sveltePreprocess(),
+                preprocess: vitePreprocess(),
                 onwarn(warning, defaultHandler) {
                     // don't warn on:
                     if (warning.code === "a11y-click-events-have-key-events") return;
@@ -59,22 +68,14 @@ export default defineConfig(({ mode }) => {
             Icons({
                 compiler: "svelte",
             }),
-            // Conditional plugin inclusion
-            ...(env.DISABLE_LEGACY_BROWSERS === "true"
-                ? []
-                : [
-                      legacy({
-                          //targets: ['defaults', 'not IE 11', 'iOS > 14.3']
-                          // Structured clone is needed for Safari < 15.4
-                          polyfills: ["web.structured-clone"],
-                          modernPolyfills: ["web.structured-clone"],
-                      }),
-                  ]),
             tsconfigPaths(),
         ],
         resolve: {
             alias: {
+                phaser: fileURLToPath(new URL("./node_modules/phaser/dist/phaser.esm.js", import.meta.url)),
                 events: "events",
+                "@wa-icons": fileURLToPath(new URL("./src/front/Components/Icons.ts", import.meta.url)),
+                "@wa-modals": fileURLToPath(new URL("./src/front/Components/Modal/modalManager.ts", import.meta.url)),
             },
         },
         test: {
@@ -88,8 +89,7 @@ export default defineConfig(({ mode }) => {
             },
         },
         optimizeDeps: {
-            include: ["olm"],
-            exclude: ["svelte-modals"],
+            exclude: ["svelte-modals", "@mediapipe/selfie_segmentation"],
             esbuildOptions: {
                 define: {
                     global: "globalThis",
@@ -106,18 +106,21 @@ export default defineConfig(({ mode }) => {
                 org: env.SENTRY_ORG,
                 project: env.SENTRY_PROJECT,
                 // Specify the directory containing build artifacts
-                include: "./dist/public",
+                sourcemaps: {
+                    assets: "./dist/public/**",
+                },
                 // Auth tokens can be obtained from https://sentry.io/settings/account/api/auth-tokens/
                 // and needs the `project:releases` and `org:read` scopes
                 authToken: env.SENTRY_AUTH_TOKEN,
                 // Optionally uncomment the line below to override automatic release name detection
-                release: env.SENTRY_RELEASE,
-                deploy: {
-                    env: env.SENTRY_ENVIRONMENT,
+                release: {
+                    name: env.SENTRY_RELEASE,
+                    deploy: {
+                        env: env.SENTRY_ENVIRONMENT,
+                    },
+                    finalize: true,
                 },
-                finalize: true,
-                uploadSourceMaps: true,
-            })
+            }),
         );
     } else {
         console.info("Sentry plugin disabled");
@@ -125,14 +128,16 @@ export default defineConfig(({ mode }) => {
     return config;
 });
 
-// use to fix the build issue with mediapipe ==> https://github.com/tensorflow/tfjs/issues/7165
+// use to fix the module export issue with mediapipe ==> https://github.com/tensorflow/tfjs/issues/7165
+// TODO: remove this when we migrate to mediapipe/tasks-vision
 function mediapipe_workaround() {
     return {
         name: "mediapipe_workaround",
         load(id: string) {
-            if (basename(id) === "selfie_segmentation.js") {
-                let code = fs.readFileSync(id, "utf-8");
-                code += "exports.SelfieSegmentation = SelfieSegmentation;";
+            const filePath = id.split("?")[0];
+            if (path.basename(filePath) === "selfie_segmentation.js" && fs.existsSync(filePath)) {
+                let code = fs.readFileSync(filePath, "utf-8");
+                code += "\nexport const SelfieSegmentation = globalThis.SelfieSegmentation;\n";
                 return { code };
             } else {
                 return null;

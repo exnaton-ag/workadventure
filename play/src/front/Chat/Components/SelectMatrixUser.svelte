@@ -1,25 +1,34 @@
 <script lang="ts">
-    import { onMount, createEventDispatcher } from "svelte";
+    import { onMount } from "svelte";
+    import { get } from "svelte/store";
     import * as Sentry from "@sentry/svelte";
     import Select from "svelte-select";
     import LL from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
-    import UsersIcon from "../../Components/Icons/UsersIcon.svelte";
-    import { searchChatMembersRule, SelectItem } from "./Room/searchChatMembersRule";
-    export let value: SelectItem[] = [];
-    export let placeholder = "";
-    export let filterText = "";
+    import type { SelectItem } from "./Room/searchChatMembersRule";
+    import { searchChatMembersRule } from "./Room/searchChatMembersRule";
+    import { IconUsers } from "@wa-icons";
 
-    let items: SelectItem[] = [];
+    interface Props {
+        value?: SelectItem[];
+        placeholder?: string;
+        filterText?: string;
+        onerror?: (error: string) => void;
+    }
+
+    let { value = $bindable<SelectItem[]>(), placeholder = "", filterText = "", onerror }: Props = $props();
+
+    if (value === undefined) {
+        value = [];
+    }
+
+    let items: SelectItem[] = $state([]);
     const chat = gameManager.chatConnection;
 
-    const dispatch = createEventDispatcher<{
-        error: { error: string };
-    }>();
     const { searchWorldMembers } = searchChatMembersRule();
 
     function handleFilter(e: CustomEvent) {
-        if (value?.find((i) => i.label === filterText)) return;
+        if (value.find((i) => i.label === filterText)) return;
         if (e.detail.length === 0 && filterText.length > 0) {
             const prev = items.filter((i) => !i.created);
             items = [...prev, { value: filterText, label: filterText, created: true }];
@@ -39,7 +48,7 @@
                     console.error(error);
                     return { item, isValid: false };
                 }
-            })
+            }),
         );
 
         const validItems = verificationResults
@@ -48,7 +57,7 @@
 
         const hasInvalidItems = verificationResults.some(({ isValid }) => !isValid);
         if (hasInvalidItems) {
-            dispatch("error", { error: "User not found" });
+            onerror?.(get(LL).chat.matrixUserSelect.userNotFound());
         }
 
         return validItems;
@@ -60,7 +69,7 @@
                 items = newItems;
             })
             .catch((error) => {
-                dispatch("error", { error: "Failed to load users" });
+                onerror?.(get(LL).chat.matrixUserSelect.failedToLoadUsers());
                 console.error(error);
                 Sentry.captureException(error);
             });
@@ -108,7 +117,7 @@
     {items}
 >
     <div slot="prepend" class="ps-2">
-        <UsersIcon />
+        <IconUsers font-size="20" class="text-white" />
     </div>
     <div slot="item" let:item class="cursor-pointer">
         {item.created ? $LL.chat.addNew : ""}

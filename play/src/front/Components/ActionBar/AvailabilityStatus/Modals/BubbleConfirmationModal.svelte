@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { ConfirmationModalPropsInterface } from "../Interfaces/ConfirmationModalPropsInterface";
+    import type { ConfirmationModalPropsInterface } from "../Interfaces/ConfirmationModalPropsInterface";
     import LL from "../../../../../i18n/i18n-svelte";
     import {
         closeBubbleConfirmationModal,
@@ -7,7 +7,11 @@
     } from "../../../../Rules/StatusRules/statusChangerFunctions";
     import ConfirmationModal from "./ConfirmationModal.svelte";
 
-    export let name: string;
+    interface Props {
+        name: string;
+    }
+
+    let { name }: Props = $props();
 
     const confirmationModalProps: ConfirmationModalPropsInterface = {
         handleAccept: () => {

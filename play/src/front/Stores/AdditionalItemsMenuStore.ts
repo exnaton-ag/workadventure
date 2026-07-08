@@ -1,7 +1,8 @@
-import { derived, Readable, writable } from "svelte/store";
-import { AddButtonActionBarEvent, RemoveButtonActionBarEvent } from "../Api/Events/Ui/ButtonActionBarEvent";
+import type { Readable } from "svelte/store";
+import { derived, writable } from "svelte/store";
+import type { AddButtonActionBarEvent, RemoveButtonActionBarEvent } from "../Api/Events/Ui/ButtonActionBarEvent";
 import { gameManager } from "../Phaser/Game/GameManager";
-import { CustomButtonActionBarDescriptor } from "./MenuStore";
+import type { CustomButtonActionBarDescriptor } from "./MenuStore";
 
 type AdditionalMenuItem = CustomButtonActionBarDescriptor & {
     location: "top" | "appsMenu" | "buildMenu" | "profileMenu";
@@ -14,7 +15,7 @@ const derivedStores: {
 } = {};
 
 export function getAdditionalMenuItemStore(
-    location: "top" | "appsMenu" | "buildMenu" | "profileMenu"
+    location: "top" | "appsMenu" | "buildMenu" | "profileMenu",
 ): Readable<Map<string, AdditionalMenuItem>> {
     return (derivedStores[location] ??= derived(additionalMenuItemStores, ($items) => {
         const filteredItems = new Map<string, AdditionalMenuItem>();

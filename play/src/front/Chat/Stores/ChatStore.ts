@@ -1,11 +1,12 @@
 import { get, writable } from "svelte/store";
-import { ComponentType } from "svelte";
-import { ChatMessage as NewChatMessage } from "../Connection/ChatConnection";
+import type { WorkAdventureComponent, WorkAdventureComponentProps } from "../../../types/component";
+import type { ChatMessage as NewChatMessage } from "../Connection/ChatConnection";
 import { chatVisibilityStore } from "../../Stores/ChatStore";
 import { ENABLE_CHAT } from "../../Enum/EnvironmentVariable";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { matrixSecurity } from "../Connection/Matrix/MatrixSecurity";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
+import { localUserStore } from "../../Connection/LocalUserStore";
 import { selectedRoomStore } from "./SelectRoomStore";
 
 type NavChatTab =
@@ -17,8 +18,8 @@ type NavChatTab =
       }
     | {
           key: "externalModule";
-          component: ComponentType;
-          props?: Record<string, unknown>;
+          component: WorkAdventureComponent;
+          props?: WorkAdventureComponentProps;
       };
 
 function createNavChatStore() {
@@ -41,7 +42,7 @@ function createNavChatStore() {
             }
             analyticsClient.openUserList();
         },
-        switchToCustomComponent(component: ComponentType, props?: Record<string, unknown>) {
+        switchToCustomComponent(component: WorkAdventureComponent, props?: WorkAdventureComponentProps) {
             set({ key: "externalModule", component, props });
         },
     };
@@ -49,8 +50,25 @@ function createNavChatStore() {
 
 export const navChat = createNavChatStore();
 
-export const shownRoomListStore = writable<string>("");
+export const shownRoomListStore = writable<string[]>([]);
 export const chatSearchBarValue = writable<string>("");
+
+/** Matrix room IDs the user chose to hide from suggested / joinable lists (persisted in localStorage). */
+export const ignoredSuggestedRoomIdsStore = writable<Set<string>>(localUserStore.getIgnoredSuggestedRoomIds());
+
+export function ignoreSuggestedRoom(roomId: string): void {
+    localUserStore.addIgnoredSuggestedRoom(roomId);
+    ignoredSuggestedRoomIdsStore.update((ids) => {
+        const next = new Set(ids);
+        next.add(roomId);
+        return next;
+    });
+}
+
+export function clearIgnoredSuggestedRooms(): void {
+    localUserStore.clearIgnoredSuggestedRoomIds();
+    ignoredSuggestedRoomIdsStore.set(new Set());
+}
 
 export function initializeChatVisibilitySubscription() {
     const unsubscriber = chatVisibilityStore.subscribe((visible) => {
@@ -63,7 +81,7 @@ export function initializeChatVisibilitySubscription() {
         const isEncrypted = get(selectedRoom.isEncrypted);
 
         if (visible && isEncrypted) {
-            matrixSecurity.openChooseDeviceVerificationMethodModal().catch((error) => {
+            matrixSecurity.openAutomaticChooseDeviceVerificationMethodModal().catch((error) => {
                 console.error(error);
             });
         }

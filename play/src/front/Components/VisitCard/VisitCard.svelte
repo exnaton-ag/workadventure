@@ -1,7 +1,6 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import { get } from "svelte/store";
-    import { fly } from "svelte/transition";
     import { requestVisitCardsStore, selectedChatIDRemotePlayerStore } from "../../Stores/GameStore";
     import { LL } from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
@@ -12,13 +11,17 @@
     import Spinner from "../Icons/Spinner.svelte";
     import { IconLoader } from "@wa-icons";
 
-    export let visitCardUrl: string;
-    export let isEmbedded = false;
-    export let showSendMessageButton = true;
-    export let maxHeigth = 350;
+    interface Props {
+        visitCardUrl: string;
+        isEmbedded?: boolean;
+        showSendMessageButton?: boolean;
+        maxHeigth?: number;
+    }
+
+    let { visitCardUrl, isEmbedded = false, showSendMessageButton = true, maxHeigth = 350 }: Props = $props();
     let w = "100%";
-    let h = 250;
-    let hidden = true;
+    let h = $state(250);
+    let hidden = $state(true);
     let cvIframe: HTMLIFrameElement;
 
     const chatConnection = gameManager.chatConnection;
@@ -27,6 +30,10 @@
 
     function closeCard() {
         requestVisitCardsStore.set(null);
+
+        // At the end of the visit card, emit the ask position message to the server
+        const currentScerne = gameManager.getCurrentGameScene();
+        currentScerne.CurrentPlayer.emitAskPosition();
     }
 
     function openChat() {
@@ -48,11 +55,11 @@
     });
 </script>
 
-<section transition:fly={{ x: 200, duration: 500 }} class="visitCard {isEmbedded ? 'w-full' : 'max-w-[320px]'}">
-    <div class="{isEmbedded ? '' : 'bg-contrast/80 rounded-lg'} relative">
+<section class="visitCard {isEmbedded ? 'w-full' : 'max-w-[320px]'}">
+    <div class="{isEmbedded ? '' : 'bg-contrast/80 rounded-lg'} relative backdrop-blur">
         {#if !isEmbedded}
             <div class="absolute top-2 {h > maxHeigth ? 'right-5' : ' right-2'}">
-                <ButtonClose size="xs" dataTestId="closeVisitCardButton" on:click={closeCard} />
+                <ButtonClose size="xs" dataTestId="closeVisitCardButton" onclick={closeCard} />
             </div>
         {/if}
         {#if hidden}
@@ -69,7 +76,7 @@
                 style="width: {isEmbedded ? '100%' : w}; height: {Math.min(h, maxHeigth)}px"
                 class:hidden
                 bind:this={cvIframe}
-            />
+            ></iframe>
         </div>
         {#if !hidden && !isEmbedded}
             <div class="buttonContainer p-2.5 flex flex-row justify-end gap-2 bg-contrast rounded-b-lg">
@@ -78,7 +85,7 @@
                         <button
                             class="btn btn-secondary text-nowrap justify-center m-2 flex-1 min-w-0"
                             data-testid="sendMessagefromVisitCardButton"
-                            on:click={openChat}
+                            onclick={openChat}
                         >
                             <img src={chat} alt="chat" class="w-6 h-6 mx-2" draggable="false" />
                             {$LL.menu.visitCard.sendMessage()}
@@ -97,9 +104,9 @@
     </div>
 </section>
 
-<svelte:window on:message={handleIframeMessage} />
+<svelte:window onmessage={handleIframeMessage} />
 
-<style lang="scss">
+<style>
     .visitCard {
         pointer-events: all;
         z-index: 750;

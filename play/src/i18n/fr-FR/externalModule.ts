@@ -4,15 +4,15 @@ import type { Translation } from "../i18n-types";
 const externalModule: DeepPartial<Translation["externalModule"]> = {
     status: {
         onLine: "Module ok ✅",
-        offLine: "Module off ❌",
-        warning: "Module error ⚠️",
+        offLine: "Module hors ligne ❌",
+        warning: "Erreur du module ⚠️",
         sync: "Module en cours de synchro 🔄",
     },
     teams: {
         openingMeeting: "Ouverture de la réunion Teams...",
         unableJoinMeeting: "Impossible de rejoindre la réunion Teams !",
-        userNotConnected: "Vous n'êtes pas syncronisé avec votre compte Outlook ou Google!",
-        connectToYourTeams: "Connectez-vous à votre compte Outllok ou Google 🙏",
+        userNotConnected: "Vous n'êtes pas synchronisé avec votre compte Outlook ou Google !",
+        connectToYourTeams: "Connectez-vous à votre compte Outlook ou Google 🙏",
         temasAppInfo:
             "Teams est une application Microsoft 365 qui aide votre équipe à rester connectée et organisée. Vous pouvez discuter, rencontrer, appeler et collaborer au même endroit 😍",
         buttonSync: "Synchroniser Teams 🚀",
@@ -21,15 +21,15 @@ const externalModule: DeepPartial<Translation["externalModule"]> = {
     discord: {
         integration: "INTÉGRATION",
         explainText:
-            "En connectant votre compte discord ici, vous pourrez recevoir vos messages directement dans le chat workadventure. Après avoir synchronisé un serveur, nous créerons les salles qu'il contient, vous n'aurez plus qu'à les rejoindre dans le chat Workadventure.",
-        login: "Connexion a Discord",
+            "En connectant votre compte Discord ici, vous pourrez recevoir vos messages directement dans le chat WorkAdventure. Après avoir synchronisé un serveur, nous créerons les salles qu'il contient, vous n'aurez plus qu'à les rejoindre dans le chat WorkAdventure.",
+        login: "Connexion à Discord",
         fetchingServer: "Récupération de vos serveurs... 👀",
         qrCodeTitle: "Connectez-vous à Discord",
         qrCodeExplainText:
-            "Scannez le code QR avec votre application Discord pour vous connecter. Les codes QR sont limités dans le temps, vous devez parfois en régénérer un",
-        qrCodeRegenerate: "Re-générer le QR Code",
+            "Scannez le code QR avec votre application Discord pour vous connecter. Les codes QR sont limités dans le temps, vous devez parfois en régénérer un.",
+        qrCodeRegenerate: "Régénérer le code QR",
         tokenInputLabel: "Jeton Discord",
-        loginToken: "Se connecter avec le token",
+        loginToken: "Se connecter avec le jeton",
         loginTokenExplainText:
             "Vous devez saisir votre jeton Discord. Pour effectuer l'intégration de Discord, consultez",
         sendDiscordToken: "Envoyer",
@@ -38,8 +38,11 @@ const externalModule: DeepPartial<Translation["externalModule"]> = {
         loggedIn: "Connecté en tant que",
         saveSync: "Enregistrer et synchroniser 🔌",
         logout: "Se déconnecter",
+        back: "Retour",
+        tokenPlaceholder: "Votre jeton Discord",
+        loginWithQrCode: "Se connecter avec le code QR",
         guilds: "Serveurs Discord",
-        guildExplain: "Sélectionnez les canaux que vous souhaitez ajouter à l’interface de chat WorkAdventure.\n",
+        guildExplain: "Sélectionnez les canaux que vous souhaitez ajouter à l'interface de chat WorkAdventure.\n",
     },
     outlook: {
         signIn: "Se connecter avec Outlook",
@@ -53,6 +56,15 @@ const externalModule: DeepPartial<Translation["externalModule"]> = {
         popupScopeIsConnectedExplainText:
             "Vous êtes déjà connecté, veuillez cliquer sur le bouton pour vous déconnecter et vous reconnecter.",
         popupScopeIsConnectedButton: "Se déconnecter",
+        popupErrorTitle: "⚠️ La synchronisation du module Outlook ou Teams a échoué",
+        popupErrorDescription:
+            "La synchronisation d'initialisation du module Outlook ou Teams a échoué. Pour être connecté, veuillez essayer de vous reconnecter.",
+        popupErrorContactAdmin: "Si le problème persiste, veuillez contacter votre administrateur.",
+        popupErrorShowMore: "Afficher plus d'informations",
+        popupErrorMoreInfo1:
+            "Il pourrait y avoir un problème avec le processus de connexion. Veuillez vérifier que le fournisseur SSO Azure est correctement configuré.",
+        popupErrorMoreInfo2:
+            'Veuillez vérifier que la portée "offline_access" est activée pour le fournisseur SSO Azure. Cette portée est requise pour obtenir le jeton d\'actualisation et maintenir le module Teams ou Outlook connecté.',
     },
     google: {
         signIn: "Se connecter avec Google",

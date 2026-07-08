@@ -1,39 +1,81 @@
-import axios, { AxiosInstance } from "axios";
+import type { AxiosInstance, InternalAxiosRequestConfig } from "axios";
+import axios from "axios";
 import pLimit from "p-limit";
-import { EventType, ICreateRoomOpts, Visibility } from "matrix-js-sdk";
+import type { ICreateRoomOpts } from "matrix-js-sdk";
+import { EventType, Visibility } from "matrix-js-sdk";
 import { slugify } from "@workadventure/shared-utils/src/Jitsi/slugify";
 import { MATRIX_ADMIN_PASSWORD, MATRIX_ADMIN_USER, MATRIX_API_URI, MATRIX_DOMAIN } from "../enums/EnvironmentVariable";
+import type { RedisClient } from "./RedisClient";
+import { getRedisClient } from "./RedisClient";
 
 const ADMIN_CHAT_ID = `@${MATRIX_ADMIN_USER}:${MATRIX_DOMAIN}`;
+const ACCESS_TOKEN_REDIS_KEY = `matrix-admin-access-token:${MATRIX_DOMAIN}:${MATRIX_ADMIN_USER}`;
+const ACCESS_TOKEN_LOCK_REDIS_KEY = `matrix-admin-access-token-lock:${MATRIX_DOMAIN}:${MATRIX_ADMIN_USER}`;
+const ACCESS_TOKEN_LOCK_TTL_SECONDS = 30;
+const ACCESS_TOKEN_LOCK_WAIT_MS = 500;
+const ACCESS_TOKEN_LOCK_TIMEOUT_MS = ACCESS_TOKEN_LOCK_TTL_SECONDS * 1000 + 5_000;
+const ADMIN_RATE_LIMIT_OVERRIDE_RETRY_COUNT = 10;
+const ADMIN_RATE_LIMIT_OVERRIDE_RETRY_MS = 1_000;
 
 const limit = pLimit(10);
+
+type MatrixErrorResponse = {
+    errcode?: string;
+    retry_after_ms?: number;
+};
+
+type MatrixRequestConfig = InternalAxiosRequestConfig & {
+    _matrixTokenRetried?: boolean;
+};
+
 class MatrixProvider {
     private accessToken: string | undefined;
+    private accessTokenPromise: Promise<string> | undefined;
     private roomAreaFolderName = slugify("current visited room");
     private roomAreaFolderID: string | undefined;
+    private roomAreaFolderIDPromise: Promise<string> | undefined;
+    private adminRateLimitOverridden = false;
+    private adminRateLimitOverridePromise: Promise<void> | undefined;
 
     constructor() {
-        this.overrideRateLimitForAdminAccount().catch((error) => {
+        this.ensureAdminRateLimitOverridden().catch((error) => {
             console.error("Failed to override admin account ratelimit:", error);
         });
-
-        this.createChatFolderAreaAndSetID()
-            .then((roomID) => {
-                this.roomAreaFolderID = roomID;
-            })
-            .catch((error) => {
-                console.error("Failed to create chat folder for room area:", error);
-            });
     }
 
     private async getAxios(): Promise<AxiosInstance> {
         const accessToken = await this.getAccessToken();
-        return axios.create({
+        const axiosInstance = axios.create({
             baseURL: MATRIX_API_URI,
             headers: {
                 Authorization: `Bearer ${accessToken}`,
             },
         });
+
+        axiosInstance.interceptors.response.use(
+            (response) => response,
+            async (error: unknown) => {
+                const requestConfig = axios.isAxiosError(error)
+                    ? (error.config as MatrixRequestConfig | undefined)
+                    : undefined;
+                if (!requestConfig || requestConfig.headers === undefined || !this.isInvalidAccessTokenError(error)) {
+                    throw error;
+                }
+
+                if (requestConfig._matrixTokenRetried === true) {
+                    throw error;
+                }
+
+                requestConfig._matrixTokenRetried = true;
+
+                const refreshedAccessToken = await this.refreshAccessToken(accessToken);
+                requestConfig.headers.Authorization = `Bearer ${refreshedAccessToken}`;
+
+                return axiosInstance.request(requestConfig);
+            },
+        );
+
+        return axiosInstance;
     }
 
     getMatrixIdFromEmail(email: string): string {
@@ -45,28 +87,140 @@ class MatrixProvider {
     }
 
     private async getAccessToken(): Promise<string> {
-        if (!this.accessToken) {
-            const response = await axios.post(`${MATRIX_API_URI}_matrix/client/r0/login`, {
-                type: "m.login.password",
-                user: MATRIX_ADMIN_USER,
-                password: MATRIX_ADMIN_PASSWORD,
-            });
-            if (response.status === 200 && response.data.errcode === undefined) {
-                this.accessToken = response.data.access_token;
-                return response.data.access_token;
-            } else {
-                throw new Error("Failed with errcode " + response.data.errcode);
+        if (this.accessToken) {
+            return this.accessToken;
+        }
+
+        if (this.accessTokenPromise) {
+            return this.accessTokenPromise;
+        }
+
+        const accessTokenPromise = this.loadAccessToken();
+        this.accessTokenPromise = accessTokenPromise;
+
+        try {
+            const accessToken = await accessTokenPromise;
+            this.accessToken = accessToken;
+            return accessToken;
+        } finally {
+            if (this.accessTokenPromise === accessTokenPromise) {
+                this.accessTokenPromise = undefined;
             }
         }
+    }
 
-        if (!this.accessToken) {
-            throw new Error("No access token found");
+    private async loadAccessToken(): Promise<string> {
+        const redisClient = await getRedisClient();
+        if (redisClient) {
+            const cachedAccessToken = await redisClient.get(ACCESS_TOKEN_REDIS_KEY);
+            if (cachedAccessToken) {
+                return cachedAccessToken;
+            }
+
+            return this.loginAndCacheAccessToken(redisClient);
         }
 
-        return this.accessToken;
+        return this.loginToMatrix();
+    }
+
+    private async refreshAccessToken(invalidAccessToken: string): Promise<string> {
+        await this.invalidateAccessToken(invalidAccessToken);
+        return this.getAccessToken();
+    }
+
+    private async invalidateAccessToken(invalidAccessToken: string): Promise<void> {
+        if (this.accessToken === invalidAccessToken) {
+            this.accessToken = undefined;
+        }
+
+        const redisClient = await getRedisClient();
+        if (!redisClient) {
+            return;
+        }
+
+        const cachedAccessToken = await redisClient.get(ACCESS_TOKEN_REDIS_KEY);
+        if (cachedAccessToken === invalidAccessToken) {
+            await redisClient.del(ACCESS_TOKEN_REDIS_KEY);
+        }
+    }
+
+    private async loginAndCacheAccessToken(redisClient: RedisClient): Promise<string> {
+        const lockValue = `${process.pid}-${Date.now()}-${Math.random()}`;
+        const deadline = Date.now() + ACCESS_TOKEN_LOCK_TIMEOUT_MS;
+
+        /* eslint-disable no-await-in-loop */
+        while (Date.now() < deadline) {
+            const cachedAccessToken = await redisClient.get(ACCESS_TOKEN_REDIS_KEY);
+            if (cachedAccessToken) {
+                return cachedAccessToken;
+            }
+
+            const lockWasAcquired = await redisClient.set(ACCESS_TOKEN_LOCK_REDIS_KEY, lockValue, {
+                NX: true,
+                EX: ACCESS_TOKEN_LOCK_TTL_SECONDS,
+            });
+
+            if (lockWasAcquired) {
+                try {
+                    const cachedAccessTokenAfterLock = await redisClient.get(ACCESS_TOKEN_REDIS_KEY);
+                    if (cachedAccessTokenAfterLock) {
+                        return cachedAccessTokenAfterLock;
+                    }
+
+                    const accessToken = await this.loginToMatrix();
+                    await redisClient.set(ACCESS_TOKEN_REDIS_KEY, accessToken);
+                    return accessToken;
+                } finally {
+                    await this.releaseLoginLock(redisClient, lockValue);
+                }
+            }
+
+            await this.wait(ACCESS_TOKEN_LOCK_WAIT_MS);
+        }
+        /* eslint-enable no-await-in-loop */
+
+        throw new Error("Timed out while waiting for the Matrix admin access token lock");
+    }
+
+    private async releaseLoginLock(redisClient: RedisClient, lockValue: string): Promise<void> {
+        const currentLockValue = await redisClient.get(ACCESS_TOKEN_LOCK_REDIS_KEY);
+        if (currentLockValue === lockValue) {
+            await redisClient.del(ACCESS_TOKEN_LOCK_REDIS_KEY);
+        }
+    }
+
+    private async loginToMatrix(): Promise<string> {
+        const response = await axios.post(`${MATRIX_API_URI}_matrix/client/r0/login`, {
+            type: "m.login.password",
+            user: MATRIX_ADMIN_USER,
+            password: MATRIX_ADMIN_PASSWORD,
+        });
+
+        if (response.status === 200 && response.data.errcode === undefined) {
+            return response.data.access_token;
+        }
+
+        throw new Error("Failed with errcode " + response.data.errcode);
+    }
+
+    private isInvalidAccessTokenError(error: unknown): boolean {
+        if (!axios.isAxiosError<MatrixErrorResponse>(error)) {
+            return false;
+        }
+
+        const status = error.response?.status;
+        const errcode = error.response?.data?.errcode;
+        return status === 401 || errcode === "M_UNKNOWN_TOKEN";
+    }
+
+    private wait(delay: number): Promise<void> {
+        return new Promise((resolve) => {
+            setTimeout(resolve, delay);
+        });
     }
 
     async setNewMatrixPassword(matrixUserId: string, password: string): Promise<void> {
+        await this.ensureAdminRateLimitOverridden();
         const axiosInstance = await this.getAxios();
         const response = await axiosInstance.put(`_synapse/admin/v2/users/${matrixUserId}`, {
             logout_devices: false,
@@ -80,6 +234,8 @@ class MatrixProvider {
     }
 
     async createRoomForArea(): Promise<string> {
+        await this.ensureAdminRateLimitOverridden();
+        const roomAreaFolderID = MATRIX_DOMAIN ? await this.getRoomAreaFolderID() : undefined;
         const options: ICreateRoomOpts = {
             visibility: Visibility.Private,
             initial_state: [
@@ -95,10 +251,10 @@ class MatrixProvider {
             },
         };
 
-        if (this.roomAreaFolderID && MATRIX_DOMAIN) {
+        if (roomAreaFolderID && MATRIX_DOMAIN) {
             options.initial_state?.push({
                 type: EventType.SpaceParent,
-                state_key: this.roomAreaFolderID,
+                state_key: roomAreaFolderID,
                 content: {
                     via: [MATRIX_DOMAIN],
                 },
@@ -115,6 +271,7 @@ class MatrixProvider {
     }
 
     async kickUserFromRoom(userID: string, roomID: string): Promise<void> {
+        await this.ensureAdminRateLimitOverridden();
         const axiosInstance = await this.getAxios();
         const response = await axiosInstance.post(`_matrix/client/r0/rooms/${roomID}/kick`, {
             reason: "kick",
@@ -128,9 +285,10 @@ class MatrixProvider {
     }
 
     async promoteUserToModerator(userID: string, roomID: string): Promise<void> {
+        await this.ensureAdminRateLimitOverridden();
         const axiosInstance = await this.getAxios();
         const actualPowerLevelsResponse = await axiosInstance.get(
-            `_matrix/client/r0/rooms/${roomID}/state/m.room.power_levels`
+            `_matrix/client/r0/rooms/${roomID}/state/m.room.power_levels`,
         );
 
         if (actualPowerLevelsResponse.status !== 200) {
@@ -156,6 +314,7 @@ class MatrixProvider {
             console.error("roomID is undefined or null");
             return;
         }
+        await this.ensureAdminRateLimitOverridden();
         const axiosInstance = await this.getAxios();
         const response = await axiosInstance.post(`_matrix/client/r0/rooms/${roomID}/invite`, {
             user_id: userID,
@@ -168,6 +327,7 @@ class MatrixProvider {
     }
 
     async changeRoomName(roomID: string, name: string): Promise<void> {
+        await this.ensureAdminRateLimitOverridden();
         const axiosInstance = await this.getAxios();
         const response = await axiosInstance.put(`_matrix/client/r0/rooms/${roomID}/state/m.room.name`, {
             name,
@@ -177,6 +337,45 @@ class MatrixProvider {
         } else {
             throw new Error("Failed with status " + response.status);
         }
+    }
+
+    private async ensureAdminRateLimitOverridden(): Promise<void> {
+        if (this.adminRateLimitOverridden) {
+            return;
+        }
+
+        if (!this.adminRateLimitOverridePromise) {
+            this.adminRateLimitOverridePromise = this.overrideRateLimitForAdminAccountWithRetry()
+                .then(() => {
+                    this.adminRateLimitOverridden = true;
+                })
+                .catch((error) => {
+                    this.adminRateLimitOverridePromise = undefined;
+                    throw error;
+                });
+        }
+
+        return this.adminRateLimitOverridePromise;
+    }
+
+    private async overrideRateLimitForAdminAccountWithRetry(): Promise<void> {
+        /* eslint-disable no-await-in-loop */
+        for (let attempt = 1; attempt <= ADMIN_RATE_LIMIT_OVERRIDE_RETRY_COUNT; attempt += 1) {
+            try {
+                await this.overrideRateLimitForAdminAccount();
+                return;
+            } catch (error) {
+                if (
+                    attempt === ADMIN_RATE_LIMIT_OVERRIDE_RETRY_COUNT ||
+                    !this.isRetryableMatrixAdminSetupError(error)
+                ) {
+                    throw error;
+                }
+
+                await this.wait(this.getMatrixRetryDelay(error, attempt));
+            }
+        }
+        /* eslint-enable no-await-in-loop */
     }
 
     private async overrideRateLimitForAdminAccount() {
@@ -190,6 +389,33 @@ class MatrixProvider {
         } else {
             throw new Error("Failed with status " + response.status);
         }
+    }
+
+    private isRetryableMatrixAdminSetupError(error: unknown): boolean {
+        if (!axios.isAxiosError<MatrixErrorResponse>(error)) {
+            return false;
+        }
+
+        const status = error.response?.status;
+        return status === undefined || status === 429 || status >= 500;
+    }
+
+    private getMatrixRetryDelay(error: unknown, attempt: number): number {
+        if (!axios.isAxiosError<MatrixErrorResponse>(error)) {
+            return attempt * ADMIN_RATE_LIMIT_OVERRIDE_RETRY_MS;
+        }
+
+        const retryAfterMs = error.response?.data?.retry_after_ms;
+        if (typeof retryAfterMs === "number") {
+            return retryAfterMs;
+        }
+
+        const retryAfterSeconds = Number(error.response?.headers?.["retry-after"]);
+        if (!Number.isNaN(retryAfterSeconds)) {
+            return retryAfterSeconds * 1_000;
+        }
+
+        return attempt * ADMIN_RATE_LIMIT_OVERRIDE_RETRY_MS;
     }
 
     private async createChatFolderAreaAndSetID(): Promise<string> {
@@ -218,10 +444,30 @@ class MatrixProvider {
         }
     }
 
+    private async getRoomAreaFolderID(): Promise<string> {
+        if (this.roomAreaFolderID) {
+            return this.roomAreaFolderID;
+        }
+
+        if (!this.roomAreaFolderIDPromise) {
+            this.roomAreaFolderIDPromise = this.createChatFolderAreaAndSetID()
+                .then((roomAreaFolderID) => {
+                    this.roomAreaFolderID = roomAreaFolderID;
+                    return roomAreaFolderID;
+                })
+                .catch((error) => {
+                    this.roomAreaFolderIDPromise = undefined;
+                    throw error;
+                });
+        }
+
+        return this.roomAreaFolderIDPromise;
+    }
+
     private async getChatFolderAreaID(): Promise<string | undefined> {
         const axiosInstance = await this.getAxios();
         const response = await axiosInstance.get(
-            `_matrix/client/r0/directory/room/%23${this.roomAreaFolderName}:${MATRIX_DOMAIN}`
+            `_matrix/client/r0/directory/room/%23${this.roomAreaFolderName}:${MATRIX_DOMAIN}`,
         );
         if (response.status === 200) {
             return Promise.resolve(response.data.room_id);
@@ -231,19 +477,21 @@ class MatrixProvider {
     }
 
     async AddRoomToFolder(roomID: string): Promise<string> {
-        if (!this.roomAreaFolderID) {
-            console.error(new Error(`Failed to add room : ${roomID} to room area folder `));
+        await this.ensureAdminRateLimitOverridden();
+
+        if (!MATRIX_DOMAIN) {
             return roomID;
         }
 
+        const roomAreaFolderID = await this.getRoomAreaFolderID();
         const roomLinkContent = {
             via: [MATRIX_DOMAIN],
         };
 
         const axiosInstance = await this.getAxios();
         const response = await axiosInstance.put(
-            `_matrix/client/r0/rooms/${this.roomAreaFolderID}/state/m.space.child/${roomID}`,
-            roomLinkContent
+            `_matrix/client/r0/rooms/${roomAreaFolderID}/state/m.space.child/${roomID}`,
+            roomLinkContent,
         );
         if (response.status === 200) {
             return roomID;
@@ -258,6 +506,7 @@ class MatrixProvider {
     }
 
     async kickAllUsersFromRoom(roomID: string): Promise<void> {
+        await this.ensureAdminRateLimitOverridden();
         const axiosInstance = await this.getAxios();
         const response = await axiosInstance.get(`_matrix/client/r0/rooms/${roomID}/members`);
 
@@ -272,7 +521,7 @@ class MatrixProvider {
                 }
                 return acc;
             },
-            []
+            [],
         );
         try {
             await Promise.all(kickMembersPromises);

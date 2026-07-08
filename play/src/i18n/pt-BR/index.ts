@@ -1,4 +1,4 @@
-import merge from "ts-deepmerge";
+import { deepmerge } from "deepmerge-ts";
 import en_US from "../en-US";
 import audio from "./audio";
 import camera from "./camera";
@@ -25,8 +25,12 @@ import messageScreen from "./messageScreen";
 import refreshPrompt from "./refreshPrompt";
 import statusModal from "./statusModal";
 import say from "./say";
+import locate from "./locate";
+import randomNames from "./randomNames";
+import onboarding from "./onboarding";
+import recording from "./recording";
 
-const pt_BR = merge(en_US, {
+const pt_BR = deepmerge(en_US, {
     audio,
     camera,
     chat,
@@ -52,6 +56,10 @@ const pt_BR = merge(en_US, {
     refreshPrompt,
     statusModal,
     say,
+    locate,
+    randomNames,
+    onboarding,
+    recording,
 });
 
 export default pt_BR;

@@ -4,7 +4,7 @@ import type { AddPlayerEvent } from "../../Events/AddPlayerEvent";
 import type { PlayerPosition } from "../../Events/PlayerPosition";
 import { ActionsMenuAction } from "../ui";
 import { queryWorkadventure, sendToWorkadventure } from "../IframeApiContribution";
-import { PublicPlayerState, ReadOnlyPublicPlayerState } from "../PublicPlayerState";
+import type { PublicPlayerState, ReadOnlyPublicPlayerState } from "../PublicPlayerState";
 
 export interface RemotePlayerInterface {
     /**
@@ -66,9 +66,7 @@ export class RemotePlayer implements RemotePlayerInterface {
         this._availabilityStatus = addPlayerEvent.availabilityStatus;
         this._outlineColor = addPlayerEvent.outlineColor;
         this._position = addPlayerEvent.position;
-        // We don't know the type of the variables sent to us, but act as if we do.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this._variables = Object.fromEntries(addPlayerEvent.variables) as any;
+        this._variables = Object.fromEntries(addPlayerEvent.variables);
         const variableSubjects = this._variablesSubjects;
         const variables = this._variables;
         this.state = new Proxy(
@@ -95,7 +93,7 @@ export class RemotePlayer implements RemotePlayerInterface {
                     }
                     return p.toString() in variables;
                 },
-            }
+            },
         );
     }
 

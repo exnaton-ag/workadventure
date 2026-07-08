@@ -1,11 +1,23 @@
-import { SpaceManagerServer } from "@workadventure/messages/src/ts-proto-generated/services";
+import type { SpaceManagerServer } from "@workadventure/messages/src/ts-proto-generated/services";
 import { v4 as uuid } from "uuid";
-import { BackToPusherSpaceMessage, PusherToBackSpaceMessage } from "@workadventure/messages";
+import type {
+    BackToPusherSpaceMessage,
+    HandleLivekitWebhookRequest,
+    PusherToBackSpaceMessage,
+} from "@workadventure/messages";
 import Debug from "debug";
-import { ServerDuplexStream } from "@grpc/grpc-js";
+import {
+    status,
+    type sendUnaryData,
+    type ServerDuplexStream,
+    type ServerUnaryCall,
+    type ServiceError,
+} from "@grpc/grpc-js";
+import type { Empty } from "@workadventure/messages/src/ts-proto-generated/google/protobuf/empty";
 import * as Sentry from "@sentry/node";
 import { socketManager } from "./Services/SocketManager";
 import { SpacesWatcher } from "./Model/SpacesWatcher";
+import { LivekitWebhookError } from "./Model/Services/LivekitService";
 
 export type SpaceSocket = ServerDuplexStream<PusherToBackSpaceMessage, BackToPusherSpaceMessage>;
 
@@ -18,12 +30,13 @@ const spaceManager = {
         const pusher = new SpacesWatcher(pusherUuid, call);
 
         call.on("data", (message: PusherToBackSpaceMessage) => {
-            if (!message.message) {
-                console.error("Empty message received");
-                Sentry.captureException("Empty message received");
-                return;
-            }
             try {
+                if (!message.message) {
+                    console.error("Empty message received");
+                    Sentry.captureException("Empty message received");
+                    return;
+                }
+
                 switch (message.message.$case) {
                     case "joinSpaceMessage": {
                         socketManager.handleJoinSpaceMessage(pusher, message.message.joinSpaceMessage);
@@ -37,10 +50,10 @@ const spaceManager = {
                         socketManager.handleUpdateSpaceUserMessage(pusher, message.message.updateSpaceUserMessage);
                         break;
                     }
-                    case "updateSpaceMetadataMessage": {
+                    case "updateSpaceMetadataPusherToBackMessage": {
                         socketManager.handleUpdateSpaceMetadataMessage(
                             pusher,
-                            message.message.updateSpaceMetadataMessage
+                            message.message.updateSpaceMetadataPusherToBackMessage,
                         );
                         break;
                     }
@@ -61,30 +74,32 @@ const spaceManager = {
                         socketManager.handlePrivateEvent(pusher, message.message.privateEvent);
                         break;
                     }
+                    case "backEvent": {
+                        socketManager.handleBackEvent(pusher, message.message.backEvent);
+                        break;
+                    }
                     case "syncSpaceUsersMessage": {
                         socketManager.handleSyncSpaceUsersMessage(pusher, message.message.syncSpaceUsersMessage);
                         break;
                     }
                     case "spaceQueryMessage": {
-                        socketManager.handleSpaceQueryMessage(pusher, message.message.spaceQueryMessage);
+                        socketManager.handleSpaceQueryMessage(pusher, message.message.spaceQueryMessage).catch((e) => {
+                            console.error("Error while handling space query message", e);
+                        });
                         break;
                     }
                     case "addSpaceUserToNotifyMessage": {
                         socketManager.handleAddSpaceUserToNotifyMessage(
                             pusher,
-                            message.message.addSpaceUserToNotifyMessage
+                            message.message.addSpaceUserToNotifyMessage,
                         );
                         break;
                     }
                     case "deleteSpaceUserToNotifyMessage": {
                         socketManager.handleDeleteSpaceUserToNotifyMessage(
                             pusher,
-                            message.message.deleteSpaceUserToNotifyMessage
+                            message.message.deleteSpaceUserToNotifyMessage,
                         );
-                        break;
-                    }
-                    case "requestFullSyncMessage": {
-                        socketManager.handleRequestFullSyncMessage(pusher, message.message.requestFullSyncMessage);
                         break;
                     }
                     default: {
@@ -92,10 +107,16 @@ const spaceManager = {
                     }
                 }
             } catch (e) {
+                if (!message.message) {
+                    console.error("Empty message received");
+                    Sentry.captureException("Empty message received");
+                    return;
+                }
+
                 console.error(
                     "An error occurred while managing a message of type PusherToBackSpaceMessage:" +
                         message.message.$case,
-                    e
+                    e,
                 );
                 Sentry.captureException(e);
                 // Note: We do not close the back connection on every error to avoid excessive reconnections.
@@ -117,6 +138,29 @@ const spaceManager = {
                 call.end();
             });
     },
+    handleLivekitWebhook: (
+        call: ServerUnaryCall<HandleLivekitWebhookRequest, Empty>,
+        callback: sendUnaryData<Empty>,
+    ): void => {
+        socketManager
+            .handleLivekitWebhook(call.request)
+            .then(() => callback(null, {}))
+            .catch((error) => callback(toGrpcLivekitWebhookError(error), null));
+    },
 } satisfies SpaceManagerServer;
+
+function toGrpcLivekitWebhookError(error: unknown): ServiceError {
+    const message = error instanceof Error ? error.message : "Unexpected LiveKit webhook error";
+
+    if (error instanceof LivekitWebhookError) {
+        // Invalid payloads/signatures are permanent failures; pusher maps these to non-retryable HTTP statuses.
+        return Object.assign(new Error(message), {
+            code: error.kind === "unauthorized" ? status.UNAUTHENTICATED : status.INVALID_ARGUMENT,
+        }) as ServiceError;
+    }
+
+    // Unknown back errors stay retryable; pusher maps this to HTTP 500 so LiveKit can retry.
+    return Object.assign(new Error(message), { code: status.UNKNOWN }) as ServiceError;
+}
 
 export { spaceManager };

@@ -1,9 +1,13 @@
 <script lang="ts">
-    import { ChatUser } from "../../Connection/ChatConnection";
+    import type { ChatUser } from "../../Connection/ChatConnection";
     import User from "./User.svelte";
 
-    export let userList: Array<ChatUser> = [];
-    export let isMatrixChatEnabled = true;
+    interface Props {
+        userList: Array<ChatUser>;
+        isMatrixChatEnabled: boolean;
+    }
+
+    let { userList = [], isMatrixChatEnabled = true }: Props = $props();
 </script>
 
 {#each userList as user (user.spaceUserId ?? user.chatId)}

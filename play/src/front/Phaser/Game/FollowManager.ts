@@ -1,16 +1,20 @@
-import { Subscription } from "rxjs";
+import type { Subscription } from "rxjs";
 import { get } from "svelte/store";
 import { availabilityStatusToJSON } from "@workadventure/messages";
-import { RoomConnection } from "../../Connection/RoomConnection";
+import type { RoomConnection } from "../../Connection/RoomConnection";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { followRoleStore, followStateStore, followUsersStore } from "../../Stores/FollowStore";
+import { popupStore } from "../../Stores/PopupStore";
 import { iframeListener } from "../../Api/IframeListener";
-import { RemotePlayersRepository } from "./RemotePlayersRepository";
+import type { RemotePlayersRepository } from "./RemotePlayersRepository";
 
 export class FollowManager {
     private subscriptions: Subscription[] = [];
 
-    constructor(private connection: RoomConnection, private remotePlayersRepository: RemotePlayersRepository) {
+    constructor(
+        private connection: RoomConnection,
+        private remotePlayersRepository: RemotePlayersRepository,
+    ) {
         this.subscriptions.push(
             this.connection.followRequestMessageStream.subscribe((followRequestMessage) => {
                 if (!localUserStore.getIgnoreFollowRequests()) {
@@ -23,7 +27,7 @@ export class FollowManager {
                         followUsersStore.addFollowRequest(followRequestMessage.leader);
                     }
                 }
-            })
+            }),
         );
 
         this.subscriptions.push(
@@ -45,14 +49,17 @@ export class FollowManager {
                 } else {
                     console.warn(
                         "Received followConfirmationMessage for unknown player",
-                        followConfirmationMessage.follower
+                        followConfirmationMessage.follower,
                     );
                 }
-            })
+            }),
         );
 
         this.subscriptions.push(
             this.connection.followAbortMessageStream.subscribe((followAbortMessage) => {
+                // Explicitly remove the popup to ensure it closes immediately when receiving an abort
+                popupStore.removePopup("popupFollow");
+
                 if (get(followRoleStore) === "follower") {
                     followUsersStore.stopFollowing();
                 } else {
@@ -72,7 +79,7 @@ export class FollowManager {
                         console.warn("Received followAbortMessage for unknown player", followAbortMessage.follower);
                     }
                 }
-            })
+            }),
         );
 
         iframeListener.registerAnswerer("followMe", () => {

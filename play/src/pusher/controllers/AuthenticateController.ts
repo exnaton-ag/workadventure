@@ -1,18 +1,21 @@
 import fs from "fs";
 import { v4 } from "uuid";
-import { MeRequest, MeResponse, RegisterData } from "@workadventure/messages";
+import type { MeResponse, RegisterData } from "@workadventure/messages";
+import { MeRequest } from "@workadventure/messages";
 import { z } from "zod";
-import { JsonWebTokenError } from "jsonwebtoken";
+import { errors } from "jose";
 import Mustache from "mustache";
-import { Application } from "express";
+import type { Application } from "express";
 import Debug from "debug";
-import { AuthTokenData, jwtTokenManager } from "../services/JWTTokenManager";
+import type { AuthTokenData } from "../services/JWTTokenManager";
+import { jwtTokenManager } from "../services/JWTTokenManager";
 import { openIDClient } from "../services/OpenIDClient";
 import { DISABLE_ANONYMOUS, FRONT_URL, MATRIX_PUBLIC_URI, PUSHER_URL } from "../enums/EnvironmentVariable";
 import { adminService } from "../services/AdminService";
 import { validateQuery } from "../services/QueryValidator";
 import { VerifyDomainService } from "../services/verifyDomain/VerifyDomainService";
 import { matrixProvider } from "../services/MatrixProvider";
+import { getClientIpFromXForwardedFor } from "../services/ClientIp";
 import { BaseHttpController } from "./BaseHttpController";
 
 const debug = Debug("pusher:requests");
@@ -107,7 +110,7 @@ export class AuthenticateController extends BaseHttpController {
                     chatRoomId: z.string().optional(),
                     providerId: z.string().optional(),
                     providerScopes: z.string().array().optional(), // Optional scopes to request
-                })
+                }),
             );
             if (query === undefined) {
                 return;
@@ -129,7 +132,7 @@ export class AuthenticateController extends BaseHttpController {
                 query.manuallyTriggered,
                 query.chatRoomId,
                 query.providerId,
-                query.providerScopes
+                query.providerScopes,
             );
             res.cookie("playUri", query.playUri, {
                 httpOnly: true, // dont let browser javascript access cookie ever
@@ -178,8 +181,10 @@ export class AuthenticateController extends BaseHttpController {
          */
 
         this.app.get("/me", async (req, res) => {
-            debug(`AuthenticateController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`);
-            const IPAddress = req.header("x-forwarded-for") ?? "";
+            const IPAddress = getClientIpFromXForwardedFor(req.header("x-forwarded-for"));
+            debug(
+                `AuthenticateController => [${req.method}] ${req.originalUrl} — IP: ${IPAddress} — Time: ${Date.now()}`,
+            );
             const query = validateQuery(req, res, MeRequest);
             if (query === undefined) {
                 return;
@@ -190,7 +195,7 @@ export class AuthenticateController extends BaseHttpController {
                 localStorageCharacterTextureIds = [localStorageCharacterTextureIds];
             }
             try {
-                const authTokenData: AuthTokenData = jwtTokenManager.verifyJWTToken(token, false);
+                const authTokenData: AuthTokenData = await jwtTokenManager.verifyJWTToken(token, false);
 
                 //Get user data from Admin Back Office
                 //This is very important to create User Local in LocalStorage in WorkAdventure
@@ -203,7 +208,7 @@ export class AuthenticateController extends BaseHttpController {
                     localStorageCompanionTextureId,
                     req.header("accept-language"),
                     authTokenData.tags,
-                    chatID
+                    chatID,
                 );
 
                 if (resUserData.status === "error") {
@@ -240,11 +245,11 @@ export class AuthenticateController extends BaseHttpController {
                     } satisfies MeResponse);
                 } catch (err) {
                     console.warn("Error while checking token auth", err);
-                    throw new JsonWebTokenError("Invalid token");
+                    throw new errors.JWTInvalid("Invalid token");
                 }
                 return;
             } catch (err) {
-                if (err instanceof JsonWebTokenError) {
+                if (err instanceof errors.JWTInvalid || err instanceof errors.JWTExpired) {
                     res.status(401);
                     res.send("Invalid token");
                     return;
@@ -309,13 +314,13 @@ export class AuthenticateController extends BaseHttpController {
             if (!email) {
                 throw new Error("No email in the response");
             }
-            const authToken = jwtTokenManager.createAuthToken(
+            const authToken = await jwtTokenManager.createAuthToken(
                 email,
                 userInfo?.access_token,
                 userInfo?.username,
                 userInfo?.locale,
                 userInfo?.tags,
-                email ? matrixProvider.getBareMatrixIdFromEmail(email) : undefined
+                email ? matrixProvider.getBareMatrixIdFromEmail(email) : undefined,
             );
 
             const matrixPublicUri = userInfo.matrix_url ?? MATRIX_PUBLIC_URI;
@@ -378,7 +383,7 @@ export class AuthenticateController extends BaseHttpController {
             const query = validateQuery(
                 req,
                 res,
-                z.object({ loginToken: z.string(), chatRoomId: z.string().optional() })
+                z.object({ loginToken: z.string(), chatRoomId: z.string().optional() }),
             );
             if (query === undefined) {
                 return;
@@ -464,7 +469,7 @@ export class AuthenticateController extends BaseHttpController {
             const data = await adminService.fetchMemberDataByToken(
                 organizationMemberToken,
                 playUri,
-                req.header("accept-language")
+                req.header("accept-language"),
             );
             const userUuid = data.userUuid;
             const email = data.email;
@@ -472,13 +477,13 @@ export class AuthenticateController extends BaseHttpController {
             const mapUrlStart = data.mapUrlStart;
             const matrixUserId = email ? matrixProvider.getBareMatrixIdFromEmail(email) : undefined;
 
-            const authToken = jwtTokenManager.createAuthToken(
+            const authToken = await jwtTokenManager.createAuthToken(
                 email || userUuid,
                 undefined,
                 undefined,
                 undefined,
                 [],
-                matrixUserId
+                matrixUserId,
             );
 
             res.json({
@@ -515,14 +520,15 @@ export class AuthenticateController extends BaseHttpController {
      *         description: Anonymous login is disabled at the configuration level (environment variable DISABLE_ANONYMOUS = true)
      */
     private anonymLogin(): void {
-        this.app.post("/anonymLogin", (req, res) => {
+        this.app.post("/anonymLogin", async (req, res) => {
             debug(`AuthenticateController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`);
+            // We refuse the anonymous login if the anonymous mode is disabled AND that the default woka name is not set
             if (DISABLE_ANONYMOUS) {
                 res.status(403).send("");
                 return;
             } else {
                 const userUuid = v4();
-                const authToken = jwtTokenManager.createAuthToken(userUuid);
+                const authToken = await jwtTokenManager.createAuthToken(userUuid);
                 res.json({
                     authToken,
                     userUuid,
@@ -561,13 +567,13 @@ export class AuthenticateController extends BaseHttpController {
                 z.object({
                     token: z.string(),
                     playUri: z.string(),
-                })
+                }),
             );
             if (query === undefined) {
                 return;
             }
             const { token, playUri } = query;
-            const authTokenData: AuthTokenData = jwtTokenManager.verifyJWTToken(token, false);
+            const authTokenData: AuthTokenData = await jwtTokenManager.verifyJWTToken(token, false);
             if (authTokenData.accessToken == undefined) {
                 throw Error("Token cannot be checked on OpenID connect provider");
             }
@@ -634,7 +640,7 @@ export class AuthenticateController extends BaseHttpController {
                     playUri: z.string(),
                     token: z.string(),
                     redirect: z.string().optional(),
-                })
+                }),
             );
             if (query === undefined) {
                 return;
@@ -648,7 +654,7 @@ export class AuthenticateController extends BaseHttpController {
                 return;
             }
 
-            const authTokenData: AuthTokenData = jwtTokenManager.verifyJWTToken(query.token, false);
+            const authTokenData: AuthTokenData = await jwtTokenManager.verifyJWTToken(query.token, false);
             if (authTokenData.accessToken == undefined) {
                 throw Error("Cannot log out, no access token found.");
             }

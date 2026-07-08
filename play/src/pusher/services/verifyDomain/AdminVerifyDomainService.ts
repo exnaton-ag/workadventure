@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { AxiosResponse } from "axios";
 import { ADMIN_API_TOKEN, ADMIN_API_URL } from "../../enums/EnvironmentVariable";
-import { VerifyDomainInterface } from "./VerifyDomainInterface";
+import type { VerifyDomainInterface } from "./VerifyDomainInterface";
 
 export class AdminVerifyDomainService implements VerifyDomainInterface {
     verifyDomain(uri: string): Promise<boolean> {
@@ -41,7 +41,7 @@ export class AdminVerifyDomainService implements VerifyDomainInterface {
             .catch((err) => {
                 console.error(
                     `Invalid redirection URL. Domain provided is unknown. This might be a hacking attempt.`,
-                    err
+                    err,
                 );
                 return false;
             });

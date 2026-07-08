@@ -1,19 +1,12 @@
 <script lang="ts">
-    import { createEventDispatcher, onMount } from "svelte";
-    import { LivekitRoomConfigData } from "@workadventure/map-editor";
-    import { closeModal } from "svelte-modals";
+    import { onMount } from "svelte";
+    import type { LivekitRoomConfigData } from "@workadventure/map-editor";
     import { LL } from "../../../../i18n/i18n-svelte";
     import InputSwitch from "../../Input/InputSwitch.svelte";
     import Input from "../../Input/Input.svelte";
     import PopUpContainer from "../../PopUp/PopUpContainer.svelte";
     import ButtonClose from "../../Input/ButtonClose.svelte";
-    export let isOpen: boolean;
-    export let onSave: (config: LivekitRoomConfigData & { livekitRoomAdminTag: string }) => void;
-
-    const dispatch = createEventDispatcher<{
-        change: undefined;
-        close: undefined;
-    }>();
+    import { modals } from "@wa-modals";
 
     let defaultConfig: LivekitRoomConfigData = {
         startWithAudioMuted: false,
@@ -24,18 +17,38 @@
     type LivekitRoomConfigDataKeys = "startWithAudioMuted" | "startWithVideoMuted" | "disableChat";
 
     const defaultConfigKeys: LivekitRoomConfigDataKeys[] = Object.keys(defaultConfig).map(
-        (key) => key as LivekitRoomConfigDataKeys
+        (key) => key as LivekitRoomConfigDataKeys,
     );
 
-    export let visibilityValue: boolean;
-    export let config: LivekitRoomConfigData;
-    export let livekitRoomAdminTag = "";
-    export let shouldDisableDisableChatButton: boolean;
-    let currentConfig = {
+    interface Props {
+        isOpen: boolean;
+        onsave: (config: LivekitRoomConfigData & { livekitRoomAdminTag: string }) => void;
+        onclose?: () => void;
+        visibilityValue: boolean;
+        config: LivekitRoomConfigData;
+        livekitRoomAdminTag: string;
+        shouldDisableDisableChatButton: boolean;
+    }
+
+    let {
+        isOpen,
+        onsave,
+        onclose,
+        visibilityValue = $bindable<boolean>(),
+        config,
+        livekitRoomAdminTag = $bindable<string>(),
+        shouldDisableDisableChatButton,
+    }: Props = $props();
+
+    if (livekitRoomAdminTag === undefined) {
+        livekitRoomAdminTag = "";
+    }
+
+    let currentConfig = $state({
         startWithAudioMuted: false,
         startWithVideoMuted: false,
         disableChat: false,
-    };
+    });
 
     onMount(() => {
         currentConfig = {
@@ -44,18 +57,18 @@
             disableChat: false,
         };
         if (config !== undefined) {
-            currentConfig = structuredClone(config);
+            currentConfig = $state.snapshot(config);
         }
     });
 
     function close() {
         visibilityValue = false;
-        closeModal();
-        dispatch("close");
+        modals.close();
+        onclose?.();
     }
 
     function saveAndClose() {
-        onSave({ ...currentConfig, livekitRoomAdminTag });
+        onsave({ ...$state.snapshot(currentConfig), livekitRoomAdminTag });
         close();
     }
 
@@ -66,7 +79,7 @@
     }
 </script>
 
-<svelte:window on:keydown={onKeyDown} />
+<svelte:window onkeydown={onKeyDown} />
 {#if isOpen}
     <div class="absolute flex items-center justify-center w-full h-full">
         <div
@@ -75,9 +88,9 @@
             <PopUpContainer fullContent={true}>
                 <div class="flex items-center justify-between">
                     <span class="font-bold text-xl pl-4"
-                        >{$LL.mapEditor.properties.livekitProperties.moreOptionsLabel()}
+                        >{$LL.mapEditor.properties.livekitRoomProperty.moreOptionsLabel()}
                     </span>
-                    <ButtonClose on:click={close} />
+                    <ButtonClose onclick={close} />
                 </div>
                 <div class="config-element-container mt-5">
                     {#each defaultConfigKeys as configKey (configKey)}
@@ -88,7 +101,7 @@
                                 <InputSwitch
                                     id={configKey}
                                     bind:value={currentConfig[configKey]}
-                                    label={$LL.mapEditor.properties.livekitProperties.livekitRoomConfig[configKey]()}
+                                    label={$LL.mapEditor.properties.livekitRoomProperty.livekitRoomConfig[configKey]()}
                                     disabled={shouldDisableDisableChatButton && configKey === "disableChat"}
                                 />
                             {/if}
@@ -97,31 +110,33 @@
                     <div class="config-element mt-4">
                         <Input
                             id="livekitRoomAdminTag"
-                            label={$LL.mapEditor.properties.livekitProperties.livekitRoomConfig.livekitRoomAdminTag()}
+                            label={$LL.mapEditor.properties.livekitRoomProperty.livekitRoomConfig.livekitRoomAdminTag()}
                             type="text"
                             bind:value={livekitRoomAdminTag}
                         />
                     </div>
                 </div>
 
-                <div slot="buttons" class="w-full flex justify-between gap-2 p-2">
-                    <button class=" btn btn-light btn-border w-full h-12" on:click={closeModal}>
-                        {$LL.mapEditor.properties.livekitProperties.livekitRoomConfig.cancel()}
-                    </button>
-                    <button
-                        class=" btn btn-secondary w-full h-12"
-                        data-testid="livekitRoomConfigValidateButton"
-                        on:click={saveAndClose}
-                    >
-                        {$LL.mapEditor.properties.livekitProperties.livekitRoomConfig.validate()}
-                    </button>
-                </div>
+                {#snippet buttons()}
+                    <div class="w-full flex justify-between gap-2 p-2">
+                        <button class=" btn btn-light btn-border w-full h-12" onclick={() => modals.close()}>
+                            {$LL.mapEditor.properties.livekitRoomProperty.livekitRoomConfig.cancel()}
+                        </button>
+                        <button
+                            class=" btn btn-secondary w-full h-12"
+                            data-testid="livekitRoomConfigValidateButton"
+                            onclick={saveAndClose}
+                        >
+                            {$LL.mapEditor.properties.livekitRoomProperty.livekitRoomConfig.validate()}
+                        </button>
+                    </div>
+                {/snippet}
             </PopUpContainer>
         </div>
     </div>
 {/if}
 
-<style lang="scss">
+<style>
     .config-element-container {
         overflow-y: auto;
         overflow-x: hidden;
@@ -130,13 +145,6 @@
             flex-direction: row;
             height: 2.5em;
 
-            .config-element-label {
-                padding-left: 1em;
-                vertical-align: middle;
-                margin-top: auto;
-                margin-bottom: auto;
-                flex-grow: 1;
-            }
             input[type="text"] {
                 margin-top: 0.25em;
                 margin-bottom: 0.25em;
@@ -146,15 +154,6 @@
 
             button {
                 padding: 0;
-                .delete-button {
-                    border-radius: 0.75em;
-                    background-color: black;
-                    margin: 0em;
-                    padding: 0em;
-                    height: 1.5em;
-                    width: 1.5em;
-                    line-height: 1.5em;
-                }
             }
         }
     }

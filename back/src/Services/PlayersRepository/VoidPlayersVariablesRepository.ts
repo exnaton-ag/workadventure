@@ -1,4 +1,4 @@
-import {
+import type {
     LoadVariablesReturn,
     PlayersVariablesRepositoryInterface,
     VariableWithScope,
@@ -21,7 +21,7 @@ export class VoidPlayersVariablesRepository implements PlayersVariablesRepositor
         value: string,
         isPublic: boolean,
         expire?: number,
-        maxExpire?: number
+        maxExpire?: number,
     ): Promise<void> {
         return Promise.resolve();
     }

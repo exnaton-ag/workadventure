@@ -1,6 +1,8 @@
-import {
+import * as Phaser from "phaser";
+globalThis.Phaser = Phaser;
+
+import type {
     UpdateSpaceMetadataMessage,
-    SpaceUser,
     PublicEvent,
     PrivateEventPusherToFront,
     AddSpaceUserMessage,
@@ -14,14 +16,15 @@ import {
     SpaceDestroyedMessage,
     SpaceIsTyping,
     SpaceMessage,
-    FilterType,
     InitSpaceUsersMessage,
 } from "@workadventure/messages";
+import { SpaceUser, FilterType } from "@workadventure/messages";
 import { Subject } from "rxjs";
 import { describe, expect, it, vi, assert } from "vitest";
-import { get } from "svelte/store";
-import { RoomConnectionForSpacesInterface, SpaceRegistry } from "../SpaceRegistry/SpaceRegistry";
-import { SpaceUserExtended } from "../SpaceInterface";
+import { get, writable } from "svelte/store";
+import type { RoomConnectionForSpacesInterface } from "../SpaceRegistry/SpaceRegistry";
+import { SpaceRegistry } from "../SpaceRegistry/SpaceRegistry";
+import type { SpaceUserExtended } from "../SpaceInterface";
 
 /* eslint @typescript-eslint/unbound-method: 0 */
 
@@ -37,9 +40,10 @@ class MockRoomConnection implements RoomConnectionForSpacesInterface {
     public emitRemoveSpaceFilter = vi.fn();
     public emitJoinSpace = vi.fn();
     public emitLeaveSpace = vi.fn();
+    public startRecording = vi.fn();
+    public stopRecording = vi.fn();
     public spacePublicMessageEvent = new Subject<PublicEvent>();
     public spacePrivateMessageEvent = new Subject<PrivateEventPusherToFront>();
-    public emitRequestFullSync = vi.fn();
     public spaceDestroyedMessage = new Subject<SpaceDestroyedMessage>();
     public emitPrivateSpaceEvent(
         spaceName: string,
@@ -49,7 +53,7 @@ class MockRoomConnection implements RoomConnectionForSpacesInterface {
             | { $case: "kickOffUser"; kickOffUser: KickOffUserPrivateMessage }
             | undefined
         >,
-        receiverUserId: string
+        receiverUserId: string,
     ): void {
         throw new Error("Method not implemented.");
     }
@@ -61,7 +65,7 @@ class MockRoomConnection implements RoomConnectionForSpacesInterface {
             | { $case: "muteAudioForEverybody"; muteAudioForEverybody: MuteAudioForEverybodyPublicMessage }
             | { $case: "muteVideoForEverybody"; muteVideoForEverybody: MuteVideoForEverybodyPublicMessage }
             | undefined
-        >
+        >,
     ): void {
         throw new Error("Method not implemented.");
     }
@@ -72,6 +76,8 @@ class MockRoomConnection implements RoomConnectionForSpacesInterface {
     public emitUpdateSpaceUserMessage(spaceName: string, spaceUser: Omit<Partial<SpaceUser>, "id">): void {
         throw new Error("Method not implemented.");
     }
+    public emitBackEvent = vi.fn();
+    public emitVideoQualityReport = vi.fn();
 
     // Add any other methods or properties that need to be mocked
 }
@@ -96,6 +102,60 @@ vi.mock("../../WebRtc/SimplePeer", () => ({
     })),
 }));
 
+vi.mock("../../Stores/ScreenSharingStore", () => {
+    const requested = writable(false);
+    return {
+        requestedScreenSharingState: {
+            subscribe: requested.subscribe,
+            enableScreenSharing: () => requested.set(true),
+            disableScreenSharing: () => requested.set(false),
+        },
+        screenSharingLocalStreamStore: writable({ type: "success" }),
+        screenSharingConstraintsStore: writable({ video: false, audio: false }),
+        screenSharingAvailableStore: writable(false),
+        screenSharingLocalVideoBox: writable(undefined),
+        screenShareQualityStore: {
+            subscribe: writable("recommended").subscribe,
+            setQuality: vi.fn(),
+        },
+        screenSharingLocalMedia: writable(undefined),
+    };
+});
+
+vi.mock("../../Stores/MegaphoneStore", () => {
+    return {
+        liveStreamingEnabledStore: writable(false),
+        requestedMegaphoneStore: writable(false),
+        megaphoneSpaceStore: writable(undefined),
+        megaphoneCanBeUsedStore: writable(false),
+    };
+});
+
+vi.mock("../../Stores/MenuStore", () => {
+    return {
+        menuIconVisiblilityStore: writable(false),
+        menuVisiblilityStore: writable(false),
+        screenSharingActivatedStore: writable(false),
+        inviteUserActivated: writable(false),
+        mapEditorActivated: writable(false),
+        roomListActivated: writable(false),
+    };
+});
+
+vi.mock("../../WebRtc/MediaManager", () => {
+    return {
+        MediaManager: vi.fn(),
+        mediaManager: {
+            enableMyCamera: vi.fn(),
+            disableMyCamera: vi.fn(),
+            enableMyMicrophone: vi.fn(),
+            disableMyMicrophone: vi.fn(),
+            enableProximityMeeting: vi.fn(),
+            disableProximityMeeting: vi.fn(),
+        },
+    };
+});
+
 vi.mock("../../Phaser/Entity/CharacterLayerManager", () => ({
     CharacterLayerManager: {
         wokaBase64: vi.fn().mockReturnValue("data:image/png;base64,mockBase64String"),
@@ -118,36 +178,6 @@ vi.mock("../../Connection/ConnectionManager", () => {
         },
     };
 });
-
-// Mock the PeerStore module
-vi.mock("../../Stores/PeerStore", () => ({
-    screenSharingPeerStore: {
-        getSpaceStore: vi.fn(),
-        removePeer: vi.fn(),
-        getPeer: vi.fn(),
-    },
-    videoStreamStore: {
-        subscribe: vi.fn().mockImplementation((fn: (v: unknown) => void) => {
-            // send a default value immediately
-            fn([]);
-            return () => {};
-        }),
-    },
-    videoStreamElementsStore: {
-        subscribe: vi.fn().mockImplementation((fn: (v: unknown[]) => void) => {
-            // send a default value immediately
-            fn([]);
-            return () => {};
-        }),
-    },
-    screenShareStreamElementsStore: {
-        subscribe: vi.fn().mockImplementation((fn: (v: unknown[]) => void) => {
-            // send a default value immediately
-            fn([]);
-            return () => {};
-        }),
-    },
-}));
 
 // Mock SimplePeer
 vi.mock("../../WebRtc/SimplePeer", () => ({
@@ -184,21 +214,10 @@ vi.mock("../../Connection/ConnectionManager", () => {
     };
 });
 
-vi.mock("../../Enum/EnvironmentVariable.ts", () => {
-    return {
-        MATRIX_ADMIN_USER: "admin",
-        MATRIX_DOMAIN: "domain",
-        STUN_SERVER: "stun:test.com:19302",
-        TURN_SERVER: "turn:test.com:19302",
-        TURN_USER: "user",
-        TURN_PASSWORD: "password",
-        POSTHOG_API_KEY: "test-api-key",
-        POSTHOG_URL: "https://test.com",
-        MAX_USERNAME_LENGTH: 10,
-        PEER_SCREEN_SHARE_RECOMMENDED_BANDWIDTH: 1000,
-        PEER_VIDEO_RECOMMENDED_BANDWIDTH: 1000,
-    };
-});
+vi.mock(
+    "../../Enum/EnvironmentVariable.ts",
+    () => import("../../../../tests/front/mocks/frontEnvironmentVariableMock"),
+);
 
 const flushPromises = () => new Promise(setImmediate);
 
@@ -213,7 +232,7 @@ describe("", () => {
             spaceName,
             FilterType.ALL_USERS,
             ["availabilityStatus", "chatID"],
-            new AbortController().signal
+            new AbortController().signal,
         );
 
         expect(roomConnection.emitJoinSpace).toHaveBeenCalledOnce();
@@ -243,7 +262,7 @@ describe("", () => {
             spaceName,
             FilterType.ALL_USERS,
             ["availabilityStatus", "chatID"],
-            new AbortController().signal
+            new AbortController().signal,
         );
 
         const userFromMessage = {
@@ -265,6 +284,7 @@ describe("", () => {
             uuid: "",
             chatID: undefined,
             showVoiceIndicator: false,
+            attendeesState: false,
         } satisfies SpaceUser;
 
         const addSpaceUserMessage: AddSpaceUserMessage = {
@@ -298,7 +318,7 @@ describe("", () => {
             spaceName,
             FilterType.ALL_USERS,
             ["availabilityStatus", "chatID"],
-            new AbortController().signal
+            new AbortController().signal,
         );
 
         const userFromMessage = {
@@ -320,6 +340,7 @@ describe("", () => {
             uuid: "",
             chatID: "chat@id.fr",
             showVoiceIndicator: false,
+            attendeesState: false,
         } satisfies SpaceUser;
 
         const addSpaceUserMessage: AddSpaceUserMessage = {
@@ -348,7 +369,7 @@ describe("", () => {
             spaceName,
             FilterType.ALL_USERS,
             ["availabilityStatus", "chatID"],
-            new AbortController().signal
+            new AbortController().signal,
         );
 
         const userFromMessage = {
@@ -370,6 +391,7 @@ describe("", () => {
             uuid: "",
             chatID: "chat@id.fr",
             showVoiceIndicator: false,
+            attendeesState: false,
         } satisfies SpaceUser;
 
         const addSpaceUserMessage: AddSpaceUserMessage = {
@@ -419,7 +441,7 @@ describe("", () => {
             spaceName,
             FilterType.ALL_USERS,
             ["availabilityStatus", "chatID"],
-            new AbortController().signal
+            new AbortController().signal,
         );
 
         const subscriber = vi.fn();
@@ -466,7 +488,7 @@ describe("", () => {
             spaceName,
             FilterType.ALL_USERS,
             ["availabilityStatus", "chatID"],
-            new AbortController().signal
+            new AbortController().signal,
         );
 
         const subscriber = vi.fn();
@@ -514,6 +536,7 @@ describe("", () => {
                 chatID: undefined,
                 tags: [],
                 jitsiParticipantId: undefined,
+                attendeesState: false,
             },
             $case: "muteVideo",
             muteVideo: {

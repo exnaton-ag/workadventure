@@ -1,4 +1,4 @@
-import merge from "ts-deepmerge";
+import { deepmerge } from "deepmerge-ts";
 import en_US from "../en-US";
 import audio from "./audio";
 import camera from "./camera";
@@ -18,8 +18,19 @@ import actionbar from "./actionbar";
 import video from "./video";
 import form from "./form";
 import say from "./say";
+import locate from "./locate";
+import area from "./area";
+import statusModal from "./statusModal";
+import messageScreen from "./messageScreen";
+import refreshPrompt from "./refreshPrompt";
+import megaphone from "./megaphone";
+import mapEditor from "./mapEditor";
+import externalModule from "./externalModule";
+import randomNames from "./randomNames";
+import onboarding from "./onboarding";
+import recording from "./recording";
 
-const es_ES = merge(en_US, {
+const es_ES = deepmerge(en_US, {
     audio,
     camera,
     chat,
@@ -38,6 +49,17 @@ const es_ES = merge(en_US, {
     video,
     form,
     say,
+    locate,
+    area,
+    statusModal,
+    messageScreen,
+    refreshPrompt,
+    megaphone,
+    mapEditor,
+    externalModule,
+    randomNames,
+    onboarding,
+    recording,
 });
 
 export default es_ES;

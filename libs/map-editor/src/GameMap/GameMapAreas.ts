@@ -1,26 +1,18 @@
 import { MathUtils } from "@workadventure/math-utils";
 import { errorHandler } from "@workadventure/shared-utils/src/ErrorHandler";
-import * as _ from "lodash";
-import {
-    AreaData,
-    AreaDataProperties,
-    AreaDataProperty,
-    AtLeast,
-    EntityCoordinates,
-    PersonalAreaPropertyData,
-    RestrictedRightsPropertyData,
-    WAMFileFormat,
-} from "../types";
+import { deepmergeInto } from "deepmerge-ts";
+import type { AreaData, AreaDataProperty, AtLeast, EntityCoordinates, WAMFileFormat } from "../types";
+import { AreaDataProperties, PersonalAreaPropertyData, RestrictedRightsPropertyData } from "../types";
 
 export type AreaChangeCallback = (
     areasChangedByAction: Array<AreaData>,
-    allAreasOnNewPosition: Array<AreaData>
+    allAreasOnNewPosition: Array<AreaData>,
 ) => void;
 
 export type AreaUpdateCallback = (
     area: AreaData,
     oldProperties: AreaDataProperties | undefined,
-    newProperties: AreaDataProperties | undefined
+    newProperties: AreaDataProperties | undefined,
 ) => void;
 
 export class GameMapAreas {
@@ -48,7 +40,7 @@ export class GameMapAreas {
      */
     public triggerAreasChange(
         oldPosition: { x: number; y: number } | undefined,
-        position: { x: number; y: number } | undefined
+        position: { x: number; y: number } | undefined,
     ): boolean {
         const areasByOldPosition = oldPosition ? this.getAreasOnPosition(oldPosition, this.areasPositionOffsetY) : [];
         const areasByNewPosition = position ? this.getAreasOnPosition(position, this.areasPositionOffsetY) : [];
@@ -64,6 +56,14 @@ export class GameMapAreas {
         });
 
         let areasChange = false;
+        if (leaveAreas.size > 0) {
+            const areasArray = Array.from(leaveAreas);
+            for (const callback of this.leaveAreaCallbacks) {
+                callback(areasArray, areasByNewPosition);
+            }
+            areasChange = true;
+        }
+
         if (enterAreas.size > 0) {
             const areasArray = Array.from(enterAreas);
 
@@ -73,13 +73,6 @@ export class GameMapAreas {
             areasChange = true;
         }
 
-        if (leaveAreas.size > 0) {
-            const areasArray = Array.from(leaveAreas);
-            for (const callback of this.leaveAreaCallbacks) {
-                callback(areasArray, areasByNewPosition);
-            }
-            areasChange = true;
-        }
         return areasChange;
     }
 
@@ -105,7 +98,7 @@ export class GameMapAreas {
         userUUID = "",
         width: number,
         height: number,
-        floating: boolean
+        floating: boolean,
     ): boolean {
         const areas = this.getAreasOnPosition(entityCenterCoordinates);
         const topLeftCoordinates = {
@@ -138,7 +131,7 @@ export class GameMapAreas {
 
     public isUserHasReadAccessOnAreaForEntityCoordinates(
         entityCenterCoordinates: EntityCoordinates,
-        userConnectedTags: string[]
+        userConnectedTags: string[],
     ): boolean {
         const areas = this.getAreasOnPosition(entityCenterCoordinates);
         if (areas?.length === 0) {
@@ -218,43 +211,69 @@ export class GameMapAreas {
     public updateArea(newConfig: AtLeast<AreaData, "id">): AreaData | undefined {
         const area = this.areas.get(newConfig.id);
         if (!area) {
-            throw new Error(`Area to update does not exist!`);
+            throw new Error("Area to update does not exist!");
         }
 
-        const customMerge = (objValue: unknown, srcValue: unknown, key: string) => {
+        for (const key of Object.keys(newConfig) as Array<keyof AreaData>) {
+            const newValue = newConfig[key];
+
+            if (newValue === undefined) {
+                continue;
+            }
+
             if (key === "properties") {
                 try {
-                    const objValueParse = AreaDataProperties.safeParse(objValue);
-                    const srcValueParse = AreaDataProperties.safeParse(srcValue);
+                    const oldValue = area.properties;
 
-                    if (!objValueParse.success && !srcValueParse.success) {
-                        return undefined;
+                    const oldValueParse = AreaDataProperties.safeParse(oldValue);
+                    const newValueParse = AreaDataProperties.safeParse(newValue);
+
+                    if (!oldValueParse.success && !newValueParse.success) {
+                        continue;
                     }
 
-                    if (!objValueParse.success || !srcValueParse.success) {
-                        return objValue ? objValue : srcValue;
+                    if (!oldValueParse.success || !newValueParse.success) {
+                        area.properties = (oldValue ? oldValue : newValue) as AreaData["properties"];
+                        continue;
                     }
 
-                    return srcValueParse.data.map((newProp: AreaDataProperty) => {
-                        const oldProp = objValueParse.data.find((prop: AreaDataProperty) => prop.id === newProp.id);
+                    area.properties = newValueParse.data.map((newProp: AreaDataProperty) => {
+                        const oldProp = oldValueParse.data.find((prop: AreaDataProperty) => prop.id === newProp.id);
 
-                        if (oldProp && oldProp.serverData) {
-                            if (!newProp.serverData || JSON.stringify(newProp.serverData) === "{}") {
-                                newProp.serverData = oldProp.serverData;
-                            }
+                        if (
+                            oldProp?.serverData &&
+                            (!newProp.serverData || JSON.stringify(newProp.serverData) === "{}")
+                        ) {
+                            newProp.serverData = oldProp.serverData;
                         }
+
                         return newProp;
                     });
                 } catch (error) {
                     console.error("Failed to parse properties : ", error);
                     errorHandler(new Error("Failed to parse area properties"));
-                    return srcValue;
+                    area.properties = newValue as AreaData["properties"];
                 }
-            }
-            return undefined;
-        };
 
-        _.mergeWith(area, newConfig, customMerge);
+                continue;
+            }
+
+            const oldValue: unknown = area[key];
+
+            if (
+                oldValue &&
+                newValue &&
+                typeof oldValue === "object" &&
+                typeof newValue === "object" &&
+                !Array.isArray(oldValue) &&
+                !Array.isArray(newValue)
+            ) {
+                deepmergeInto(oldValue, newValue);
+                continue;
+            }
+
+            (area as Record<string, unknown>)[key] = newValue;
+        }
 
         this.updateAreaWAM(area);
         return area;
@@ -310,7 +329,7 @@ export class GameMapAreas {
     public triggerSpecificAreaOnUpdate(
         area: AreaData,
         oldProperties: AreaDataProperties | undefined,
-        newProperties: AreaDataProperties | undefined
+        newProperties: AreaDataProperties | undefined,
     ): void {
         for (const callback of this.updateAreaCallbacks) {
             callback(area, oldProperties, newProperties);
@@ -343,12 +362,21 @@ export class GameMapAreas {
         return areaRights.writeTags.some((tag) => userTags.includes(tag));
     }
 
-    private isAreaOwner(area: AreaData, userUUID: string): boolean {
+    public isAreaOwner(area: AreaData, userUUID: string): boolean {
         const personalAreaRightPropertyData = this.getPersonalAreaRightPropertyData(area);
         if (personalAreaRightPropertyData === undefined) {
             return false;
         }
         return personalAreaRightPropertyData.ownerId === userUUID;
+    }
+
+    public findPersonalArea(userUUID: string): AreaData | undefined {
+        for (const area of this.areas.values()) {
+            if (this.isAreaOwner(area, userUUID)) {
+                return area;
+            }
+        }
+        return undefined;
     }
 
     private isUserHasReadAccessOnAreaByTags(area: AreaData, userTags: string[]): boolean {
@@ -374,7 +402,7 @@ export class GameMapAreas {
 
     private getAreaRightPropertyData(area: AreaData): RestrictedRightsPropertyData | undefined {
         const areaRightPropertyData = area.properties.find(
-            (property) => property.type === "restrictedRightsPropertyData"
+            (property) => property.type === "restrictedRightsPropertyData",
         );
         const areaRights = areaRightPropertyData
             ? RestrictedRightsPropertyData.parse(areaRightPropertyData)
@@ -391,7 +419,7 @@ export class GameMapAreas {
 
     private getPersonalAreaRightPropertyData(area: AreaData): PersonalAreaPropertyData | undefined {
         const personalAreaPropertyData = area.properties.find(
-            (property) => property.type === "personalAreaPropertyData"
+            (property) => property.type === "personalAreaPropertyData",
         );
         if (personalAreaPropertyData !== undefined) {
             return PersonalAreaPropertyData.parse(personalAreaPropertyData);

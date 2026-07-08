@@ -1,5 +1,6 @@
-import { derived, get, writable, Readable, Writable } from "svelte/store";
-import { ComponentProps, ComponentType, SvelteComponentTyped } from "svelte";
+import type { Readable, Writable } from "svelte/store";
+import { derived, get, writable } from "svelte/store";
+import type { WorkAdventureComponent, WorkAdventureComponentProps } from "../../types/component";
 import type { Translation } from "../../i18n/i18n-types";
 import { connectionManager } from "../Connection/ConnectionManager";
 import { localUserStore } from "../Connection/LocalUserStore";
@@ -12,20 +13,25 @@ import {
     REPORT_ISSUES_URL,
 } from "../Enum/EnvironmentVariable";
 import MapSubMenu from "../Components/ActionBar/MenuIcons/MapSubMenu.svelte";
+import ParticipantMenuItem from "../Components/ActionBar/MenuIcons/ParticipantMenuItem.svelte";
 import LoginMenuItem from "../Components/ActionBar/MenuIcons/LoginMenuItem.svelte";
 import InviteMenuItem from "../Components/ActionBar/MenuIcons/InviteMenuItem.svelte";
 import CustomActionBarButton from "../Components/ActionBar/MenuIcons/CustomActionBarButton.svelte";
 import { analyticsClient } from "../Administration/AnalyticsClient";
-import { userHasAccessToBackOfficeStore, userIsAdminStore } from "./GameStore";
+
+import { userIsAdminStore } from "./GameStore";
 import { megaphoneCanBeUsedStore } from "./MegaphoneStore";
 import { chatVisibilityStore, isMatrixChatEnabledStore } from "./ChatStore";
 import { gameSceneStore } from "./GameSceneStore";
 import { modalIframeStore, modalVisibilityStore, showModalGlobalComminucationVisibilityStore } from "./ModalStore";
 import { getAdditionalMenuItemStore } from "./AdditionalItemsMenuStore";
+import { personalAreaDataStore } from "./PersonalDeskStore";
 
 export const menuIconVisiblilityStore = writable(false);
 export const menuVisiblilityStore = writable(false);
+export const settingsSubMenuTargetStore = writable<"microphone" | undefined>(undefined);
 export const userIsConnected = writable(false);
+export const mediaSettingsOpenStore = writable(false);
 
 export const profileAvailable = derived(userIsConnected, ($userIsConnected) => {
     return $userIsConnected && OPID_PROFILE_SCREEN_PROVIDER !== undefined;
@@ -56,13 +62,13 @@ export const warningBannerStore = createWarningBannerStore();
 export enum SubMenusInterface {
     settings = "settings",
     profile = "profile",
-    invite = "invite",
     aboutRoom = "credit",
     globalMessages = "globalMessages",
     contact = "contact",
     report = "report",
     chat = "chat",
     shortcuts = "shortcuts",
+    help = "help",
 }
 
 export type MenuKeys = keyof Translation["menu"]["sub"];
@@ -115,11 +121,6 @@ function createSubMenusStore() {
         },
         {
             type: "translated",
-            key: SubMenusInterface.invite,
-            visible: inviteUserActivated,
-        },
-        {
-            type: "translated",
             key: SubMenusInterface.globalMessages,
             visible: userIsAdminStore,
         },
@@ -142,12 +143,17 @@ function createSubMenusStore() {
                     $gameSceneStore?.room.reportIssuesUrl !== undefined ||
                     (ENABLE_REPORT_ISSUES_MENU != undefined &&
                         ENABLE_REPORT_ISSUES_MENU &&
-                        REPORT_ISSUES_URL != undefined)
+                        REPORT_ISSUES_URL != undefined),
             ),
         },
         {
             type: "translated",
             key: SubMenusInterface.shortcuts,
+            visible: alwaysVisible,
+        },
+        {
+            type: "translated",
+            key: SubMenusInterface.help,
             visible: alwaysVisible,
         },
     ]);
@@ -241,7 +247,7 @@ export function handleMenuRegistrationEvent(
     iframeUrl: string | undefined = undefined,
     key: string,
     source: string | undefined = undefined,
-    options: { allowApi: boolean; allow?: string | undefined }
+    options: { allowApi: boolean; allow?: string | undefined },
 ) {
     if (get(subMenusStore).find((item) => item.type === "scripting" && item.label === menuName)) {
         console.warn("The menu " + menuName + " already exist.");
@@ -270,7 +276,7 @@ export function handleOpenMenuEvent(key: string) {
 export function getProfileUrl() {
     return new URL(
         `profile-callback?token=${localUserStore.getAuthToken()}&playUri=${connectionManager.currentRoom?.key}`,
-        ABSOLUTE_PUSHER_URL
+        ABSOLUTE_PUSHER_URL,
     ).toString();
 }
 
@@ -286,8 +292,14 @@ export interface CustomButtonActionBarDescriptor {
     isGradient?: boolean | undefined;
 }
 
+interface RightActionBarButtonProps extends WorkAdventureComponentProps {
+    first?: boolean;
+    last?: boolean;
+    classList?: string;
+}
+
 export const additionalRightButtonsMenu = derived(getAdditionalMenuItemStore("top"), ($additionalTopMenuItems) => {
-    const menuItems: RightMenuItem<CustomActionBarButton>[] = [];
+    const menuItems: RightMenuItem<RightActionBarButtonProps>[] = [];
     $additionalTopMenuItems.forEach((props, id) => {
         menuItems.push({
             id: id,
@@ -302,42 +314,52 @@ export const additionalRightButtonsMenu = derived(getAdditionalMenuItemStore("to
     return menuItems;
 });
 
-export interface RightMenuItem<T extends SvelteComponentTyped> {
+export type RightMenuItem<TProps extends WorkAdventureComponentProps = WorkAdventureComponentProps> = {
     id: string;
     fallsInBurgerMenuStore: Writable<boolean>;
-    component: ComponentType<T>;
-    props: ComponentProps<T>;
-}
+    component: WorkAdventureComponent;
+    props: TProps;
+};
 
-const mapsMenuItem: RightMenuItem<MapSubMenu> = {
+const mapsMenuItem: RightMenuItem<RightActionBarButtonProps> = {
     id: "maps",
     fallsInBurgerMenuStore: writable(false),
     component: MapSubMenu,
     props: {},
 };
 
-const loginMenuItem: RightMenuItem<LoginMenuItem> = {
+const participantMenuItem: RightMenuItem<RightActionBarButtonProps> = {
+    id: "participant",
+    fallsInBurgerMenuStore: writable(false),
+    component: ParticipantMenuItem,
+    props: {},
+};
+
+const loginMenuItem: RightMenuItem<RightActionBarButtonProps> = {
     id: "login",
     fallsInBurgerMenuStore: writable(true),
     component: LoginMenuItem,
     props: {
-        last: false,
+        first: true,
+        last: true,
     },
 };
 
-const inviteMenuItem: RightMenuItem<InviteMenuItem> = {
+const inviteMenuItem: RightMenuItem<RightActionBarButtonProps> = {
     id: "invite",
     fallsInBurgerMenuStore: writable(false),
     component: InviteMenuItem,
     props: {
-        last: false,
+        first: true,
+        last: true,
     },
 };
 
-export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentTyped>[]> = derived(
+export const rightActionBarMenuItems: Readable<RightMenuItem<RightActionBarButtonProps>[]> = derived(
     [additionalRightButtonsMenu, userIsConnected, inviteUserActivated],
     ([$additionalButtonsMenu, $userIsConnected, $inviteUserActivated]) => {
-        const menuItems: RightMenuItem<SvelteComponentTyped>[] = [...$additionalButtonsMenu.values()];
+        const menuItems: RightMenuItem<RightActionBarButtonProps>[] = [...$additionalButtonsMenu.values()];
+
         if ($inviteUserActivated) {
             menuItems.push(inviteMenuItem);
         }
@@ -345,14 +367,17 @@ export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentType
             menuItems.push(loginMenuItem);
         }
 
-        if (menuItems.length > 0) {
-            menuItems[menuItems.length - 1].props.last = true;
-        }
+        const itemsWithPosition = menuItems.map((item, index) => ({
+            ...item,
+            props: {
+                ...item.props,
+                first: index === 0,
+                last: index === menuItems.length - 1,
+            },
+        }));
 
-        menuItems.push(mapsMenuItem);
-
-        return menuItems;
-    }
+        return [...itemsWithPosition, mapsMenuItem, participantMenuItem];
+    },
 );
 
 // It is ok to not unsubscribe to this store because it is a singleton.
@@ -373,33 +398,39 @@ export const helpTextDisabledStore = derived(
     activeSecondaryZoneActionBarStore,
     ($activeSecondaryZoneActionBarStore) => {
         return $activeSecondaryZoneActionBarStore !== undefined;
-    }
+    },
 );
 
 export const mapEditorMenuVisibleStore = derived(
-    [mapEditorActivated, mapManagerActivated, mapEditorActivatedForThematics, getAdditionalMenuItemStore("buildMenu")],
-    ([$mapEditorActivated, $mapManagerActivated, $mapEditorActivatedForThematics, $additionalBuildMenuItems]) => {
-        return (
-            (($mapEditorActivated || $mapEditorActivatedForThematics) && $mapManagerActivated) ||
-            $additionalBuildMenuItems.size > 0
-        );
-    }
+    [mapEditorActivated, mapManagerActivated, mapEditorActivatedForThematics],
+    ([$mapEditorActivated, $mapManagerActivated, $mapEditorActivatedForThematics]) => {
+        return ($mapEditorActivated || $mapEditorActivatedForThematics) && $mapManagerActivated;
+    },
 );
-export const backOfficeMenuVisibleStore = userHasAccessToBackOfficeStore;
 export const globalMessageVisibleStore = derived(
     [megaphoneCanBeUsedStore, userIsAdminStore],
     ([$megaphoneCanBeUsedStore, $userIsAdminStore]) => {
         return $megaphoneCanBeUsedStore || $userIsAdminStore;
-    }
+    },
 );
 export const mapMenuVisibleStore = derived(
-    [mapEditorMenuVisibleStore, backOfficeMenuVisibleStore, globalMessageVisibleStore],
-    ([$mapEditorMenuVisibleStore, $backOfficeMenuVisibleStore, $globalMessageVisibleStore]) => {
-        return $mapEditorMenuVisibleStore || $backOfficeMenuVisibleStore || $globalMessageVisibleStore;
-    }
+    [
+        mapEditorMenuVisibleStore,
+        globalMessageVisibleStore,
+        getAdditionalMenuItemStore("buildMenu"),
+        personalAreaDataStore,
+    ],
+    ([$mapEditorMenuVisibleStore, $globalMessageVisibleStore, $additionalBuildMenuItems, $personalAreaDataStore]) => {
+        return (
+            $mapEditorMenuVisibleStore ||
+            $globalMessageVisibleStore ||
+            $additionalBuildMenuItems.size > 0 ||
+            $personalAreaDataStore !== null
+        );
+    },
 );
 
-type Menus = "appMenu" | "profileMenu" | "mapMenu";
+type Menus = "appMenu" | "profileMenu" | "mapMenu" | "participantMenu";
 
 function createOpenedMenuStore() {
     const openedMenuStore = writable<Menus | undefined>(undefined);

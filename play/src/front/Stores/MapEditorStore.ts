@@ -1,9 +1,13 @@
 import type { AreaData, EntityDataProperties, EntityPrefab } from "@workadventure/map-editor";
 import { writable } from "svelte/store";
-import { DeleteCustomEntityMessage, ModifyCustomEntityMessage, UploadEntityMessage } from "@workadventure/messages";
+import type {
+    DeleteCustomEntityMessage,
+    ModifyCustomEntityMessage,
+    UploadEntityMessage,
+} from "@workadventure/messages";
 import type { AreaPreview } from "../Phaser/Components/MapEditor/AreaPreview";
-import { Entity } from "../Phaser/ECS/Entity";
-import { EditorToolName } from "../Phaser/Game/MapEditor/MapEditorModeManager";
+import type { Entity } from "../Phaser/ECS/Entity";
+import type { EditorToolName } from "../Phaser/Game/MapEditor/MapEditorModeManager";
 
 export const mapEditorVisibilityStore = writable<boolean>(true);
 
@@ -66,6 +70,7 @@ export const mapEditorEntityFileDroppedStore = writable<boolean>(false);
 
 export enum WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM {
     Megaphone = "Megaphone",
+    Recording = "Recording",
     RoomSettings = "Room Settings",
     MatrixRoomList = "Matrix Room List",
 }
@@ -80,7 +85,16 @@ export const mapExplorationEntitiesStore = writable<Map<string, Entity>>(new Map
 export const mapExplorationAreasStore = writable<Map<string, AreaPreview> | undefined>(new Map());
 export const mapEditorAskToClaimPersonalAreaStore = writable<AreaData | undefined>(undefined);
 
-export type SelectableTag = string | undefined;
+export type CategoryTag =
+    | {
+          kind: "tag";
+          tag: string;
+      }
+    | {
+          kind: "special";
+          tag: "most_used" | "custom";
+      };
+export type SelectableTag = CategoryTag | undefined;
 export const selectCategoryStore = writable<SelectableTag>(undefined);
 
 export const mapEditorRestrictedPropertiesStore = writable<string[]>([]);

@@ -2,10 +2,9 @@
     /* eslint no-undef: 0 */
     import { onDestroy, onMount } from "svelte";
     import * as Sentry from "@sentry/svelte";
-    import WebFontLoaderPlugin from "phaser3-rex-plugins/plugins/webfontloader-plugin.js";
     import AwaitLoaderPlugin from "phaser3-rex-plugins/plugins/awaitloader-plugin.js";
     import OutlinePipelinePlugin from "phaser3-rex-plugins/plugins/outlinepipeline-plugin.js";
-    import { Unsubscriber } from "svelte/store";
+    import type { Unsubscriber } from "svelte/store";
     import { DEBUG_MODE, SENTRY_DSN_FRONT, SENTRY_ENVIRONMENT, SENTRY_RELEASE } from "../Enum/EnvironmentVariable";
     import { HdpiManager } from "../Phaser/Services/HdpiManager";
     import { EntryScene } from "../Phaser/Login/EntryScene";
@@ -13,6 +12,7 @@
     import { SelectCharacterScene } from "../Phaser/Login/SelectCharacterScene";
     import { SelectCompanionScene } from "../Phaser/Login/SelectCompanionScene";
     import { EnableCameraScene } from "../Phaser/Login/EnableCameraScene";
+    import { PwaInstallScene } from "../Phaser/Login/PwaInstallScene";
     import { ReconnectingScene } from "../Phaser/Reconnecting/ReconnectingScene";
     import { ErrorScene } from "../Phaser/Reconnecting/ErrorScene";
     import { Game } from "../Phaser/Game/Game";
@@ -23,18 +23,27 @@
     import { canvasSize, coWebsiteManager, coWebsites, fullScreenCowebsite } from "../Stores/CoWebsiteStore";
     import { urlManager } from "../Url/UrlManager";
     import { FileListener } from "../Phaser/FileUpload/FileListener";
+    import { isStructuredCloneSupported } from "../Utils/BrowserCompatibility";
+    import { gameSceneIsLoadedStore } from "../Stores/GameSceneStore";
     import GameOverlay from "./GameOverlay.svelte";
     import CoWebsitesContainer from "./EmbedScreens/CoWebsitesContainer.svelte";
+    import BrowserNotSupported from "./BrowserNotSupported/BrowserNotSupported.svelte";
 
     let WebGLRenderer = Phaser.Renderer.WebGL.WebGLRenderer;
-    let game: Game;
-    let gameDiv: HTMLDivElement;
-    let activeCowebsite = $coWebsites[0];
-    let gameContainer: HTMLDivElement;
+    let game: Game | undefined = $state();
+    let gameDiv: HTMLDivElement | undefined = $state();
+    let activeCowebsite = $state($coWebsites[0]);
+    let gameContainer: HTMLDivElement | undefined = $state();
     let canvas: HTMLCanvasElement;
     let handleCanvasClick: () => void;
+    let browserNotSupported = $state(false);
 
     onMount(() => {
+        // Check browser compatibility before initializing the app
+        if (!isStructuredCloneSupported()) {
+            browserNotSupported = true;
+            return;
+        }
         if (SENTRY_DSN_FRONT != undefined) {
             try {
                 const sentryOptions: Sentry.BrowserOptions = {
@@ -46,6 +55,7 @@
                     // of transactions for performance monitoring.
                     // We recommend adjusting this value in production
                     tracesSampleRate: 0.2,
+                    attachStacktrace: true,
                 };
 
                 Sentry.init(sentryOptions);
@@ -113,6 +123,10 @@
         const hdpiManager = new HdpiManager(640 * 480, 196 * 196);
         const { game: gameSize, real: realSize } = hdpiManager.getOptimalGameSize({ width, height });
 
+        if (!gameDiv) {
+            return;
+        }
+
         const config: Phaser.Types.Core.GameConfig = {
             type: mode,
             title: "WorkAdventure",
@@ -130,6 +144,7 @@
                 SelectCharacterScene,
                 SelectCompanionScene,
                 EnableCameraScene,
+                PwaInstallScene,
                 ReconnectingScene,
                 ErrorScene,
             ],
@@ -147,11 +162,6 @@
             },
             plugins: {
                 global: [
-                    {
-                        key: "rexWebFontLoader",
-                        plugin: WebFontLoaderPlugin,
-                        start: true,
-                    },
                     {
                         key: "rexAwaitLoader",
                         plugin: AwaitLoaderPlugin,
@@ -203,18 +213,22 @@
         desktopApi.init();
     });
 
-    $: if ($coWebsites.length > 0) {
-        activeCowebsite = $coWebsites[0];
-    }
+    $effect(() => {
+        if ($coWebsites.length > 0) {
+            activeCowebsite = $coWebsites[0];
+        }
+    });
 
     function closeCoWebsiteFullScreen() {
-        gameContainer.classList.remove("hidden");
+        gameContainer?.classList.remove("hidden");
         coWebsites.remove(activeCowebsite);
     }
 
-    $: if ($fullScreenCowebsite && $coWebsites.length < 1) {
-        closeCoWebsiteFullScreen();
-    }
+    $effect(() => {
+        if ($fullScreenCowebsite && $coWebsites.length < 1) {
+            closeCoWebsiteFullScreen();
+        }
+    });
 
     //$: $coWebsites.length < 1 ? (flexBasis = undefined) : null;
 
@@ -237,28 +251,39 @@
     });
 </script>
 
-<div
-    class="h-dvh w-dvw flex landscape:flex-row portrait:flex-col-reverse"
-    id="main-container"
-    bind:this={gameContainer}
->
-    <div id="game" class="relative {$fullScreenCowebsite ? 'hidden' : ''}" bind:this={gameDiv}>
-        <GameOverlay {game} />
-    </div>
-    {#if $coWebsites.length > 0}
-        <div class="flex-1">
-            <!-- Transitions are breaking the onDestroy lifecycle of cowebsites -->
-            <!--            transition:fly={{-->
-            <!--            duration: 200,-->
-            <!--            x:-->
-            <!--                $screenOrientationStore === "portrait"-->
-            <!--                    ? 0-->
-            <!--                    : document.documentElement.dir === "rtl"-->
-            <!--                        ? -$coWebsitesSize.width-->
-            <!--                        : $coWebsitesSize.width,-->
-            <!--            y: $screenOrientationStore === "portrait" ? -$coWebsitesSize.height : 0,-->
-            <!--        }}-->
-            <CoWebsitesContainer />
+{#if browserNotSupported}
+    <BrowserNotSupported />
+{:else}
+    <div
+        class="h-dvh w-dvw flex landscape:flex-row portrait:flex-col-reverse"
+        id="main-container"
+        bind:this={gameContainer}
+    >
+        <div
+            id="game"
+            class="relative {$fullScreenCowebsite ? 'hidden' : ''}"
+            class:game-scene-loaded={$gameSceneIsLoadedStore}
+            bind:this={gameDiv}
+        >
+            {#if game}
+                <GameOverlay {game} />
+            {/if}
         </div>
-    {/if}
-</div>
+        {#if $coWebsites.length > 0}
+            <div class="flex-1">
+                <!-- Transitions are breaking the onDestroy lifecycle of cowebsites -->
+                <!--            transition:fly={{-->
+                <!--            duration: 200,-->
+                <!--            x:-->
+                <!--                $screenOrientationStore === "portrait"-->
+                <!--                    ? 0-->
+                <!--                    : document.documentElement.dir === "rtl"-->
+                <!--                        ? -$coWebsitesSize.width-->
+                <!--                        : $coWebsitesSize.width,-->
+                <!--            y: $screenOrientationStore === "portrait" ? -$coWebsitesSize.height : 0,-->
+                <!--        }}-->
+                <CoWebsitesContainer />
+            </div>
+        {/if}
+    </div>
+{/if}

@@ -7,14 +7,13 @@
 
     import type { ActionsMenuAction, ActionsMenuData } from "../../Stores/ActionsMenuStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
-    import LL from "../../../i18n/i18n-svelte";
 
-    let actionsMenuData: ActionsMenuData | undefined;
-    let sortedActions: ActionsMenuAction[] | undefined;
+    let actionsMenuData: ActionsMenuData | undefined = $state();
+    let sortedActions: ActionsMenuAction[] | undefined = $state();
 
     let actionsMenuStoreUnsubscriber: Unsubscriber | null;
 
-    function onKeyDown(e: KeyboardEvent) {
+    function onkeydown(e: KeyboardEvent) {
         if (e.key === "Escape") {
             closeActionsMenu();
         }
@@ -24,7 +23,7 @@
         actionsMenuStore.clear();
     }
 
-    let buttonsLayout: "row" | "column" = "row";
+    let buttonsLayout: "row" | "column" = $state("row");
 
     actionsMenuStoreUnsubscriber = actionsMenuStore.subscribe((value) => {
         actionsMenuData = value;
@@ -57,43 +56,49 @@
     });
 </script>
 
-<svelte:window on:keydown={onKeyDown} />
+<svelte:window {onkeydown} />
 
 {#if actionsMenuData}
     <div
-        class="absolute md:w-full w-11/12 max-w-2xl z-50 bg-contrast/80 transition-all backdrop-blur rounded-lg pointer-events-auto overflow-hidden top-1/2 left-1/2 -translate-y-1/2 -translate-x-1/2"
+        class="m-auto my-0 h-fit min-h-fit max-w-lg min-w-48 max-sm:max-w-[89%] z-50 bg-contrast/80 transition-all backdrop-blur rounded-lg pointer-events-auto overflow-hidden md:mr-0"
         data-testid="actions-menu"
     >
-        {#if actionsMenuData.menuName}
-            <div>
-                <div class="w-full bg-cover relative">
-                    <div class="absolute top-2 right-2">
-                        <ButtonClose on:click={closeActionsMenu} />
-                    </div>
-
-                    <div class="flex items-center justify-center p-2">
-                        <div class="text-white flex flex-col justify-center items-center font-bold text-xl pl-3">
-                            <div class="w-max ml-5 mt-[29px]">
-                                <h3>{actionsMenuData.menuName}</h3>
-                            </div>
-                        </div>
-                    </div>
-
-                    {#if actionsMenuData.visitCardUrl}
-                        <VisitCard
-                            visitCardUrl={actionsMenuData.visitCardUrl}
-                            isEmbedded={true}
-                            showSendMessageButton={false}
-                        />
-                    {/if}
+        <div>
+            <div class="w-full bg-cover relative">
+                <div class="absolute top-2 right-2">
+                    <ButtonClose onclick={closeActionsMenu} dataTestId="closeActionsMenuButton" />
                 </div>
-                {#if actionsMenuData.menuDescription}
-                    <p class="text-sm opacity-50 text-white px-4">
-                        {actionsMenuData.menuDescription}
-                    </p>
+
+                <div class="flex flex-col items-center justify-center gap-2 p-2 py-6">
+                    {#if actionsMenuData.textureUrl}
+                        <div
+                            class="p-1 overflow-hidden border w-fit h-fit rounded-lg cursor-not-allowed bg-[rgb(103,185,133)]"
+                        >
+                            <img
+                                src={actionsMenuData.textureUrl}
+                                alt={actionsMenuData.menuName}
+                                class="w-16 h-16 object-contain"
+                                style="image-rendering: pixelated"
+                            />
+                        </div>
+                    {/if}
+                    <h3 class="p-0 m-0">{actionsMenuData.menuName}</h3>
+                </div>
+
+                {#if actionsMenuData.visitCardUrl}
+                    <VisitCard
+                        visitCardUrl={actionsMenuData.visitCardUrl}
+                        isEmbedded={true}
+                        showSendMessageButton={false}
+                    />
                 {/if}
             </div>
-        {/if}
+            {#if actionsMenuData.menuDescription}
+                <p class="text-sm opacity-50 text-white px-4">
+                    {actionsMenuData.menuDescription}
+                </p>
+            {/if}
+        </div>
 
         {#if sortedActions}
             <div
@@ -108,37 +113,31 @@
                         class="btn btn-light btn-ghost text-nowrap justify-center w-full h-full !bg-white/10 hover:!bg-white/20 {action.style ??
                             ''}"
                         class:mx-2={buttonsLayout === "column"}
-                        on:click={() => analyticsClient.clickPropertyMapEditor(action.actionName, action.style)}
-                        on:click|preventDefault={async () => {
-                            await action.callback();
+                        onclick={(event) => {
+                            analyticsClient.clickPropertyMapEditor(action.actionName, action.style);
+                            event.preventDefault();
+                            Promise.resolve(action.callback()).catch((error) => {
+                                console.error("Failed to run action", error);
+                            });
                         }}
                     >
-                        <span class="flex flex-row gap-2 items-center justify-center text-wrap">
+                        <span class="flex flex-row gap-2 items-center justify-center text-nowrap">
                             {#if action.actionIcon}
                                 <div
                                     class="w-6 h-6"
                                     style="background-color: {action.iconColor ?? 'white'};
                                 -webkit-mask: url({action.actionIcon}) no-repeat center;
                                     mask: url({action.actionIcon}) no-repeat center;"
-                                />
+                                ></div>
                             {/if}
                             {action.actionName}
                         </span>
                     </button>
                 {/each}
-                {#if !actionsMenuData.menuName}
-                    <button
-                        type="button"
-                        class="btn btn-light btn-ghost text-nowrap justify-center w-full h-full !bg-white/10 hover:!bg-white/20"
-                        on:click|preventDefault|stopPropagation={closeActionsMenu}
-                    >
-                        {$LL.actionbar.close()}
-                    </button>
-                {/if}
             </div>
         {/if}
     </div>
 {/if}
 
-<style lang="scss">
+<style>
 </style>

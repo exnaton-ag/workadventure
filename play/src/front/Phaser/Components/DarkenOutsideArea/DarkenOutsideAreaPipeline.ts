@@ -2,13 +2,14 @@
 // Phaser 3 PostFX pipeline that darkens everything outside a given screen-space rect.
 // Feather and darkness are configurable via uniforms.
 
-import Phaser from "phaser";
+import * as Phaser from "phaser";
 
 export class DarkenOutsideAreaPipeline extends Phaser.Renderer.WebGL.Pipelines.PostFXPipeline {
     private _rect = new Phaser.Math.Vector4(0, 0, 0, 0);
     private _feather = 24; // pixels
     private _darkness = 0.6; // 0..1
     private _color = new Phaser.Display.Color(0, 0, 0);
+    private _zoom: number = 1;
 
     constructor(game: Phaser.Game) {
         super({
@@ -26,25 +27,24 @@ export class DarkenOutsideAreaPipeline extends Phaser.Renderer.WebGL.Pipelines.P
       uniform float uDarkness; // 0..1
       uniform vec3 uColor;
 
-      float outsideDistance(vec2 p, vec2 minP, vec2 maxP) {
-        vec2 d = max(max(minP - p, vec2(0.0)), p - maxP);
-        return length(d);
+      float roundedRectSdf(vec2 p, vec2 center, vec2 halfSize, float radius) {
+        vec2 q = abs(p - center) - (halfSize - vec2(radius));
+        return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
       }
 
       void main() {
         vec4 color = texture2D(uMainSampler, outTexCoord);
         vec2 p = gl_FragCoord.xy;
 
-        vec2 rMin = uRect.xy;
-        vec2 rMax = uRect.xy + uRect.zw;
+        vec2 center = vec2(uRect.x + uRect.z * 0.5, uRect.y + uRect.w * 0.5);
+        vec2 halfSize = vec2(uRect.z * 0.5, uRect.w * 0.5);
 
-        float dist = outsideDistance(p, rMin, rMax);
+        float dist = roundedRectSdf(p, center, halfSize, uFeather * 0.5);
 
-        float edge = smoothstep(0.0, max(uFeather, 0.0001), dist);
-        float shade = uDarkness * edge;
+        float border = smoothstep(-uFeather * 0.5, uFeather * 0.5, dist - 0.5);
+        vec3 finalColor = mix(color.rgb, uColor, border * uDarkness);
 
-        vec3 darkened = mix(color.rgb, uColor, shade);
-        gl_FragColor = vec4(darkened, color.a);
+        gl_FragColor = vec4(finalColor, color.a);
       }`,
         });
     }
@@ -56,7 +56,7 @@ export class DarkenOutsideAreaPipeline extends Phaser.Renderer.WebGL.Pipelines.P
     /** Called each frame before rendering to push current uniforms. */
     onPreRender(): void {
         this.set4f("uRect", this._rect.x, this._rect.y, this._rect.z, this._rect.w);
-        this.set1f("uFeather", this._feather);
+        this.set1f("uFeather", this._feather * this._zoom);
         this.set1f("uDarkness", this._darkness);
         this.set3f("uColor", this._color.redGL, this._color.greenGL, this._color.blueGL);
     }
@@ -69,6 +69,10 @@ export class DarkenOutsideAreaPipeline extends Phaser.Renderer.WebGL.Pipelines.P
     /** Feather (pixels). */
     setFeather(pixels: number): void {
         this._feather = pixels;
+    }
+
+    setZoomLevel(zoom: number): void {
+        this._zoom = zoom;
     }
 
     /** Darkness intensity [0..1]. */

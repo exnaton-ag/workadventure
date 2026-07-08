@@ -1,10 +1,10 @@
 import { z } from "zod";
-import type { Request } from "express";
-import { Response } from "express";
+import type { Request, Response } from "express";
 import Debug from "debug";
 import { adminService } from "../services/AdminService";
 import { validatePostQuery } from "../services/QueryValidator";
-import { authenticated, ResponseWithUserIdentifier } from "../middlewares/Authenticated";
+import type { ResponseWithUserIdentifier } from "../middlewares/Authenticated";
+import { authenticated } from "../middlewares/Authenticated";
 import { BaseHttpController } from "./BaseHttpController";
 
 const debug = Debug("pusher:requests");
@@ -66,7 +66,7 @@ export class UserController extends BaseHttpController {
                 z.object({
                     name: z.string(),
                     roomUrl: z.string(),
-                })
+                }),
             );
 
             if (body === undefined) {
@@ -139,7 +139,7 @@ export class UserController extends BaseHttpController {
                 z.object({
                     textures: z.array(z.string()),
                     roomUrl: z.string(),
-                })
+                }),
             );
 
             if (body === undefined) {
@@ -213,7 +213,7 @@ export class UserController extends BaseHttpController {
                     z.object({
                         texture: z.string().nullable(),
                         roomUrl: z.string(),
-                    })
+                    }),
                 );
 
                 if (body === undefined) {
@@ -232,7 +232,7 @@ export class UserController extends BaseHttpController {
 
                 res.status(204).send("");
                 return;
-            }
+            },
         );
     }
 }

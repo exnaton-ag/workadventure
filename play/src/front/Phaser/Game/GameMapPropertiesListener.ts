@@ -1,7 +1,8 @@
 import { get } from "svelte/store";
 import * as Sentry from "@sentry/svelte";
 import type { ITiledMapLayer, ITiledMapObject } from "@workadventure/tiled-map-type-guard";
-import { AreaData, AreaDataProperties, GameMapProperties } from "@workadventure/map-editor";
+import type { AreaData, AreaDataProperties } from "@workadventure/map-editor";
+import { GameMapProperties } from "@workadventure/map-editor";
 import { Jitsi } from "@workadventure/shared-utils";
 import { getSpeakerMegaphoneAreaName } from "@workadventure/map-editor/src/Utils";
 import { z } from "zod";
@@ -14,19 +15,23 @@ import { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
 import { bbbFactory } from "../../WebRtc/BBBFactory";
 import { JITSI_PRIVATE_MODE, JITSI_URL } from "../../Enum/EnvironmentVariable";
 import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
-import { audioManagerFileStore, audioManagerVisibilityStore } from "../../Stores/AudioManagerStore";
+import {
+    audioManagerFileStore,
+    audioManagerVisibilityStore,
+    audioManagerVolumeStore,
+} from "../../Stores/AudioManagerStore";
 import { iframeListener } from "../../Api/IframeListener";
 import { Room } from "../../Connection/Room";
 import { LL } from "../../../i18n/i18n-svelte";
 import { inBbbStore, inJitsiStore, inOpenWebsite, isSpeakerStore, silentStore } from "../../Stores/MediaStore";
-import { chatZoneLiveStore } from "../../Stores/ChatStore";
 import { currentLiveStreamingSpaceStore } from "../../Stores/MegaphoneStore";
-import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
-import { Area } from "../Entity/Area";
+
+import type { Area } from "../Entity/Area";
 import { popupStore } from "../../Stores/PopupStore";
 import PopUpJitsi from "../../Components/PopUp/PopUpJitsi.svelte";
 import PopUpTab from "../../Components/PopUp/PopUpTab.svelte";
 import PopUpCowebsite from "../../Components/PopUp/PopupCowebsite.svelte";
+import { touchScreenManager } from "../../Touch/TouchScreenManager";
 import { analyticsClient } from "./../../Administration/AnalyticsClient";
 import type { GameMapFrontWrapper } from "./GameMap/GameMapFrontWrapper";
 import type { GameScene } from "./GameScene";
@@ -49,11 +54,15 @@ export class GameMapPropertiesListener {
 
     private actionTriggerCallback = new Map<string, () => void>();
 
-    constructor(private scene: GameScene, private gameMapFrontWrapper: GameMapFrontWrapper) {
+    constructor(
+        private scene: GameScene,
+        private gameMapFrontWrapper: GameMapFrontWrapper,
+    ) {
         this.areasPropertiesListener = new AreasPropertiesListener(scene);
     }
 
     register() {
+        // TODO: properly free those listeners.
         // Website on new tab
         this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.OPEN_TAB, (newValue, oldValue, allProps) => {
             if (newValue === undefined) {
@@ -76,7 +85,7 @@ export class GameMapPropertiesListener {
                 if (forceTrigger || openWebsiteTriggerValue === ON_ACTION_TRIGGER_BUTTON) {
                     let message = allProps.get(GameMapProperties.OPEN_WEBSITE_TRIGGER_MESSAGE);
                     if (message === undefined) {
-                        message = isMediaBreakpointUp("md")
+                        message = touchScreenManager.detectPrimaryTouchDevice()
                             ? get(LL).trigger.mobile.newTab()
                             : get(LL).trigger.newTab();
                     }
@@ -91,7 +100,7 @@ export class GameMapPropertiesListener {
                             },
                             userInputManager: this.scene.userInputManager,
                         },
-                        "openTab"
+                        "openTab",
                     );
                     // TODO: this is the old new way of doing popups
                     // Create callback and play text message
@@ -151,7 +160,7 @@ export class GameMapPropertiesListener {
                 const roomName = Jitsi.slugifyJitsiRoomName(
                     newValue.toString(),
                     this.scene.roomUrl,
-                    allProps.has(GameMapProperties.JITSI_NO_PREFIX)
+                    allProps.has(GameMapProperties.JITSI_NO_PREFIX),
                 );
                 const isJitsiUrl = z.string().optional().safeParse(allProps.get(GameMapProperties.JITSI_URL));
                 let jitsiUrl = isJitsiUrl.success ? isJitsiUrl.data : undefined;
@@ -194,12 +203,12 @@ export class GameMapPropertiesListener {
 
                 const jitsiConfig = this.safeParseJSONstring(
                     isJitsiConfig.success ? isJitsiConfig.data : undefined,
-                    GameMapProperties.JITSI_CONFIG
+                    GameMapProperties.JITSI_CONFIG,
                 );
 
                 const jitsiInterfaceConfig = this.safeParseJSONstring(
                     isJitsiInterfaceConfig.success ? isJitsiInterfaceConfig.data : undefined,
-                    GameMapProperties.JITSI_INTERFACE_CONFIG
+                    GameMapProperties.JITSI_INTERFACE_CONFIG,
                 );
 
                 const isJitsiClosable = z
@@ -221,7 +230,7 @@ export class GameMapPropertiesListener {
                     jwt,
                     jitsiConfig,
                     jitsiInterfaceConfig,
-                    jitsiRoomAdminTag
+                    jitsiRoomAdminTag,
                 );
 
                 coWebsites.add(coWebsite);
@@ -253,7 +262,7 @@ export class GameMapPropertiesListener {
             if (forceTrigger || jitsiTriggerValue === ON_ACTION_TRIGGER_BUTTON) {
                 let message = allProps.get(GameMapProperties.JITSI_TRIGGER_MESSAGE);
                 if (message === undefined) {
-                    message = isMediaBreakpointUp("md")
+                    message = touchScreenManager.detectPrimaryTouchDevice()
                         ? get(LL).trigger.mobile.jitsiRoom()
                         : get(LL).trigger.jitsiRoom();
                 }
@@ -267,7 +276,7 @@ export class GameMapPropertiesListener {
                         },
                         userInputManager: this.scene.userInputManager,
                     },
-                    "jitsi"
+                    "jitsi",
                 );
                 // TODO: this is the old new way of doing popups
                 // Create callback and play text message
@@ -345,8 +354,8 @@ export class GameMapPropertiesListener {
                         Room.getRoomPathFromExitSceneUrl(
                             newValue as string,
                             window.location.toString(),
-                            this.scene.mapUrlFile
-                        )
+                            this.scene.mapUrlFile,
+                        ),
                     )
                     .catch((e) => console.error(e));
             } else {
@@ -393,7 +402,9 @@ export class GameMapPropertiesListener {
                 // FIXME: maybe we can switch to "visible" only when the sound actually starts playing?
                 audioManagerVisibilityStore.set("visible");
             } else {
-                audioManagerFileStore.unloadAudio();
+                // Stop the audio if it is playing
+                if (get(audioManagerFileStore) != "") audioManagerVolumeStore.stopSound(true);
+                if (get(audioManagerFileStore) != "") audioManagerFileStore.unloadAudio();
                 audioManagerVisibilityStore.set("hidden");
             }
         });
@@ -417,26 +428,6 @@ export class GameMapPropertiesListener {
             }
             if (newValue) {
                 iframeListener.sendEnterEvent(newValue as string);
-            }
-        });
-
-        // Muc zone
-        this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.CHAT_NAME, (newValue, oldValue, allProps) => {
-            if (!this.scene.room.isChatEnabled) {
-                return;
-            }
-
-            const playUri = this.scene.roomUrl + "/";
-
-            if (oldValue !== undefined) {
-                iframeListener.sendLeaveMucEventToChatIframe(playUri + oldValue).catch((error) => console.error(error));
-                chatZoneLiveStore.set(false);
-            }
-            if (newValue !== undefined) {
-                iframeListener
-                    .sendJoinMucEventToChatIframe(playUri + newValue, newValue.toString(), "live", false)
-                    .catch((error) => console.error(error));
-                chatZoneLiveStore.set(true);
             }
         });
 
@@ -489,13 +480,13 @@ export class GameMapPropertiesListener {
 
         this.gameMapFrontWrapper.onEnterDynamicArea((newAreas) => {
             this.onEnterPlaceHandler(
-                newAreas.map((area) => this.gameMapFrontWrapper.mapDynamicAreaToTiledObject(area))
+                newAreas.map((area) => this.gameMapFrontWrapper.mapDynamicAreaToTiledObject(area)),
             );
         });
 
         this.gameMapFrontWrapper.onLeaveDynamicArea((oldAreas) => {
             this.onLeavePlaceHandler(
-                oldAreas.map((area) => this.gameMapFrontWrapper.mapDynamicAreaToTiledObject(area))
+                oldAreas.map((area) => this.gameMapFrontWrapper.mapDynamicAreaToTiledObject(area)),
             );
         });
     }
@@ -544,7 +535,7 @@ export class GameMapPropertiesListener {
     private onUpdateAreasHandler(
         area: AreaData,
         oldProperties: AreaDataProperties | undefined,
-        newProperties: AreaDataProperties | undefined
+        newProperties: AreaDataProperties | undefined,
     ): void {
         this.areasPropertiesListener.onUpdateAreasHandler(area, oldProperties, newProperties);
     }
@@ -648,7 +639,7 @@ export class GameMapPropertiesListener {
                 websitePolicyProperty,
                 websiteWidthProperty,
                 websiteClosableProperty,
-                websiteHideUrlProperty
+                websiteHideUrlProperty,
             );
 
             coWebsiteOpen.coWebsite = coWebsite;
@@ -666,7 +657,7 @@ export class GameMapPropertiesListener {
 
         if (localUserStore.getForceCowebsiteTrigger() || websiteTriggerProperty === ON_ACTION_TRIGGER_BUTTON) {
             if (!websiteTriggerMessageProperty) {
-                websiteTriggerMessageProperty = isMediaBreakpointUp("md")
+                websiteTriggerMessageProperty = touchScreenManager.detectPrimaryTouchDevice()
                     ? get(LL).trigger.mobile.cowebsite()
                     : get(LL).trigger.cowebsite();
             }
@@ -682,7 +673,7 @@ export class GameMapPropertiesListener {
                     },
                     userInputManager: this.scene.userInputManager,
                 },
-                actionId
+                actionId,
             );
             // TODO: this is the old new way of doing popups
             // Create callback and play text message
@@ -722,7 +713,7 @@ export class GameMapPropertiesListener {
                 allowApiProperty,
                 websitePolicyProperty,
                 websiteWidthProperty,
-                websiteClosableProperty
+                websiteClosableProperty,
             );
 
             coWebsiteOpen.coWebsite = coWebsite;
@@ -748,7 +739,7 @@ export class GameMapPropertiesListener {
             // TODO remove this log after testing
             console.info(
                 "handleSpeakerMegaphonePropertiesOnEnter => joinSpace => speakerZone.value : ",
-                speakerZone.value
+                speakerZone.value,
             );
             const space = await this.scene.broadcastService.joinSpace(speakerZone.value, abortSignal);
             currentLiveStreamingSpaceStore.set(space);
@@ -772,24 +763,24 @@ export class GameMapPropertiesListener {
 
     private async handleListenerMegaphonePropertiesOnEnter(
         place: ITiledPlace,
-        abortSignal: AbortSignal
+        abortSignal: AbortSignal,
     ): Promise<void> {
         if (!place.properties) {
             return;
         }
         const listenerZone = place.properties.find(
-            (property) => property.name === GameMapProperties.LISTENER_MEGAPHONE
+            (property) => property.name === GameMapProperties.LISTENER_MEGAPHONE,
         );
         if (listenerZone && listenerZone.type === "string" && listenerZone.value !== undefined) {
             const speakerZoneName = getSpeakerMegaphoneAreaName(
-                gameManager.getCurrentGameScene().getGameMap().getGameMapAreas()?.getAreas(),
-                listenerZone.value
+                gameManager.getCurrentGameScene().getGameMap().getWamFile()?.getGameMapAreas().getAreas(),
+                listenerZone.value,
             );
             if (speakerZoneName) {
                 // TODO remove this log after testing
                 console.info(
                     "handleListenerMegaphonePropertiesOnEnter => joinSpace => speakerZoneName : ",
-                    speakerZoneName
+                    speakerZoneName,
                 );
                 const space = await this.scene.broadcastService.joinSpace(speakerZoneName, abortSignal);
                 currentLiveStreamingSpaceStore.set(space);
@@ -802,12 +793,12 @@ export class GameMapPropertiesListener {
             return;
         }
         const listenerZone = place.properties.find(
-            (property) => property.name === GameMapProperties.LISTENER_MEGAPHONE
+            (property) => property.name === GameMapProperties.LISTENER_MEGAPHONE,
         );
         if (listenerZone && listenerZone.type === "string" && listenerZone.value !== undefined) {
             const speakerZoneName = getSpeakerMegaphoneAreaName(
-                gameManager.getCurrentGameScene().getGameMap().getGameMapAreas()?.getAreas(),
-                listenerZone.value
+                gameManager.getCurrentGameScene().getGameMap().getWamFile()?.getGameMapAreas().getAreas(),
+                listenerZone.value,
             );
             if (speakerZoneName) {
                 currentLiveStreamingSpaceStore.set(undefined);
@@ -829,7 +820,7 @@ export class GameMapPropertiesListener {
         const focusable = place.properties.find((property) => property.name === GameMapProperties.FOCUSABLE);
         if (focusable && focusable.value === true) {
             const zoomMargin = place.properties.find((property) =>
-                [GameMapProperties.ZOOM_MARGIN, "zoom_margin"].includes(property.name)
+                [GameMapProperties.ZOOM_MARGIN, "zoom_margin"].includes(property.name),
             );
             this.scene.getCameraManager().enterFocusMode(
                 {
@@ -838,7 +829,7 @@ export class GameMapPropertiesListener {
                     width: place.width,
                     height: place.height,
                 },
-                zoomMargin ? Math.max(0, Number(zoomMargin.value)) : undefined
+                zoomMargin ? Math.max(0, Number(zoomMargin.value)) : undefined,
             );
         }
     }
@@ -957,5 +948,29 @@ export class GameMapPropertiesListener {
             console.warn('Invalid JSON found in property "' + propertyName + '" of the map:' + jsonString, e);
             return {};
         }
+    }
+
+    /**
+     * Cleans up all subscriptions and resources.
+     * Must be called when the GameMapPropertiesListener is no longer needed to prevent memory leaks.
+     */
+    public destroy(): void {
+        // Destroy the areas properties listener
+        this.areasPropertiesListener.destroy();
+
+        // Clean up action trigger callbacks
+        for (const callback of this.actionTriggerCallback.values()) {
+            this.scene.userInputManager.removeSpaceEventListener(callback);
+        }
+        this.actionTriggerCallback.clear();
+
+        // Clean up co-websites
+        for (const coWebsiteOpen of this.coWebsitesOpenByPlace.values()) {
+            if (coWebsiteOpen.coWebsite) {
+                coWebsites.remove(coWebsiteOpen.coWebsite);
+            }
+        }
+        this.coWebsitesOpenByPlace.clear();
+        this.coWebsitesActionTriggerByPlace.clear();
     }
 }

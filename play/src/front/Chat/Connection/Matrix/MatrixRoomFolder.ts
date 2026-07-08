@@ -1,13 +1,18 @@
-import { Room, EventType, EventTimeline } from "matrix-js-sdk";
-import { derived, get, Readable, writable, Writable } from "svelte/store";
+import type { Room } from "matrix-js-sdk";
+import { EventType, EventTimeline } from "matrix-js-sdk";
+import type { Readable, Writable } from "svelte/store";
+import { derived, get, writable } from "svelte/store";
 import { KnownMembership } from "matrix-js-sdk/lib/types";
 
 import * as Sentry from "@sentry/svelte";
 import { MapStore } from "@workadventure/store-utils";
-import { Deferred } from "ts-deferred";
+import { Deferred } from "@workadventure/shared-utils";
 import { matrixRateLimiter } from "../../Services/MatrixRateLimiter";
-import { RoomFolder } from "../ChatConnection";
+import { ignoredSuggestedRoomIdsStore } from "../../Stores/ChatStore";
+import type { RoomFolder } from "../ChatConnection";
+import { retargetSelectedRoomIfReplaced } from "../../Stores/SelectRoomStore";
 import { MatrixChatRoom } from "./MatrixChatRoom";
+import { hasValidViaEntries } from "./MatrixSpaceRelations";
 
 export class MatrixRoomFolder extends MatrixChatRoom implements RoomFolder {
     roomList: MapStore<MatrixChatRoom["id"], MatrixChatRoom> = new MapStore<MatrixChatRoom["id"], MatrixChatRoom>();
@@ -24,9 +29,13 @@ export class MatrixRoomFolder extends MatrixChatRoom implements RoomFolder {
     readonly allSuggestedRooms: Writable<{ name: string; id: string; avatarUrl: string }[]> = writable([]);
     readonly suggestedRooms: Readable<{ name: string; id: string; avatarUrl: string }[]>;
     readonly joinableRooms: Readable<{ name: string; id: string; avatarUrl: string }[]>;
+    readonly joinableRoomsLoading: Writable<boolean> = writable(false);
 
     private loadRoomsAndFolderPromise = new Deferred<void>();
     private joinRoomDeferred = new Deferred<void>();
+    private childrenLoaded = false;
+    private joinableRoomsLoaded = false;
+    private joinableRoomsLoadingPromise: Promise<void> | undefined;
 
     constructor(private room: Room) {
         super(room);
@@ -40,13 +49,13 @@ export class MatrixRoomFolder extends MatrixChatRoom implements RoomFolder {
             (_) => {
                 return [
                     ...Array.from(this.roomList.values()).filter(
-                        (room) => get(room.myMembership) === KnownMembership.Invite
+                        (room) => get(room.myMembership) === KnownMembership.Invite,
                     ),
                     ...Array.from(this.folderList.values()).filter(
-                        (folder) => get(folder.myMembership) === KnownMembership.Invite
+                        (folder) => get(folder.myMembership) === KnownMembership.Invite,
                     ),
                 ];
-            }
+            },
         );
 
         this.rooms = derived(
@@ -54,10 +63,10 @@ export class MatrixRoomFolder extends MatrixChatRoom implements RoomFolder {
             (_) => {
                 return [
                     ...Array.from(this.roomList.values()).filter(
-                        (room) => get(room.myMembership) === KnownMembership.Join
+                        (room) => get(room.myMembership) === KnownMembership.Join,
                     ),
                 ];
-            }
+            },
         );
 
         this.folders = derived(
@@ -65,40 +74,46 @@ export class MatrixRoomFolder extends MatrixChatRoom implements RoomFolder {
             (_) => {
                 return [
                     ...Array.from(this.folderList.values()).filter(
-                        (folder) => get(folder.myMembership) === KnownMembership.Join
+                        (folder) => get(folder.myMembership) === KnownMembership.Join,
                     ),
                 ];
-            }
+            },
         );
 
         this.suggestedRooms = derived(
-            [this.allSuggestedRooms, this.rooms, this.invitations, this.folders],
-            ([$allSuggestedRooms, $rooms, $invitations, $folders]) => {
+            [this.allSuggestedRooms, this.rooms, this.invitations, this.folders, ignoredSuggestedRoomIdsStore],
+            ([$allSuggestedRooms, $rooms, $invitations, $folders, $ignoredIds]) => {
                 const existingIds = new Set([
                     ...$rooms.map((room) => room.id),
                     ...$invitations.map((room) => room.id),
                     ...$folders.map((folder) => folder.id),
                 ]);
-                return $allSuggestedRooms.filter((room) => !existingIds.has(room.id));
-            }
+                return $allSuggestedRooms.filter((room) => !existingIds.has(room.id) && !$ignoredIds.has(room.id));
+            },
         );
 
-        this.joinableRooms = derived([this.availableRooms], ([$allChildRooms]) => $allChildRooms);
+        this.joinableRooms = derived(
+            [this.availableRooms, ignoredSuggestedRoomIdsStore],
+            ([$allChildRooms, $ignoredIds]) => $allChildRooms.filter((room) => !$ignoredIds.has(room.id)),
+        );
 
         if (get(this.myMembership) === KnownMembership.Join) this.joinRoomDeferred.resolve();
     }
 
+    override destroy(): void {
+        for (const id of Array.from(this.folderList.keys())) {
+            this.folderList.get(id)?.destroy();
+            this.folderList.delete(id);
+        }
+        for (const id of Array.from(this.roomList.keys())) {
+            this.roomList.get(id)?.destroy();
+            this.roomList.delete(id);
+        }
+        super.destroy();
+    }
+
     init() {
         try {
-            if (get(this.myMembership) === KnownMembership.Join) {
-                this.getChildren();
-                this.hasChildRoomsError.set(false);
-                this.refreshRooms().catch((error: Error) => {
-                    console.error("Failed to refresh rooms:", error);
-                    this.hasChildRoomsError.set(true);
-                    Sentry.captureException(error);
-                });
-            }
             this.loadRoomsAndFolderPromise.resolve();
         } catch (e) {
             this.loadRoomsAndFolderPromise.reject(e);
@@ -120,7 +135,7 @@ export class MatrixRoomFolder extends MatrixChatRoom implements RoomFolder {
             }
 
             const getNodePromise = Array.from(this.folderList.values()).map((folder) => {
-                return folder.getParentOfNode(id);
+                return folder.getNode(id);
             });
 
             const nodes = await Promise.all(getNodePromise);
@@ -142,14 +157,16 @@ export class MatrixRoomFolder extends MatrixChatRoom implements RoomFolder {
     async deleteNode(id: string): Promise<boolean> {
         try {
             await this.loadRoomsAndFolderPromise.promise;
-            const isDeletedInRoomList = this.roomList.delete(id);
-            if (isDeletedInRoomList) {
-                return true;
+            const roomNode = this.roomList.get(id);
+            if (roomNode) {
+                roomNode.destroy();
+                return this.roomList.delete(id);
             }
 
-            const isDeletedInFolderList = this.folderList.delete(id);
-            if (isDeletedInFolderList) {
-                return true;
+            const folderNode = this.folderList.get(id);
+            if (folderNode) {
+                folderNode.destroy();
+                return this.folderList.delete(id);
             }
 
             const deleteNodePromise = Array.from(this.folderList.values()).map((folder) => {
@@ -188,7 +205,7 @@ export class MatrixRoomFolder extends MatrixChatRoom implements RoomFolder {
 
             const parentFolder = parentFolders.filter((value) => value)[0];
 
-            if (!parentFolder) throw new Error("Parent folder not found");
+            if (!parentFolder) return undefined;
 
             return parentFolder;
         } catch (e) {
@@ -208,7 +225,7 @@ export class MatrixRoomFolder extends MatrixChatRoom implements RoomFolder {
             const foldersID = Array.from(this.roomList.keys());
 
             const nestedRoomIDs = await Promise.all(
-                Array.from(folders.values()).map((folder) => folder.getRoomsIdInNode())
+                Array.from(folders.values()).map((folder) => folder.getRoomsIdInNode()),
             );
 
             return [...roomIDs, ...foldersID, ...nestedRoomIDs.flat()];
@@ -225,24 +242,26 @@ export class MatrixRoomFolder extends MatrixChatRoom implements RoomFolder {
             ?.getState(EventTimeline.FORWARDS)
             ?.getStateEvents(EventType.SpaceChild);
 
-        childEvents?.forEach((childEvent) => {
-            const roomId = childEvent.event.state_key;
-            const childRoom = this.room.client.getRoom(roomId);
+        childEvents
+            ?.filter((childEvent) => hasValidViaEntries(childEvent.getContent()))
+            .forEach((childEvent) => {
+                const roomId = childEvent.event.state_key;
+                const childRoom = this.room.client.getRoom(roomId);
 
-            if (!childRoom || roomId === this.id) return;
+                if (!childRoom || roomId === this.id) return;
 
-            if (childRoom.isSpaceRoom()) {
-                this.folderList.set(childRoom.roomId, new MatrixRoomFolder(childRoom));
-            } else {
-                const matrixChatRoom = new MatrixChatRoom(childRoom);
-                if (
-                    get(matrixChatRoom.myMembership) === KnownMembership.Join ||
-                    get(matrixChatRoom.myMembership) === KnownMembership.Invite
-                ) {
-                    this.roomList.set(childRoom.roomId, matrixChatRoom);
+                if (childRoom.isSpaceRoom()) {
+                    this.folderList.set(childRoom.roomId, new MatrixRoomFolder(childRoom));
+                } else {
+                    const matrixChatRoom = new MatrixChatRoom(childRoom);
+                    if (
+                        get(matrixChatRoom.myMembership) === KnownMembership.Join ||
+                        get(matrixChatRoom.myMembership) === KnownMembership.Invite
+                    ) {
+                        this.roomList.set(childRoom.roomId, matrixChatRoom);
+                    }
                 }
-            }
-        });
+            });
     }
 
     async refreshRooms() {
@@ -250,7 +269,6 @@ export class MatrixRoomFolder extends MatrixChatRoom implements RoomFolder {
             const { rooms: allRooms } = await matrixRateLimiter.getRoomHierarchy(this.room, 100, 1, false);
 
             const { rooms: suggestedRoomsData } = await matrixRateLimiter.getRoomHierarchy(this.room, 100, 2, true);
-
             const localRooms = this.room.client.getRooms();
 
             const suggestedRooms: { name: string; id: string; avatarUrl: string }[] = [];
@@ -318,19 +336,52 @@ export class MatrixRoomFolder extends MatrixChatRoom implements RoomFolder {
         }
     }
 
+    async ensureJoinableRoomsLoaded(): Promise<void> {
+        if (this.joinableRoomsLoaded) {
+            return;
+        }
+        if (this.joinableRoomsLoadingPromise) {
+            return this.joinableRoomsLoadingPromise;
+        }
+
+        this.joinableRoomsLoading.set(true);
+        this.hasChildRoomsError.set(false);
+        this.joinableRoomsLoadingPromise = this.refreshRooms()
+            .then(() => {
+                this.joinableRoomsLoaded = true;
+            })
+            .catch((error: unknown) => {
+                this.hasChildRoomsError.set(true);
+                throw error;
+            })
+            .finally(() => {
+                this.joinableRoomsLoading.set(false);
+                this.joinableRoomsLoadingPromise = undefined;
+            });
+
+        return this.joinableRoomsLoadingPromise;
+    }
+
     protected override onRoomMyMembership(room: Room) {
         if (room.getMyMembership() === KnownMembership.Join) {
             this.joinRoomDeferred.resolve();
-            this.getChildren();
-            this.refreshRooms().catch((error: Error) => {
-                console.error("Failed to refresh rooms:", error);
-                Sentry.captureException(error);
-            });
         }
         super.onRoomMyMembership(room);
     }
 
+    public ensureChildrenLoaded(): void {
+        if (this.childrenLoaded) {
+            return;
+        }
+        this.getChildren();
+    }
+
+    public hasLoadedChildren(): boolean {
+        return this.childrenLoaded;
+    }
+
     public getChildren() {
+        this.childrenLoaded = true;
         const client = this.room.client;
         const room = this.room;
 
@@ -342,6 +393,7 @@ export class MatrixRoomFolder extends MatrixChatRoom implements RoomFolder {
         if (!childEvents) return;
 
         const children = childEvents
+            .filter((ev) => hasValidViaEntries(ev.getContent()))
             .map((ev) => {
                 const stateKey = ev.getStateKey();
                 if (!stateKey) return null;
@@ -356,13 +408,37 @@ export class MatrixRoomFolder extends MatrixChatRoom implements RoomFolder {
                 );
             });
 
+        const childIds = new Set(children.map((c) => c.roomId));
+
+        for (const id of Array.from(this.roomList.keys())) {
+            if (!childIds.has(id)) {
+                this.roomList.get(id)?.destroy();
+                this.roomList.delete(id);
+            }
+        }
+        for (const id of Array.from(this.folderList.keys())) {
+            if (!childIds.has(id)) {
+                this.folderList.get(id)?.destroy();
+                this.folderList.delete(id);
+            }
+        }
+
         children.forEach((child) => {
             if (child.isSpaceRoom()) {
-                const spaceFolder = new MatrixRoomFolder(child);
-                this.folderList.set(child.roomId, spaceFolder);
+                let spaceFolder = this.folderList.get(child.roomId);
+                if (!spaceFolder) {
+                    spaceFolder = new MatrixRoomFolder(child);
+                    this.folderList.set(child.roomId, spaceFolder);
+                }
                 spaceFolder.init();
-            } else {
-                this.roomList.set(child.roomId, new MatrixChatRoom(child));
+            } else if (!this.roomList.has(child.roomId)) {
+                const newRoom = new MatrixChatRoom(child);
+                this.roomList.set(child.roomId, newRoom);
+                // Accepting an invitation rebuilds the room's wrapper here (the previous one was destroyed when
+                // the room was detached from its old placement). If it is the open room, keep selectedRoomStore
+                // on this live wrapper — otherwise the timeline stays bound to the destroyed wrapper and messages
+                // sent right after joining never render until the room is re-opened.
+                retargetSelectedRoomIfReplaced(newRoom);
             }
         });
     }

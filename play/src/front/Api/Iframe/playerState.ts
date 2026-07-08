@@ -1,8 +1,8 @@
 import { queryWorkadventure } from "./IframeApiContribution";
 import { apiCallback } from "./registeredCallbacks";
 import { AbstractWorkadventureStateCommands } from "./AbstractState";
-import { PrivatePlayerState } from "./PrivatePlayerState";
-import { PublicPlayerState } from "./PublicPlayerState";
+import type { PrivatePlayerState } from "./PrivatePlayerState";
+import type { PublicPlayerState } from "./PublicPlayerState";
 
 type PlayerState = PublicPlayerState & PrivatePlayerState;
 
@@ -28,7 +28,7 @@ export class WorkadventurePlayerStateCommands extends AbstractWorkadventureState
             persist?: boolean;
             ttl?: number;
             scope?: "world" | "room";
-        }
+        },
     ): Promise<void> {
         if (options && options.ttl !== undefined && !options.persist) {
             throw new Error("A variable that has a ttl set must be persisted with 'persist = true'");

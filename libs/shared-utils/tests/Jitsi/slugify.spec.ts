@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Json } from "@workadventure/tiled-map-type-guard";
+import type { Json } from "@workadventure/tiled-map-type-guard";
 import { GameMapProperties } from "@workadventure/map-editor";
 import { slugifyJitsiRoomName } from "../../src/Jitsi/slugify";
 
@@ -9,7 +9,7 @@ describe("Shared utils", () => {
         const jitsiRoom = slugifyJitsiRoomName(
             "Foo",
             "https://play.workadventure.localhost/_/foo/bar.com/map.tmj",
-            properties.has(GameMapProperties.JITSI_NO_PREFIX)
+            properties.has(GameMapProperties.JITSI_NO_PREFIX),
         );
 
         expect(jitsiRoom).toBe("y6v7zb-foo");
@@ -18,7 +18,7 @@ describe("Shared utils", () => {
         const jitsiRoom2 = slugifyJitsiRoomName(
             "Foo",
             "https://play.workadventure.localhost/_/foo/bar.com/map.tmj",
-            properties.has(GameMapProperties.JITSI_NO_PREFIX)
+            properties.has(GameMapProperties.JITSI_NO_PREFIX),
         );
 
         expect(jitsiRoom2).toBe("foo");

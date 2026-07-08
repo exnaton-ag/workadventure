@@ -1,7 +1,8 @@
-import { Subscription } from "rxjs";
+import type { Subscription } from "rxjs";
 import { get } from "svelte/store";
-import { SpaceInterface, SpaceUserExtended } from "../SpaceInterface";
-import { CheckedWorkAdventureMessagePort } from "../../Api/Iframe/CheckedWorkAdventureMessagePort";
+import * as Sentry from "@sentry/svelte";
+import type { SpaceInterface, SpaceUserExtended } from "../SpaceInterface";
+import type { CheckedWorkAdventureMessagePort } from "../../Api/Iframe/CheckedWorkAdventureMessagePort";
 
 /**
  * Represents a bridge between one Space and the scripting API.
@@ -17,7 +18,7 @@ export class SpaceScriptingBridge {
     constructor(
         private space: SpaceInterface,
         private port: CheckedWorkAdventureMessagePort<"joinSpace">,
-        private onSpaceLeft: () => void
+        private onSpaceLeft: () => void,
     ) {
         this.messagesSubscription = this.port.messages.subscribe((event) => {
             switch (event.data.type) {
@@ -86,7 +87,7 @@ export class SpaceScriptingBridge {
                     if (this.watchCount === 0) {
                         if (!this.userJoinedSubscription || !this.userLeftSubscription) {
                             throw new Error(
-                                "userJoinedSubscription or userLeftSubscription is not defined, this should not happen"
+                                "userJoinedSubscription or userLeftSubscription is not defined, this should not happen",
                             );
                         }
                         this.userJoinedSubscription.unsubscribe();
@@ -104,11 +105,21 @@ export class SpaceScriptingBridge {
                     break;
                 }
                 case "startStreaming": {
-                    this.space.startStreaming();
+                    try {
+                        this.space.startStreaming();
+                    } catch (error) {
+                        console.error("An error occurred while starting streaming", error);
+                        Sentry.captureException(error);
+                    }
                     break;
                 }
                 case "stopStreaming": {
-                    this.space.stopStreaming();
+                    try {
+                        this.space.stopStreaming();
+                    } catch (error) {
+                        console.error("An error occurred while stopping streaming", error);
+                        Sentry.captureException(error);
+                    }
                     break;
                 }
                 case "setMetadata": {

@@ -1,5 +1,6 @@
 import fs from "fs";
-import express, { Application } from "express";
+import type { Application } from "express";
+import express from "express";
 import cookieParser from "cookie-parser";
 import * as Sentry from "@sentry/node";
 import cors from "cors";
@@ -19,16 +20,23 @@ import {
     ENABLE_OPENAPI_ENDPOINT,
     PROMETHEUS_PORT,
     GRPC_MAX_MESSAGE_SIZE,
+    FRONT_ENVIRONMENT_VARIABLES,
 } from "./enums/EnvironmentVariable";
 import { PingController } from "./controllers/PingController";
 import { CompanionListController } from "./controllers/CompanionListController";
 import { FrontController } from "./controllers/FrontController";
+import { PipLayoutTestDevController } from "./controllers/PipLayoutTestDevController";
 import { globalErrorHandler } from "./services/GlobalErrorHandler";
 import { jwtTokenManager } from "./services/JWTTokenManager";
 import { CompanionService } from "./services/CompanionService";
 import { WokaService } from "./services/WokaService";
 import { UserController } from "./controllers/UserController";
 import { MatrixRoomAreaController } from "./controllers/MatrixRoomAreaController";
+import { LocalScriptController } from "./controllers/LocalScriptController";
+import { LivekitWebhookController } from "./controllers/LivekitWebhookController";
+import { videoQualityAnalyticsQueue } from "./services/VideoQualityAnalyticsQueue";
+
+const VIDEO_QUALITY_ANALYTICS_CAPABILITY = "api/analytics/video-quality-batch";
 
 class App {
     private readonly app: Application;
@@ -38,6 +46,9 @@ class App {
     constructor() {
         this.websocketApp = uWebsockets.App();
         this.app = express();
+
+        // LiveKit webhooks must keep the raw body for signature verification in the back; register before express.json().
+        new LivekitWebhookController(this.app);
 
         this.app.use(express.json());
         this.app.use(express.urlencoded());
@@ -63,7 +74,7 @@ class App {
                     "sentry-trace",
                 ],
                 credentials: true,
-            })
+            }),
         );
 
         //this.app.set_error_handler(globalErrorHandler);
@@ -95,11 +106,15 @@ class App {
         new AdminController(this.app, GRPC_MAX_MESSAGE_SIZE);
         new OpenIdProfileController(this.app);
         new PingController(this.app);
+        new LocalScriptController(this.app);
 
         if (ENABLE_OPENAPI_ENDPOINT) {
             new SwaggerController(this.app);
         }
         new FrontController(this.app);
+        if (FRONT_ENVIRONMENT_VARIABLES.DEBUG_MODE === true) {
+            new PipLayoutTestDevController(this.app);
+        }
         new UserController(this.app);
         new MatrixRoomAreaController(this.app);
 
@@ -118,6 +133,7 @@ class App {
                 ".woff2",
                 ".map",
                 ".gif",
+                ".odf",
             ],
             etag: true,
             maxAge: "15d",
@@ -128,7 +144,7 @@ class App {
             express.static(path + "/assets", {
                 ...staticOptions,
                 maxAge: "1y",
-            })
+            }),
         );
 
         this.app.use(
@@ -136,7 +152,7 @@ class App {
             express.static(path + "/resources", {
                 ...staticOptions,
                 maxAge: "1d",
-            })
+            }),
         );
 
         this.app.use(
@@ -144,7 +160,7 @@ class App {
             express.static(path + "/static", {
                 ...staticOptions,
                 maxAge: "1d",
-            })
+            }),
         );
 
         this.app.use(
@@ -152,14 +168,14 @@ class App {
             express.static(path + "/collections", {
                 ...staticOptions,
                 maxAge: "1d",
-            })
+            }),
         );
 
         this.app.use(
             express.static(path, {
                 ...staticOptions,
                 maxAge: "1h",
-            })
+            }),
         );
     }
 
@@ -182,6 +198,7 @@ class App {
             const capabilities = await adminApi.initialise();
             companionListController.setCompanionService(CompanionService.get(capabilities));
             wokaListController.setWokaService(WokaService.get(capabilities));
+            videoQualityAnalyticsQueue.setEnabled(capabilities[VIDEO_QUALITY_ANALYTICS_CAPABILITY] === "v1");
         } catch (error) {
             console.error("Failed to initialize: problem getting AdminAPI capabilities", error);
             Sentry.captureException(`Failed to initialized companion and woka services : ${error}`);

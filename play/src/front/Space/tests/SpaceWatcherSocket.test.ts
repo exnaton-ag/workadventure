@@ -1,9 +1,13 @@
+import * as Phaser from "phaser";
+globalThis.Phaser = Phaser;
+
 import { describe, vi, expect, it } from "vitest";
 
-import { FilterType, UpdateSpaceMetadataMessage } from "@workadventure/messages";
+import type { UpdateSpaceMetadataMessage } from "@workadventure/messages";
+import { FilterType } from "@workadventure/messages";
 import { Subject } from "rxjs";
+import { writable } from "svelte/store";
 import { SpaceRegistry } from "../SpaceRegistry/SpaceRegistry";
-import { RoomConnection } from "../../Connection/RoomConnection";
 import { MockRoomConnectionForSpaces } from "./MockRoomConnectionForSpaces";
 
 vi.mock("../../Phaser/Entity/CharacterLayerManager", () => {
@@ -34,35 +38,6 @@ vi.mock("../../Connection/ConnectionManager", () => {
         },
     };
 });
-// Mock the PeerStore module
-vi.mock("../../Stores/PeerStore", () => ({
-    screenSharingPeerStore: {
-        getSpaceStore: vi.fn(),
-        removePeer: vi.fn(),
-        getPeer: vi.fn(),
-    },
-    videoStreamStore: {
-        subscribe: vi.fn().mockImplementation((fn: (v: unknown) => void) => {
-            // send a default value immediately
-            fn([]);
-            return () => {};
-        }),
-    },
-    videoStreamElementsStore: {
-        subscribe: vi.fn().mockImplementation((fn: (v: unknown[]) => void) => {
-            // send a default value immediately
-            fn([]);
-            return () => {};
-        }),
-    },
-    screenShareStreamElementsStore: {
-        subscribe: vi.fn().mockImplementation((fn: (v: unknown[]) => void) => {
-            // send a default value immediately
-            fn([]);
-            return () => {};
-        }),
-    },
-}));
 
 // Mock SimplePeer
 vi.mock("../../WebRtc/SimplePeer", () => ({
@@ -72,21 +47,64 @@ vi.mock("../../WebRtc/SimplePeer", () => ({
     })),
 }));
 
-vi.mock("../../Enum/EnvironmentVariable.ts", () => {
+vi.mock("../../Stores/ScreenSharingStore", () => {
+    const requested = writable(false);
     return {
-        MATRIX_ADMIN_USER: "admin",
-        MATRIX_DOMAIN: "domain",
-        STUN_SERVER: "stun:test.com:19302",
-        TURN_SERVER: "turn:test.com:19302",
-        TURN_USER: "user",
-        TURN_PASSWORD: "password",
-        POSTHOG_API_KEY: "test-api-key",
-        POSTHOG_URL: "https://test.com",
-        MAX_USERNAME_LENGTH: 10,
-        PEER_SCREEN_SHARE_RECOMMENDED_BANDWIDTH: 1000,
-        PEER_VIDEO_RECOMMENDED_BANDWIDTH: 1000,
+        requestedScreenSharingState: {
+            subscribe: requested.subscribe,
+            enableScreenSharing: () => requested.set(true),
+            disableScreenSharing: () => requested.set(false),
+        },
+        screenSharingLocalStreamStore: writable({ type: "success" }),
+        screenSharingConstraintsStore: writable({ video: false, audio: false }),
+        screenSharingAvailableStore: writable(false),
+        screenSharingLocalVideoBox: writable(undefined),
+        screenSharingLocalMedia: writable(undefined),
+        screenShareQualityStore: {
+            subscribe: writable("recommended").subscribe,
+            setQuality: vi.fn(),
+        },
     };
 });
+
+vi.mock("../../Stores/MegaphoneStore", () => {
+    return {
+        liveStreamingEnabledStore: writable(false),
+        requestedMegaphoneStore: writable(false),
+        megaphoneSpaceStore: writable(undefined),
+        megaphoneCanBeUsedStore: writable(false),
+    };
+});
+
+vi.mock("../../Stores/MenuStore", () => {
+    return {
+        menuIconVisiblilityStore: writable(false),
+        menuVisiblilityStore: writable(false),
+        screenSharingActivatedStore: writable(false),
+        inviteUserActivated: writable(false),
+        mapEditorActivated: writable(false),
+        roomListActivated: writable(false),
+    };
+});
+
+vi.mock("../../WebRtc/MediaManager", () => {
+    return {
+        MediaManager: vi.fn(),
+        mediaManager: {
+            enableMyCamera: vi.fn(),
+            disableMyCamera: vi.fn(),
+            enableMyMicrophone: vi.fn(),
+            disableMyMicrophone: vi.fn(),
+            enableProximityMeeting: vi.fn(),
+            disableProximityMeeting: vi.fn(),
+        },
+    };
+});
+
+vi.mock(
+    "../../Enum/EnvironmentVariable.ts",
+    () => import("../../../../tests/front/mocks/frontEnvironmentVariableMock"),
+);
 
 describe("SpaceRegistry", () => {
     it("should call updateSpaceMetadata when stream updateSpaceMetadata receive a new message", async () => {
@@ -99,12 +117,12 @@ describe("SpaceRegistry", () => {
             }),
         };
 
-        const spaceRegistry = new SpaceRegistry(roomConnection as unknown as RoomConnection, new Subject());
+        const spaceRegistry = new SpaceRegistry(roomConnection, new Subject());
         const space = await spaceRegistry.joinSpace(
             "space-name",
             FilterType.ALL_USERS,
             [],
-            new AbortController().signal
+            new AbortController().signal,
         );
 
         roomConnection.updateSpaceMetadataMessageStream.next(updateSpaceMetadataMessage);

@@ -1,53 +1,78 @@
-import { ComponentProps, ComponentType, SvelteComponentTyped } from "svelte";
-import {
-    arrow,
-    autoUpdate,
-    computePosition,
-    ComputePositionConfig,
-    flip,
-    limitShift,
-    offset,
-    shift,
-} from "@floating-ui/dom";
+import type { ComputePositionConfig } from "@floating-ui/dom";
+import { arrow, autoUpdate, computePosition, flip, limitShift, offset, shift } from "@floating-ui/dom";
 import { writable } from "svelte/store";
 import { v4 } from "uuid";
-import { ArrowAction, ContentAction } from "./svelte-floatingui";
+import type { WorkAdventureComponent, WorkAdventureComponentProps } from "../../types/component";
+import type { ArrowAction, ContentAction } from "./svelte-floatingui";
 
 export const floatingUiComponents = writable(
     new Map<
         string,
         {
-            componentType: ComponentType<SvelteComponentTyped>;
-            props?: ComponentProps<SvelteComponentTyped>;
+            componentType: WorkAdventureComponent;
+            props?: WorkAdventureComponentProps;
             action: ContentAction;
             arrowAction: ArrowAction | undefined;
+            zIndex: number;
         }
-    >()
+    >(),
 );
 
 /**
  * Use this function to display a popup on top/bottom of an element. Unlike the `createFloatingUiActions` function, this function
  * is passed the popup in parameter and will display it at the right position. The element in the DOM will be close to the root element.
  * As a result, you don't have to worry about the popup being clipped by the parent element because of "overflow: hidden".
+ * @param closeOnClickOutside - when true, the popup closes when the user clicks outside the reference element and the popup content
+ * @param onClose - called when the popup is closed (by click outside or by calling the returned close function)
+ * @param zIndex - overrides the default global floating layer when the popup must stay below higher-priority overlays
  */
-export function showFloatingUi<Component extends SvelteComponentTyped>(
+export function showFloatingUi(
     referenceNode: Element,
-    component: ComponentType<Component>,
-    props: ComponentProps<Component>,
+    component: WorkAdventureComponent,
+    props: WorkAdventureComponentProps,
     options?: Partial<ComputePositionConfig>,
     offsetMainAxis = 0,
-    withArrow = true
+    withArrow = true,
+    closeOnClickOutside = false,
+    onClose?: () => void,
+    zIndex = 3000,
 ): () => void {
     let arrowNode: HTMLElement | undefined;
     let contentNode: HTMLElement | undefined;
     let cleanup: (() => void) | null = null;
 
+    const close = () => {
+        cleanup?.();
+        cleanup = null;
+        floatingUiComponents.update((components) => {
+            components.delete(id);
+            return components;
+        });
+        onClose?.();
+    };
+
     const contentAction: ContentAction = (node) => {
         contentNode = node;
         //options = { ...initOptions, ...contentOptions };
         initFloatingUi();
+
+        let clickOutsideHandler: ((e: MouseEvent) => void) | undefined;
+        if (closeOnClickOutside) {
+            clickOutsideHandler = (e: MouseEvent) => {
+                const target = e.target as Node;
+                if (referenceNode.contains(target) || (contentNode && contentNode.contains(target))) {
+                    return;
+                }
+                close();
+            };
+            document.addEventListener("mousedown", clickOutsideHandler);
+        }
+
         return {
             destroy() {
+                if (clickOutsideHandler) {
+                    document.removeEventListener("mousedown", clickOutsideHandler);
+                }
                 deinitFloatingUi();
             },
         };
@@ -70,6 +95,7 @@ export function showFloatingUi<Component extends SvelteComponentTyped>(
             props,
             action: contentAction,
             arrowAction: withArrow ? arrowAction : undefined,
+            zIndex,
         });
         return components;
     });
@@ -147,12 +173,5 @@ export function showFloatingUi<Component extends SvelteComponentTyped>(
         }
     };
 
-    return () => {
-        cleanup?.();
-        cleanup = null;
-        floatingUiComponents.update((components) => {
-            components.delete(id);
-            return components;
-        });
-    };
+    return close;
 }

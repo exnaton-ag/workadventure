@@ -1,38 +1,37 @@
 <script lang="ts">
     import { get } from "svelte/store";
-    import { createEventDispatcher, onMount } from "svelte";
-    import { ChatRoom } from "../../../Connection/ChatConnection";
+    import { onMount } from "svelte";
+    import type { ChatConversation } from "../../../Connection/ChatConnection";
     import { selectedChatMessageToReply } from "../../../Stores/ChatStore";
     import { ProximityChatRoom } from "../../../Connection/Proximity/ProximityChatRoom";
     import { chatInputFocusStore } from "../../../../Stores/ChatStore";
     import { IconLoader, IconPaperclip, IconX } from "@wa-icons";
 
-    const dispatch = createEventDispatcher<{
-        fileUploaded: void;
-    }>();
-
-    let files: FileList | undefined = undefined;
-    export let room: ChatRoom;
-    const isProximityChatRoom = room instanceof ProximityChatRoom;
-
-    $: {
-        if (files) {
-            room.sendFiles(files)
-                .then(() => {
-                    // Infinite loop is not possible because the first thing we do in the reactive statement is test for "files" not undefined.
-                    // eslint-disable-next-line svelte/infinite-reactive-loop
-                    files = undefined;
-                    unselectChatMessageToReplyIfSelected();
-                })
-                .catch((error) => console.error(error));
-        }
+    let files: FileList | undefined = $state(undefined);
+    let fileInputElement: HTMLInputElement;
+    interface Props {
+        room: ChatConversation;
+        filesSelected?: (files: FileList) => void;
+        fileUploaded?: () => void;
     }
+
+    let { room, filesSelected = () => {}, fileUploaded = () => {} }: Props = $props();
+    let isProximityChatRoom = $derived(room instanceof ProximityChatRoom);
+
+    $effect(() => {
+        if (files && files.length > 0) {
+            filesSelected(files);
+            fileUploaded();
+            files = undefined;
+            fileInputElement.value = "";
+        }
+    });
 
     function unselectChatMessageToReplyIfSelected() {
         if (get(selectedChatMessageToReply) !== null) {
             selectedChatMessageToReply.set(null);
         }
-        dispatch("fileUploaded");
+        fileUploaded();
     }
 
     function focusChatInput() {
@@ -59,9 +58,10 @@
         type="file"
         multiple
         bind:files
+        bind:this={fileInputElement}
         data-testid="uploadChatCustomAsset"
-        on:focusin={focusChatInput}
-        on:focusout={unfocusChatInput}
+        onfocusin={focusChatInput}
+        onfocusout={unfocusChatInput}
     />
     <label
         id="labelUpload"
@@ -79,7 +79,7 @@
     </label>
     <button
         class="absolute top-0 right-0 m-1 hover:bg-white/10 cursor-pointer"
-        on:click={() => unselectChatMessageToReplyIfSelected()}
+        onclick={() => unselectChatMessageToReplyIfSelected()}
     >
         <IconX class=" text-white/50 hover:text-white transition-all" font-size={16} />
     </button>

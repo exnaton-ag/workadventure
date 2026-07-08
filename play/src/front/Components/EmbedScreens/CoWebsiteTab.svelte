@@ -1,105 +1,62 @@
 <script lang="ts">
-    import { createEventDispatcher, onMount } from "svelte";
     import CopyIcon from "../Icons/CopyIcon.svelte";
     import ExternalLinkIcon from "../Icons/ExternalLinkIcon.svelte";
     import XIcon from "../Icons/XIcon.svelte";
-    import { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
-    import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
-    import { BBBCoWebsite } from "../../WebRtc/CoWebsite/BBBCoWebsite";
-    import { ICON_URL } from "../../Enum/EnvironmentVariable";
-    import jitsiIcon from "../images/jitsi.png";
-    import meetingIcon from "../images/meeting.svg";
+    import type { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
     import LoaderIcon from "../Icons/LoaderIcon.svelte";
-    import LL from "../../../i18n/i18n-svelte";
     import PopUpCopyUrl from "../PopUp/PopUpCopyUrl.svelte";
     import { popupStore } from "../../Stores/PopupStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
 
-    export let coWebsite: CoWebsite;
-    export let isLoading = false;
-    export let active = false;
+    interface Props {
+        coWebsite: CoWebsite;
+        isLoading?: boolean;
+        active?: boolean;
+        onclick?: () => void;
+        onclose?: () => void;
+        oncopy?: () => void;
+    }
 
-    let isDuplicable = true;
-    let isJitsi: boolean = coWebsite instanceof JitsiCoWebsite;
-    let isBBB: boolean = coWebsite instanceof BBBCoWebsite;
-    let cowebsiteName: string;
-    let alt: string;
-    let srcSimpleCowebsite = `${ICON_URL}/icon?url=${encodeURIComponent(
-        coWebsite.getUrl().toString()
-    )}&size=64..96..256&fallback_icon_color=14304c`;
-    let url: string;
-    let srcJitsi = jitsiIcon;
-    let srcMeeting = meetingIcon;
-
-    const dispatch = createEventDispatcher<{
-        close: void;
-        copy: void;
-    }>();
-
-    onMount(() => {
-        if (isJitsi) {
-            isDuplicable = true;
-        } else if (isBBB) {
-            isDuplicable = true;
-        } else {
-            alt = coWebsite.getUrl().hostname;
-            cowebsiteName = coWebsite
-                .getUrl()
-                .toString()
-                .replace(/.+\/\/|www.|\..+/g, "");
-            cowebsiteName = cowebsiteName.charAt(0).toUpperCase() + cowebsiteName.slice(1);
-            isDuplicable = true;
-        }
-    });
+    let { coWebsite, isLoading = false, active = false, onclick, onclose, oncopy }: Props = $props();
 
     function closeTab() {
-        dispatch("close");
+        onclose?.();
         analyticsClient.closeCowebsite();
     }
 
-    function toggleActive() {
-        if (active === true) {
-            active = active;
-        } else {
-            active = !active;
-            analyticsClient.switchCowebsite();
-        }
+    function select() {
+        onclick?.();
+        analyticsClient.switchCowebsite();
     }
 
     function copyUrl() {
-        url = coWebsite.getUrl().toString();
+        const url = coWebsite.getUrl().toString();
 
         navigator.clipboard.writeText(url).catch((e) => console.error(e));
         analyticsClient.copyCowebsiteLink();
-        dispatch("copy");
+        oncopy?.();
         popupStore.addPopup(PopUpCopyUrl, {}, "popupCopyUrl");
     }
 
-    function handleClick() {
-        url = coWebsite.getUrl().toString();
+    function openInNewTab() {
+        const url = coWebsite.getUrl().toString();
 
         window.open(url, "_blank");
         analyticsClient.openCowebsiteInNewTab();
-        if (isJitsi) closeTab();
+        if (coWebsite.shouldCloseOnOpenInNewTab()) closeTab();
     }
 </script>
 
-<!-- svelte-ignore a11y-click-events-have-key-events -->
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-    class="text flex items-center px-2 rounded transition-all hover:stroke-white {active
+    class="text h-full flex items-center px-2 rounded transition-all hover:stroke-white {active
         ? 'text-contrast bg-white hover:bg-white/90 tab justify-between bg-contrast/80' // translate-y-2 rounded-b-none for animation but not working inside dropdown
         : 'text-white cursor-pointer bg-white/10 hover:bg-white/20 tab'}"
-    on:click={toggleActive}
-    on:click={() => (active = !active)}
+    onclick={select}
 >
-    {#if isLoading}
-        {#if isJitsi}
-            <img draggable="false" src={srcJitsi} {alt} class="h-6 w-6 bg-black rounded-lg align-middle" />
-        {:else if isBBB}
-            <img draggable="false" src={srcMeeting} {alt} class="h-6 w-6 bg-black rounded-lg align-middle" />
-        {:else}
-            <img draggable="false" src={srcSimpleCowebsite} {alt} class="h-6 w-6 bg-black rounded-lg align-middle" />
-        {/if}
+    {#if !isLoading}
+        <img draggable="false" src={coWebsite.getIcon()} alt="" class="h-6 w-6 bg-black rounded-lg align-middle" />
     {:else}
         <div class="h-6 w-6 animate-pulse rounded-sm {active ? 'bg-contrast/10' : 'bg-white/20'}">
             <LoaderIcon
@@ -116,43 +73,43 @@
                 class="bold leading-3 text-ellipsis pb-1 pt-1 max-w-[150px] whitespace-nowrap overflow-hidden {active
                     ? 'fill-white'
                     : ''}"
+                title={coWebsite.getTitle()}
             >
-                {#if isLoading}
-                    {#if isJitsi}
-                        {$LL.cowebsite.jitsi()}
-                    {:else if isBBB}
-                        {$LL.cowebsite.bigBlueButton()}
-                    {:else}
-                        {cowebsiteName}
-                    {/if}
+                {#if !isLoading}
+                    {coWebsite.getTitle()}
                 {:else}
-                    <div class="w-[100px] h-2 animate-pulse rounded-sm {active ? 'bg-contrast/10' : 'bg-white/20'}" />
+                    <div
+                        class="w-[100px] h-2 animate-pulse rounded-sm {active ? 'bg-contrast/10' : 'bg-white/20'}"
+                    ></div>
                 {/if}
             </div>
             {#if !coWebsite.getHideUrl()}
                 <div class="text-xxs opacity-50 text-ellipsis max-w-[150px] whitespace-nowrap overflow-hidden">
-                    {#if isLoading}
+                    {#if !isLoading}
                         {coWebsite.getUrl()}
                     {:else}
                         <div
                             class="w-[150px] h-1 mt-1 animate-pulse rounded-sm {active
                                 ? 'bg-contrast/10'
                                 : 'bg-white/20'}"
-                        />
+                        ></div>
                     {/if}
                 </div>
             {/if}
         </div>
 
         <div class="flex gap-0.5">
-            {#if isDuplicable && !coWebsite.getHideUrl()}
+            {#if !coWebsite.getHideUrl()}
                 <button
                     class="group {active
                         ? 'hover:bg-contrast/10'
                         : 'hover:bg-white/10'} transition-all aspect-ratio h-8 w-8 rounded flex items-center justify-center"
-                    on:click={copyUrl}
+                    onclick={(event) => {
+                        event.stopPropagation();
+                        copyUrl();
+                    }}
                 >
-                    <ExternalLinkIcon
+                    <CopyIcon
                         height="h-6"
                         width="w-6"
                         strokeColor={active ? "stroke-contrast" : "stroke-white"}
@@ -165,9 +122,12 @@
                     class="group {active
                         ? 'hover:bg-contrast/10'
                         : 'hover:bg-white/10'} transition-all aspect-ratio h-8 w-8 rounded flex items-center justify-center"
-                    on:click={handleClick}
+                    onclick={(event) => {
+                        event.stopPropagation();
+                        openInNewTab();
+                    }}
                 >
-                    <CopyIcon
+                    <ExternalLinkIcon
                         height="h-6"
                         width="w-6"
                         strokeColor={active ? "stroke-contrast" : "stroke-white"}
@@ -180,7 +140,10 @@
                     class="group {active
                         ? 'hover:bg-contrast/10'
                         : 'hover:bg-white/10'} transition-all aspect-ratio h-8 w-8 rounded flex items-center justify-center"
-                    on:click={closeTab}
+                    onclick={(event) => {
+                        event.stopPropagation();
+                        closeTab();
+                    }}
                 >
                     <XIcon
                         height="h-6"

@@ -1,4 +1,4 @@
-import { EntityPrefab } from "@workadventure/map-editor";
+import type { EntityPrefab } from "@workadventure/map-editor";
 import * as Sentry from "@sentry/svelte";
 
 export class EntityVariant {
@@ -31,6 +31,12 @@ export class EntityVariant {
             throw new Error("Could not find color for variant");
         }
         return [...entityPrefabsPositions.values()];
+    }
+
+    public get prefabIds(): string[] {
+        return [...this.variants.values()].flatMap((entityPrefabsPositions) =>
+            [...entityPrefabsPositions.values()].map((prefab) => prefab.id),
+        );
     }
 
     public addPrefab(prefab: EntityPrefab) {

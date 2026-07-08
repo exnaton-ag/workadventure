@@ -1,14 +1,15 @@
 <script lang="ts">
+    import { onDestroy } from "svelte";
     import { chatInputFocusStore } from "../../Stores/ChatStore";
-
-    let searchActive = false;
+    let searchActive = $state(false);
     import { chatSearchBarValue, navChat, joignableRoom } from "../Stores/ChatStore";
     import LoadingSmall from "../images/loading-small.svelte";
     import LL from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
-    import { UserProviderMerger } from "../UserProviderMerger/UserProviderMerger";
+    import type { UserProviderMerger } from "../UserProviderMerger/UserProviderMerger";
     import { hideActionBarStoreBecauseOfChatBar } from "../ChatSidebarWidthStore";
     import { selectedRoomStore } from "../Stores/SelectRoomStore";
+    import { hasMatrixChatCapabilities } from "../Connection/ChatConnection";
     import OnlineUsersCount from "./OnlineUsersCount.svelte";
     import ChatActionMenu from "./ChatActionMenu.svelte";
     import { IconMessageCircle2, IconUsers } from "@wa-icons";
@@ -21,10 +22,10 @@
     const userProviderMergerPromise = gameScene.userProviderMerger;
     const chatStatusStore = chat.connectionStatus;
     let typingTimer: ReturnType<typeof setTimeout>;
-    let searchLoader = false;
+    let searchLoader = $state(false);
     const DONE_TYPING_INTERVAL = 2000;
 
-    $: isInSpecificDiscussion = $selectedRoomStore !== undefined;
+    let isInSpecificDiscussion = $derived($selectedRoomStore !== undefined);
 
     function handleToggleSearch() {
         searchActive = !searchActive;
@@ -77,6 +78,14 @@
         // Enable input manager to allow the game to receive the input
         chatInputFocusStore.set(false);
     }
+
+    onDestroy(() => {
+        if (typingTimer) {
+            clearTimeout(typingTimer);
+        }
+        chatSearchBarValue.set("");
+        joignableRoom.set([]);
+    });
 </script>
 
 <div class=" relative p-2 flex items-center w-full z-40">
@@ -85,14 +94,14 @@
             {#if $navChat.key === "chat" && showUserListButton}
                 <button
                     class="userList p-3 hover:bg-white/10 rounded aspect-square w-12 h-12 !text-white"
-                    on:click={() => navChat.switchToUserList()}
+                    onclick={() => navChat.switchToUserList()}
                 >
                     <IconUsers font-size="20" />
                 </button>
             {:else if showChatButton}
                 <button
                     class="p-3 hover:bg-white/10 rounded aspect-square w-12 h-12 !text-white"
-                    on:click={() => navChat.switchToChat()}
+                    onclick={() => navChat.switchToChat()}
                 >
                     <IconMessageCircle2 font-size="20" />
                 </button>
@@ -116,25 +125,25 @@
             {searchActive}
             hasCloseChat={$hideActionBarStoreBecauseOfChatBar}
             hasSearch={$chatStatusStore !== "OFFLINE" && !isInSpecificDiscussion}
-            on:toggleSearch={handleToggleSearch}
+            matrixChatConnection={hasMatrixChatCapabilities(chat) ? chat : undefined}
+            onToggleSearch={handleToggleSearch}
         />
-        <!-- Ici j'ai le bouton qui s'affiche pour chercher des utilisateurs ou des chats -->
     </div>
     <!-- searchbar -->
     {#if searchActive && $chatStatusStore !== "OFFLINE"}
         {#await userProviderMergerPromise}
-            <div />
+            <div></div>
         {:then userProviderMerger}
             <div class="absolute w-full h-full z-40 right-0 top-0 bg-contrast/30">
                 <input
                     autocomplete="new-password"
                     class="wa-searchbar block text-white placeholder:text-white/50 w-full placeholder:text-sm border-none pl-6 pr-20 bg-transparent py-3 text-base h-full"
                     placeholder={$navChat.key === "users" ? $LL.chat.searchUser() : $LL.chat.searchChat()}
-                    on:keydown={handleKeyDown}
-                    on:keyup={() => handleKeyUp(userProviderMerger)}
+                    onkeydown={handleKeyDown}
+                    onkeyup={() => handleKeyUp(userProviderMerger)}
                     bind:value={$chatSearchBarValue}
-                    on:focusin={focusChatInput}
-                    on:focusout={unfocusChatInput}
+                    onfocusin={focusChatInput}
+                    onfocusout={unfocusChatInput}
                 />
                 {#if searchLoader}
                     <div class="absolute right-4 top-1/2 transform -translate-y-1/2">

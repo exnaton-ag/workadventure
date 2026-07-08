@@ -1,19 +1,23 @@
 <script lang="ts">
     import { AvailabilityStatus } from "@workadventure/messages";
     import { resetAllStatusStoreExcept } from "../../../Rules/StatusRules/statusChangerFunctions";
-    import { RequestedStatus } from "../../../Rules/StatusRules/statusRules";
-    import CheckIcon from "../../Icons/CheckIcon.svelte";
+    import type { RequestedStatus } from "../../../Rules/StatusRules/statusRules";
     import { availabilityStatusStore } from "../../../Stores/MediaStore";
     import { getColorHexOfStatus, getStatusLabel } from "../../../Utils/AvailabilityStatus";
     import LL from "../../../../i18n/i18n-svelte";
     import ExternalComponents from "../../ExternalModules/ExternalComponents.svelte";
     import HeaderMenuItem from "../MenuIcons/HeaderMenuItem.svelte";
     import { openedMenuStore } from "../../../Stores/MenuStore";
-    import { StatusInformationInterface } from "./Interfaces/AvailabilityStatusPropsInterface";
+    import type { StatusInformationInterface } from "./Interfaces/AvailabilityStatusPropsInterface";
     import AvailabilityStatusCircle from "./AvailabilityStatusCircle.svelte";
+    import { IconCheck } from "@wa-icons";
 
-    export let statusInformation: Array<StatusInformationInterface>;
-    export let align: "end" | "start" = "start";
+    interface Props {
+        statusInformation: Array<StatusInformationInterface>;
+        align?: "end" | "start";
+    }
+
+    let { statusInformation, align = "start" }: Props = $props();
 
     const handleKeyPress = (e: KeyboardEvent, newStatus: RequestedStatus | AvailabilityStatus.ONLINE | null) => {
         if (newStatus === AvailabilityStatus.ONLINE) newStatus = null;
@@ -34,7 +38,7 @@
 
     <HeaderMenuItem label={$LL.actionbar.listStatusTitle.enable()} />
     <!-- Some status (silent, in a meeting...) are locking the status bar to only one option -->
-    {#if [AvailabilityStatus.SPEAKER, AvailabilityStatus.JITSI, AvailabilityStatus.LIVEKIT, AvailabilityStatus.BBB, AvailabilityStatus.DENY_PROXIMITY_MEETING, AvailabilityStatus.SILENT].includes($availabilityStatusStore)}
+    {#if [AvailabilityStatus.LISTENER, AvailabilityStatus.SPEAKER, AvailabilityStatus.JITSI, AvailabilityStatus.LIVEKIT, AvailabilityStatus.BBB, AvailabilityStatus.DENY_PROXIMITY_MEETING, AvailabilityStatus.SILENT].includes($availabilityStatusStore)}
         <button
             class="status-button group flex px-2 py-1 gap-2 items-center transition-all cursor-pointer text-sm text-neutral-100 w-full pointer-events-auto text-start rounded active:outline-none focus:outline-none"
         >
@@ -44,7 +48,7 @@
                 colorHex={getColorHexOfStatus($availabilityStatusStore)}
             />
             <div class="grow text-start leading-4 opacity-50">{getStatusLabel($availabilityStatusStore)}</div>
-            <CheckIcon height="h-4" width="h-4" classList="transition-all" />
+            <IconCheck class="text-white transition-all" />
         </button>
     {:else}
         {#each statusInformation as statusInformationValue (statusInformationValue.AvailabilityStatus)}
@@ -52,10 +56,13 @@
                 class="status-button group flex px-2 py-1 gap-2 items-center transition-all cursor-pointer text-sm text-neutral-100 w-full pointer-events-auto text-start rounded active:outline-none focus:outline-none"
                 class:justify-end={align === "end"}
                 class:disabled={$availabilityStatusStore === statusInformationValue.AvailabilityStatus}
-                on:keyup={(e) => {
+                onkeyup={(e) => {
                     handleKeyPress(e, statusInformationValue.AvailabilityStatus);
                 }}
-                on:click|stopPropagation={() => handleClick(statusInformationValue.AvailabilityStatus)}
+                onclick={(event) => {
+                    event.stopPropagation();
+                    handleClick(statusInformationValue.AvailabilityStatus);
+                }}
             >
                 <AvailabilityStatusCircle
                     cursorType="pointer"
@@ -70,12 +77,10 @@
                 >
                     {statusInformationValue.label}
                 </div>
-                <CheckIcon
-                    height="h-4"
-                    width="h-4"
-                    classList={($availabilityStatusStore !== statusInformationValue.AvailabilityStatus
-                        ? "opacity-0 "
-                        : "") + "group-hover:opacity-100 transition-all"}
+                <IconCheck
+                    class="text-white {($availabilityStatusStore !== statusInformationValue.AvailabilityStatus
+                        ? 'opacity-0 '
+                        : '') + 'group-hover:opacity-100 transition-all'}"
                 />
             </button>
         {/each}

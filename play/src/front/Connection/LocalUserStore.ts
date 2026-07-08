@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { PEER_SCREEN_SHARE_RECOMMENDED_BANDWIDTH, PEER_VIDEO_RECOMMENDED_BANDWIDTH } from "../Enum/EnvironmentVariable";
-import { arrayEmoji, Emoji } from "../Stores/Utils/emojiSchema";
-import { RequestedStatus } from "../Rules/StatusRules/statusRules";
+import type { Emoji } from "../Stores/Utils/emojiSchema";
+import { arrayEmoji } from "../Stores/Utils/emojiSchema";
+import type { RequestedStatus } from "../Rules/StatusRules/statusRules";
 import { requestedStatusFactory } from "../Rules/StatusRules/StatusFactory/RequestedStatusFactory";
 import { INITIAL_SIDEBAR_WIDTH } from "../Stores/ChatStore";
 import type { LocalUser } from "./LocalUser";
@@ -23,6 +23,7 @@ const forceCowebsiteTriggerKey = "forceCowebsiteTrigger";
 const ignoreFollowRequests = "ignoreFollowRequests";
 const decreaseAudioPlayerVolumeWhileTalking = "decreaseAudioPlayerVolumeWhileTalking";
 const disableAnimations = "disableAnimations";
+const displayVideoQualityStats = "displayVideoQualityStats";
 const lastRoomUrl = "lastRoomUrl";
 const authToken = "authToken";
 const notification = "notificationPermission";
@@ -36,6 +37,7 @@ const cameraPrivacySettings = "cameraPrivacySettings";
 const microphonePrivacySettings = "microphonePrivacySettings";
 const emojiFavorite = "emojiFavorite";
 const speakerDeviceId = "speakerDeviceId";
+const ignoredNewMediaDeviceIdsKey = "ignoredNewMediaDeviceIds";
 const matrixUserId = "matrixUserId";
 const matrixAccessToken = "matrixAccessToken";
 const matrixAccessTokenExpireDate = "matrixAccessTokenExpireDate";
@@ -44,14 +46,33 @@ const matrixDeviceId = "matrixDeviceId";
 const matrixLoginToken = "matrixLoginToken";
 const requestedStatus = "RequestedStatus";
 const matrixGuest = "matrixGuest";
+const pwaInstallPromptShownKey = "workadventure_pwa_install_prompt_shown";
 const volumeProximityDiscussion = "volumeProximityDiscussion";
 const foldersOpened = "foldersOpened";
+const ignoredSuggestedRoomIdsKey = "ignoredSuggestedRoomIds";
 const cameraContainerHeightKey = "cameraContainerHeight";
 const chatSideBarWidthKey = "chatSideBarWidth";
 const mapEditorSideBarWidthKey = "mapEditorSideBarWidthKey";
 const bubbleSound = "bubbleSound";
-
+const notAskAgainHelpWebRtcSettingsPopup = "notAskAgainHelpWebRtcSettingsPopup";
+const duplicateUserDontRemindKey = "workadventure_duplicate_user_dont_remind";
+const recordingsViewMode = "wa-recordings-view-mode";
+export const languageKey = "language";
+const videoQualityKey = "videoQuality";
+const screenShareQualityKey = "screenShareQuality";
+const bandwidthConstrainedScreenSharePreferenceKey = "bandwidthConstrainedScreenSharePreference";
+const legacyVideoBandwidthKey = "videoBandwidth";
+const legacyScreenShareBandwidthKey = "screenShareBandwidth";
+const noiseSuppressionEnabledKey = "noiseSuppressionEnabled";
+const noiseSuppressionProviderKey = "noiseSuppressionProvider";
+const microphoneAutoGainControlKey = "microphoneAutoGainControl";
+const microphoneEchoCancellationKey = "microphoneEchoCancellation";
+const microphoneBrowserNoiseSuppressionKey = "microphoneBrowserNoiseSuppression";
 const INITIAL_MAP_EDITOR_SIDEBAR_WIDTH = 448;
+
+export type VideoQualitySetting = "low" | "recommended" | "high";
+export type BandwidthConstrainedPreference = "maintain-framerate" | "maintain-resolution" | "balanced";
+export type NoiseSuppressionProvider = "workadventure" | "voiceIsolation";
 
 const JwtAuthToken = z
     .object({
@@ -71,6 +92,49 @@ interface PlayerVariable {
 class LocalUserStore {
     private jwt: JwtAuthToken | undefined;
     private name: string | undefined;
+    /** Last in-session display name (from {@link #setName} or {@link #notifyPlayerDisplayNameChanged}). */
+    private latestSessionDisplayName: string | undefined;
+    private displayNameListeners = new Set<(name: string) => void>();
+
+    private emitDisplayNameListeners(name: string): void {
+        for (const listener of this.displayNameListeners) {
+            try {
+                listener(name);
+            } catch (e) {
+                console.error("LocalUserStore displayName listener", e);
+            }
+        }
+    }
+
+    /**
+     * Subscribe to display name changes (persisted name via {@link #setName} or session updates via
+     * {@link #notifyPlayerDisplayNameChanged}).
+     */
+    subscribeDisplayNameChange(listener: (name: string) => void): () => void {
+        this.displayNameListeners.add(listener);
+        return () => {
+            this.displayNameListeners.delete(listener);
+        };
+    }
+
+    /**
+     * Notifies display name listeners without persisting to localStorage (e.g. when the name is set
+     * on the game manager only after a successful server-side save).
+     */
+    notifyPlayerDisplayNameChanged(name: string): void {
+        const trimmed = name.trim();
+        this.latestSessionDisplayName = trimmed;
+        this.emitDisplayNameListeners(trimmed);
+    }
+
+    /**
+     * Effective display name for Matrix profile sync: in-session name (including OpenID / API flows
+     * that only update the game manager) or persisted {@link #getName}.
+     */
+    getDisplayNameForMatrixProfile(): string | undefined {
+        const s = this.latestSessionDisplayName?.trim() || this.getName()?.trim();
+        return s || undefined;
+    }
 
     saveUser(localUser: LocalUser) {
         localStorage.setItem("localUser", JSON.stringify(localUser));
@@ -83,7 +147,9 @@ class LocalUserStore {
 
     setName(name: string): void {
         this.name = name;
+        this.latestSessionDisplayName = name.trim();
         localStorage.setItem(playerNameKey, name);
+        this.emitDisplayNameListeners(name);
     }
 
     getName(): string | null {
@@ -177,6 +243,50 @@ class LocalUserStore {
         return localStorage.getItem(helpCameraSettingsShown) === "1";
     }
 
+    setNotAskAgainHelpWebRtcSettingsPopup(value: boolean): void {
+        localStorage.setItem(notAskAgainHelpWebRtcSettingsPopup, value.toString());
+    }
+
+    getNotAskAgainHelpWebRtcSettingsPopup(): boolean {
+        return localStorage.getItem(notAskAgainHelpWebRtcSettingsPopup) === "true";
+    }
+
+    setDuplicateUserDontRemind(value: boolean): void {
+        localStorage.setItem(duplicateUserDontRemindKey, value ? "1" : "0");
+    }
+
+    getDuplicateUserDontRemind(): boolean {
+        return localStorage.getItem(duplicateUserDontRemindKey) === "1";
+    }
+
+    setRecordingsViewMode(value: "list" | "card"): void {
+        localStorage.setItem(recordingsViewMode, value);
+    }
+
+    getRecordingsViewMode(): string | null {
+        return localStorage.getItem(recordingsViewMode);
+    }
+
+    setLanguage(value: string): void {
+        localStorage.setItem(languageKey, value);
+    }
+
+    getLanguage(): string | null {
+        return localStorage.getItem(languageKey);
+    }
+
+    hasPwaInstallPromptBeenShown(): boolean {
+        return localStorage.getItem(pwaInstallPromptShownKey) === "1";
+    }
+
+    setPwaInstallPromptShown(): void {
+        localStorage.setItem(pwaInstallPromptShownKey, "1");
+    }
+
+    clearPwaInstallPromptShown(): void {
+        localStorage.removeItem(pwaInstallPromptShownKey);
+    }
+
     setFullscreen(value: boolean): void {
         localStorage.setItem(fullscreenKey, value.toString());
     }
@@ -219,6 +329,14 @@ class LocalUserStore {
     }
     getDisableAnimations(): boolean {
         return localStorage.getItem(disableAnimations) === "true";
+    }
+
+    setDisplayVideoQualityStats(value: boolean): void {
+        localStorage.setItem(displayVideoQualityStats, value.toString());
+    }
+
+    getDisplayVideoQualityStats(): boolean {
+        return localStorage.getItem(displayVideoQualityStats) === "true";
     }
 
     async setLastRoomUrl(roomUrl: string): Promise<void> {
@@ -278,7 +396,7 @@ class LocalUserStore {
                 .map(function (c) {
                     return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
                 })
-                .join("")
+                .join(""),
         );
 
         return JSON.parse(jsonPayload);
@@ -343,6 +461,35 @@ class LocalUserStore {
         this.setFoldersOpened(folders);
     }
 
+    getIgnoredSuggestedRoomIds(): Set<string> {
+        try {
+            const raw = localStorage.getItem(ignoredSuggestedRoomIdsKey);
+            if (!raw) {
+                return new Set();
+            }
+            const parsed = JSON.parse(raw) as unknown;
+            if (!Array.isArray(parsed)) {
+                return new Set();
+            }
+            return new Set(parsed.filter((id): id is string => typeof id === "string" && id.length > 0));
+        } catch {
+            return new Set();
+        }
+    }
+
+    addIgnoredSuggestedRoom(roomId: string): void {
+        if (!roomId) {
+            return;
+        }
+        const set = this.getIgnoredSuggestedRoomIds();
+        set.add(roomId);
+        localStorage.setItem(ignoredSuggestedRoomIdsKey, JSON.stringify([...set]));
+    }
+
+    clearIgnoredSuggestedRoomIds(): void {
+        localStorage.removeItem(ignoredSuggestedRoomIdsKey);
+    }
+
     setPreferredVideoInputDevice(deviceId?: string) {
         if (deviceId === undefined) {
             localStorage.removeItem(preferredVideoInputDevice);
@@ -379,6 +526,31 @@ class LocalUserStore {
         }
 
         return deviceId;
+    }
+
+    getIgnoredNewMediaDeviceIds(): Set<string> {
+        try {
+            const raw = localStorage.getItem(ignoredNewMediaDeviceIdsKey);
+            if (!raw) {
+                return new Set();
+            }
+            const parsed = JSON.parse(raw) as unknown;
+            if (!Array.isArray(parsed)) {
+                return new Set();
+            }
+            return new Set(parsed.filter((id): id is string => typeof id === "string" && id.length > 0));
+        } catch {
+            return new Set();
+        }
+    }
+
+    addIgnoredNewMediaDeviceId(deviceId: string): void {
+        if (!deviceId) {
+            return;
+        }
+        const set = this.getIgnoredNewMediaDeviceIds();
+        set.add(deviceId);
+        localStorage.setItem(ignoredNewMediaDeviceIdsKey, JSON.stringify([...set]));
     }
 
     setCameraPrivacySettings(option: boolean) {
@@ -421,7 +593,7 @@ class LocalUserStore {
                         if (isPublicStr === undefined || value === undefined) {
                             console.error(
                                 'Invalid value stored in Redis. Expecting the value to be in the "ttl:0|1:value" format. Got: ',
-                                storedValue
+                                storedValue,
                             );
                             continue;
                         }
@@ -457,7 +629,7 @@ class LocalUserStore {
                         } catch (err) {
                             console.info(
                                 "getAllUserProperties => value cannot be parsed to JSON, undefined returned.",
-                                err
+                                err,
                             );
                             valueReturned = undefined;
                         }
@@ -477,7 +649,7 @@ class LocalUserStore {
         value: unknown,
         context: string,
         isPublic: boolean,
-        expire: number | undefined
+        expire: number | undefined,
     ): void {
         const key = userProperties + "_" + context + "__|__" + name;
 
@@ -525,40 +697,84 @@ class LocalUserStore {
         return localStorage.getItem(speakerDeviceId);
     }
 
-    setVideoBandwidth(value: number | "unlimited") {
-        localStorage.setItem("videoBandwidth", value.toString());
+    setVideoQuality(value: VideoQualitySetting) {
+        localStorage.setItem(videoQualityKey, value);
     }
 
-    getVideoBandwidth(): number | "unlimited" {
-        const value = localStorage.getItem("videoBandwidth");
+    getVideoQuality(): VideoQualitySetting {
+        const value = localStorage.getItem(videoQualityKey);
 
-        if (!value) {
-            return PEER_VIDEO_RECOMMENDED_BANDWIDTH;
-        }
-
-        if (value === "unlimited") {
+        if (value === "low" || value === "recommended" || value === "high") {
             return value;
         }
 
-        return parseInt(value);
-    }
-
-    setScreenShareBandwidth(value: number | "unlimited") {
-        localStorage.setItem("screenShareBandwidth", value.toString());
-    }
-
-    getScreenShareBandwidth(): number | "unlimited" {
-        const value = localStorage.getItem("screenShareBandwidth");
-
-        if (!value) {
-            return PEER_SCREEN_SHARE_RECOMMENDED_BANDWIDTH;
+        const legacyValue = localStorage.getItem(legacyVideoBandwidthKey);
+        if (legacyValue) {
+            let derivedQuality: VideoQualitySetting = "recommended";
+            if (legacyValue === "unlimited") {
+                derivedQuality = "high";
+            } else {
+                const parsed = Number.parseInt(legacyValue, 10);
+                if (!Number.isNaN(parsed)) {
+                    if (parsed <= 150) {
+                        derivedQuality = "low";
+                    } else if (parsed >= 1000) {
+                        derivedQuality = "high";
+                    }
+                }
+            }
+            localStorage.setItem(videoQualityKey, derivedQuality);
+            return derivedQuality;
         }
 
-        if (value === "unlimited") {
+        return "recommended";
+    }
+
+    setScreenShareQuality(value: VideoQualitySetting) {
+        localStorage.setItem(screenShareQualityKey, value);
+    }
+
+    getScreenShareQuality(): VideoQualitySetting {
+        const value = localStorage.getItem(screenShareQualityKey);
+
+        if (value === "low" || value === "recommended" || value === "high") {
             return value;
         }
 
-        return parseInt(value);
+        const legacyValue = localStorage.getItem(legacyScreenShareBandwidthKey);
+        if (legacyValue) {
+            let derivedQuality: VideoQualitySetting = "recommended";
+            if (legacyValue === "unlimited") {
+                derivedQuality = "high";
+            } else {
+                const parsed = Number.parseInt(legacyValue, 10);
+                if (!Number.isNaN(parsed)) {
+                    if (parsed <= 250) {
+                        derivedQuality = "low";
+                    } else if (parsed >= 1500) {
+                        derivedQuality = "high";
+                    }
+                }
+            }
+            localStorage.setItem(screenShareQualityKey, derivedQuality);
+            return derivedQuality;
+        }
+
+        return "recommended";
+    }
+
+    setBandwidthConstrainedScreenSharePreference(value: BandwidthConstrainedPreference) {
+        localStorage.setItem(bandwidthConstrainedScreenSharePreferenceKey, value);
+    }
+
+    getBandwidthConstrainedScreenSharePreference(): BandwidthConstrainedPreference {
+        const value = localStorage.getItem(bandwidthConstrainedScreenSharePreferenceKey);
+
+        if (value === "maintain-framerate" || value === "maintain-resolution" || value === "balanced") {
+            return value;
+        }
+
+        return "maintain-resolution";
     }
 
     // Background transformation settings
@@ -593,6 +809,55 @@ class LocalUserStore {
 
     getBackgroundVideo(): string | null {
         return localStorage.getItem("backgroundVideo");
+    }
+
+    setNoiseSuppressionEnabled(value: boolean) {
+        localStorage.setItem(noiseSuppressionEnabledKey, value.toString());
+    }
+
+    getNoiseSuppressionEnabled(): boolean {
+        if (localStorage.getItem(noiseSuppressionProviderKey) === "browser") {
+            localStorage.setItem(noiseSuppressionEnabledKey, "false");
+            localStorage.setItem(noiseSuppressionProviderKey, "workadventure");
+            return false;
+        }
+        return localStorage.getItem(noiseSuppressionEnabledKey) === "true";
+    }
+
+    setNoiseSuppressionProvider(value: NoiseSuppressionProvider) {
+        localStorage.setItem(noiseSuppressionProviderKey, value);
+    }
+
+    getNoiseSuppressionProvider(): NoiseSuppressionProvider {
+        const value = localStorage.getItem(noiseSuppressionProviderKey);
+        if (value === "voiceIsolation" || value === "workadventure") {
+            return value;
+        }
+        return "workadventure";
+    }
+
+    setMicrophoneAutoGainControl(value: boolean) {
+        localStorage.setItem(microphoneAutoGainControlKey, value.toString());
+    }
+
+    getMicrophoneAutoGainControl(): boolean {
+        return localStorage.getItem(microphoneAutoGainControlKey) !== "false";
+    }
+
+    setMicrophoneEchoCancellation(value: boolean) {
+        localStorage.setItem(microphoneEchoCancellationKey, value.toString());
+    }
+
+    getMicrophoneEchoCancellation(): boolean {
+        return localStorage.getItem(microphoneEchoCancellationKey) !== "false";
+    }
+
+    setMicrophoneBrowserNoiseSuppression(value: boolean) {
+        localStorage.setItem(microphoneBrowserNoiseSuppressionKey, value.toString());
+    }
+
+    getMicrophoneBrowserNoiseSuppression(): boolean {
+        return localStorage.getItem(microphoneBrowserNoiseSuppressionKey) !== "false";
     }
 
     getRequestedStatus(): RequestedStatus | null {

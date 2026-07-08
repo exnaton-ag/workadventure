@@ -1,31 +1,33 @@
-import * as fs from "fs";
-import path from "node:path";
+import fs from "fs";
+import path from "path";
 import { z, ZodError } from "zod";
-import { Express, Request } from "express";
+import type { Express, Request } from "express";
 import multer from "multer";
-import pLimit, { LimitFunction } from "p-limit";
-import archiver from "archiver";
-import * as unzipper from "unzipper";
-import * as jsonpatch from "fast-json-patch";
-import { MapValidator, OrganizedErrors } from "@workadventure/map-editor/src/GameMap/MapValidator";
+import type { LimitFunction } from "p-limit";
+import pLimit from "p-limit";
+import ZipStream from "zip-stream";
+import { type File, type CentralDirectory, Open as UnzipperOpen } from "unzipper";
+import jsonpatch from "fast-json-patch";
+import type { Operation } from "fast-json-patch";
+import type { OrganizedErrors } from "@workadventure/map-editor/src/GameMap/MapValidator";
+import { MapValidator } from "@workadventure/map-editor/src/GameMap/MapValidator";
 import { WAMFileFormat } from "@workadventure/map-editor";
 import { ZipFileFetcher } from "@workadventure/map-editor/src/GameMap/Validator/ZipFileFetcher";
 import { HttpFileFetcher } from "@workadventure/map-editor/src/GameMap/Validator/HttpFileFetcher";
 import { wamFileMigration } from "@workadventure/map-editor/src/Migrations/WamFileMigration";
-import { Operation } from "fast-json-patch";
 import { generateErrorMessage } from "zod-error";
 import * as Sentry from "@sentry/node";
 import bodyParser from "body-parser";
-import { ITiledMap } from "@workadventure/tiled-map-type-guard";
+import type { ITiledMap } from "@workadventure/tiled-map-type-guard";
 import axios from "axios";
 import { mapPath } from "../Services/PathMapper";
 import { ENTITY_COLLECTION_URLS, MAX_UNCOMPRESSED_SIZE, WAM_TEMPLATE_URL } from "../Enum/EnvironmentVariable";
 import { passportAuthenticator } from "../Services/Authentication";
 import { uploadDetector } from "../Services/UploadDetector";
-import { MapListService } from "../Services/MapListService";
+import type { MapListService } from "../Services/MapListService";
 import { mapsManager } from "../MapsManager";
 import { _axios } from "../Services/axiosInstance";
-import { FileSystemInterface } from "./FileSystemInterface";
+import type { FileSystemInterface } from "./FileSystemInterface";
 import { FileNotFoundError } from "./FileNotFoundError";
 
 const limit = pLimit(10);
@@ -45,7 +47,11 @@ export class UploadController {
      */
     private uploadLimiter: Map<string, LimitFunction>;
 
-    constructor(private app: Express, private fileSystem: FileSystemInterface, private mapListService: MapListService) {
+    constructor(
+        private app: Express,
+        private fileSystem: FileSystemInterface,
+        private mapListService: MapListService,
+    ) {
         this.uploadLimiter = new Map<string, LimitFunction>();
         this.index();
         this.postUpload();
@@ -99,9 +105,9 @@ export class UploadController {
 
                 await limiter(async () => {
                     // Read the contents of the ZIP archive
-                    const zipDirectory = await unzipper.Open.file(zipFile.path);
+                    const zipDirectory = await UnzipperOpen.file(zipFile.path);
                     const zipEntries = zipDirectory.files.filter(
-                        (zipEntry) => zipEntry.type !== "Directory" && this.filterFile(zipEntry.path)
+                        (zipEntry) => zipEntry.type !== "Directory" && this.filterFile(zipEntry.path),
                     );
 
                     let totalSize = 0;
@@ -113,7 +119,7 @@ export class UploadController {
 
                     if (totalSize > MAX_UNCOMPRESSED_SIZE) {
                         res.status(413).send(
-                            `File too large. Unzipped files should be less than ${MAX_UNCOMPRESSED_SIZE} bytes.`
+                            `File too large. Unzipped files should be less than ${MAX_UNCOMPRESSED_SIZE} bytes.`,
                         );
                         return;
                     }
@@ -302,7 +308,7 @@ export class UploadController {
                     await limiter(async () => {
                         if (file && file.size > MAX_UNCOMPRESSED_SIZE) {
                             res.status(413).send(
-                                `File too large. Files should be less than ${MAX_UNCOMPRESSED_SIZE} bytes.`
+                                `File too large. Files should be less than ${MAX_UNCOMPRESSED_SIZE} bytes.`,
                             );
                             return;
                         }
@@ -320,7 +326,7 @@ export class UploadController {
                                 content = JSON.stringify(req.body);
                             } else {
                                 throw new Error(
-                                    "Unsupported mime-type. Allowed types are application/json and multipart/form-data."
+                                    "Unsupported mime-type. Allowed types are application/json and multipart/form-data.",
                                 );
                             }
                         }
@@ -397,7 +403,7 @@ export class UploadController {
                     Sentry.captureException(e);
                     next(e);
                 });
-            }
+            },
         );
     }
 
@@ -430,7 +436,7 @@ export class UploadController {
                     let errors: Partial<OrganizedErrors> = {};
 
                     const content = WAMFileFormat.parse(
-                        wamFileMigration.migrate(JSON.parse(await this.fileSystem.readFileAsString(virtualPath)))
+                        wamFileMigration.migrate(JSON.parse(await this.fileSystem.readFileAsString(virtualPath))),
                     );
 
                     // Let's make things easy: if "vendor" or "metadata" is not defined, let's add an empty object.
@@ -441,12 +447,37 @@ export class UploadController {
                         content.metadata = {};
                     }
 
-                    const patchedContent = jsonpatch.applyPatch(
-                        content,
-                        req.body as Operation[],
-                        true,
-                        false
-                    ).newDocument;
+                    const operations = req.body as unknown;
+                    if (!Array.isArray(operations)) {
+                        res.status(400).json({
+                            patch: "Invalid patch: expected a JSON-Patch document (an array of operations)",
+                        });
+                        return;
+                    }
+
+                    // `validateOperation = true` makes fast-json-patch validate every operation
+                    // and refuse to resolve a JSON Pointer through an inherited (prototype)
+                    // property, so a patch cannot reach shared, process-wide state instead of the
+                    // map document. `mutateDocument = false` returns a fresh document and leaves
+                    // `content` untouched; prototype modifications are banned by default.
+                    // The operations are entirely client-supplied, so any failure applying them
+                    // (a JsonPatchError, or the prototype-ban TypeError) is a bad request, not a
+                    // server error.
+                    let patchedContent: typeof content;
+                    try {
+                        patchedContent = jsonpatch.applyPatch(
+                            content,
+                            operations as Operation[],
+                            true,
+                            false,
+                        ).newDocument;
+                    } catch (e) {
+                        console.error(`[${new Date().toISOString()}] Failed to apply patch on WAM file:`, e);
+                        res.status(400).json({
+                            patch: e instanceof Error ? e.message : "Invalid patch",
+                        });
+                        return;
+                    }
 
                     const patchedContentString = JSON.stringify(patchedContent);
                     const result = mapValidator.validateWAMFile(patchedContentString);
@@ -487,11 +518,7 @@ export class UploadController {
         });
     }
 
-    private async createWAMFileIfMissing(
-        tmjKey: string,
-        zipEntry: unzipper.File,
-        zip: unzipper.CentralDirectory
-    ): Promise<void> {
+    private async createWAMFileIfMissing(tmjKey: string, zipEntry: File, zip: CentralDirectory): Promise<void> {
         const wamPath = tmjKey.slice().replace(".tmj", ".wam");
         if (!(await this.fileSystem.exist(wamPath))) {
             // Get the content of the file as a string
@@ -502,7 +529,7 @@ export class UploadController {
             const tmjContent = JSON.parse(tmjString) as ITiledMap;
             await this.fileSystem.writeStringAsFile(
                 wamPath,
-                JSON.stringify(await this.getFreshWAMFileContent(`./${path.basename(tmjKey)}`, tmjContent), null, 4)
+                JSON.stringify(await this.getFreshWAMFileContent(`./${path.basename(tmjKey)}`, tmjContent), null, 4),
             );
         }
     }
@@ -609,34 +636,37 @@ export class UploadController {
 
                 res.attachment(archiveName);
 
-                const archive = archiver("zip", {
+                const archive = new ZipStream({
                     zlib: { level: 9 }, // Sets the compression level.
-                });
-
-                // good practice to catch warnings (ie stat failures and other non-blocking errors)
-                archive.on("warning", function (err) {
-                    if (err.code === "ENOENT") {
-                        // log warning
-                        console.warn(`[${new Date().toISOString()}] File not found: `, err);
-                    } else {
-                        console.error(`[${new Date().toISOString()}] A warning occurred while Zipping file: `, err);
-                        Sentry.captureException(`A warning occurred while Zipping file: ${JSON.stringify(err)}`);
-                    }
                 });
 
                 // good practice to catch this error explicitly
                 archive.on("error", function (err) {
                     console.error(`[${new Date().toISOString()}] An error occurred while Zipping file: `, err);
-                    Sentry.captureException(`An error occurred while Zipping file: ${JSON.stringify(err)}`);
+                    Sentry.captureException(err);
                     res.status(500).send("An error occurred");
                 });
 
                 // pipe archive data to the file
                 archive.pipe(res);
 
+                // If the client disconnects before the archive is fully sent, destroy the
+                // archive so archiveDirectory() stops fetching S3 objects and releases any
+                // in-flight S3 response streams. Otherwise their sockets leak from the S3
+                // connection pool and eventually exhaust it (maxSockets).
+                res.on("close", () => {
+                    if (!res.writableFinished) {
+                        archive.destroy();
+                    }
+                });
+
                 await this.fileSystem.archiveDirectory(archive, virtualDirectory);
 
-                await archive.finalize();
+                // If the client disconnected, the archive was already destroyed above; calling
+                // finalize() on it would write to a destroyed stream and emit a spurious error.
+                if (!archive.destroyed) {
+                    archive.finalize();
+                }
             })().catch((e) => {
                 console.error(`[${new Date().toISOString()}]`, e);
                 Sentry.captureException(e);
@@ -661,8 +691,8 @@ export class UploadController {
                 const isWamFile = filePath.endsWith(".wam");
 
                 if (isWamFile) {
-                    const gameMap = await mapsManager.getOrLoadGameMap(virtualPath);
-                    const areas = gameMap.getGameMapAreas()?.getAreas().values();
+                    const wamFile = await mapsManager.getOrLoadWamFile(virtualPath);
+                    const areas = wamFile.getGameMapAreas().getAreas().values();
 
                     if (areas) {
                         const promises = Array.from(areas).reduce((acc, currArea) => {
@@ -680,24 +710,24 @@ export class UploadController {
                         } catch (error) {
                             console.error(
                                 `[${new Date().toISOString()}] Failed to execute all request on resourceUrl`,
-                                error
+                                error,
                             );
                         }
                     }
+
+                    mapsManager.clearAfterUpload(virtualPath);
                 }
 
                 await this.fileSystem.deleteFiles(virtualPath);
 
+                await this.mapListService.generateCacheFile(req.hostname);
+
                 if (isWamFile) {
-                    // FIXME: We should call the refresh for all WAM files deleted (in subdirectories too)
-                    uploadDetector.refresh(this.getFullUrlFromRequest(req)).catch((err) => {
+                    await uploadDetector.delete(this.getFullUrlFromRequest(req)).catch((err) => {
                         console.error(`[${new Date().toISOString()}]`, err);
                         Sentry.captureException(err);
                     });
-                    //await this.mapListService.deleteWAMFileInCache(req.hostname, filePath);
                 }
-
-                await this.mapListService.generateCacheFile(req.hostname);
 
                 res.sendStatus(204);
             })().catch((e) => {

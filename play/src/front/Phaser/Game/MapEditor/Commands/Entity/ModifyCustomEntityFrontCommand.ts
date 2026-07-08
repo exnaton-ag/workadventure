@@ -1,17 +1,17 @@
 import { ModifyCustomEntityCommand } from "@workadventure/map-editor";
-import { ModifyCustomEntityMessage } from "@workadventure/messages";
-import { RoomConnection } from "../../../../../Connection/RoomConnection";
-import { FrontCommand } from "../FrontCommand";
-import { EntitiesCollectionsManager } from "../../EntitiesCollectionsManager";
-import { GameMapFrontWrapper } from "../../../GameMap/GameMapFrontWrapper";
-import { EntitiesManager } from "../../../GameMap/EntitiesManager";
+import type { ModifyCustomEntityMessage } from "@workadventure/messages";
+import type { RoomConnection } from "../../../../../Connection/RoomConnection";
+import type { FrontCommand } from "../FrontCommand";
+import type { EntitiesCollectionsManager } from "../../EntitiesCollectionsManager";
+import type { GameMapFrontWrapper } from "../../../GameMap/GameMapFrontWrapper";
+import type { EntitiesManager } from "../../../GameMap/EntitiesManager";
 
 export class ModifyCustomEntityFrontCommand extends ModifyCustomEntityCommand implements FrontCommand {
     constructor(
         modifyCustomEntityMessage: ModifyCustomEntityMessage,
         private entitiesCollectionManager: EntitiesCollectionsManager,
         private gameFrontWrapper: GameMapFrontWrapper,
-        private entitiesManager: EntitiesManager
+        private entitiesManager: EntitiesManager,
     ) {
         super(modifyCustomEntityMessage);
     }

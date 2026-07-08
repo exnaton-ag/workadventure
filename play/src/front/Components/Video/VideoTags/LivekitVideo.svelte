@@ -1,68 +1,58 @@
 <script lang="ts">
-    import { createEventDispatcher, onDestroy } from "svelte";
-    import { Readable } from "svelte/store";
-    import { RemoteVideoTrack } from "livekit-client";
-    import { NoVideoOutputDetector } from "./NoVideoOutputDetector";
+    import { onDestroy } from "svelte";
+    import type { LivekitStreamable } from "../../../Space/Streamable";
+    import InnerLivekitVideo from "./InnerLivekitVideo.svelte";
 
-    export let style: string;
-    export let className: string;
-    export let videoWidth: number;
-    export let videoHeight: number;
-    export let onLoadVideoElement: (event: Event) => void;
-
-    export let remoteVideoTrack: Readable<RemoteVideoTrack | undefined>;
-    let videoElement: HTMLVideoElement;
-    let noVideoOutputDetector: NoVideoOutputDetector | undefined;
-
-    let attachedVideoTrack: RemoteVideoTrack | undefined;
-
-    const dispatch = createEventDispatcher<{
-        video: undefined;
-        noVideo: undefined;
-    }>();
-
-    $: {
-        if ($remoteVideoTrack) {
-            if ($remoteVideoTrack !== attachedVideoTrack) {
-                if (attachedVideoTrack) {
-                    attachedVideoTrack.detach(videoElement);
-                }
-            }
-            attachedVideoTrack = $remoteVideoTrack;
-            attachedVideoTrack.attach(videoElement);
-
-            if (noVideoOutputDetector) {
-                noVideoOutputDetector.destroy();
-            }
-
-            noVideoOutputDetector = new NoVideoOutputDetector(
-                videoElement,
-                () => {
-                    dispatch("noVideo");
-                },
-                () => {
-                    dispatch("video");
-                }
-            );
-        }
+    interface Props {
+        style: string;
+        className: string;
+        videoWidth: number;
+        videoHeight: number;
+        onloadvideoelement?: (event: Event) => void;
+        onvideo?: () => void;
+        onnovideo?: () => void;
+        media: LivekitStreamable;
     }
 
-    onDestroy(() => {
-        if (attachedVideoTrack) {
-            attachedVideoTrack.detach(videoElement);
+    let {
+        style,
+        className,
+        videoWidth = $bindable(),
+        videoHeight = $bindable(),
+        onloadvideoelement,
+        onvideo,
+        onnovideo,
+        media,
+    }: Props = $props();
+
+    let remoteVideoTrack: LivekitStreamable["remoteVideoTrack"] = $derived(media.remoteVideoTrack);
+    let activeMedia: LivekitStreamable | undefined;
+    let releaseVideoSubscription: (() => void) | undefined;
+
+    $effect(() => {
+        if (activeMedia !== media) {
+            releaseVideoSubscription?.();
+            activeMedia = media;
+            releaseVideoSubscription = media.acquireVideoSubscription();
         }
-        noVideoOutputDetector?.destroy();
+    });
+
+    onDestroy(() => {
+        releaseVideoSubscription?.();
     });
 </script>
 
-<video
-    {style}
-    bind:videoWidth
-    bind:videoHeight
-    bind:this={videoElement}
-    on:loadedmetadata={onLoadVideoElement}
-    class={className}
-    autoplay
-    playsinline
-    muted={true}
-/>
+{#if $remoteVideoTrack}
+    {#key $remoteVideoTrack}
+        <InnerLivekitVideo
+            {style}
+            {className}
+            bind:videoWidth
+            bind:videoHeight
+            {onloadvideoelement}
+            remoteVideoTrack={$remoteVideoTrack}
+            {onvideo}
+            {onnovideo}
+        />
+    {/key}
+{/if}

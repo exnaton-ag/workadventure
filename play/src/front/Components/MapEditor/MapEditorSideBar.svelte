@@ -1,73 +1,67 @@
 <script lang="ts">
     import { onDestroy, onMount } from "svelte";
     // import { createPopperActions } from "svelte-popperjs";
-    import { LocalizedString } from "typesafe-i18n";
+    import type { LocalizedString } from "typesafe-i18n";
     import { LL } from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
     import { mapEditorSelectedToolStore, mapEditorVisibilityStore } from "../../Stores/MapEditorStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { mapEditorActivated, mapEditorActivatedForThematics } from "../../Stores/MenuStore";
-    import AreaToolImg from "../images/icon-tool-area.png";
-    import ConfigureImg from "../images/configure.svg";
-    import EntityToolImg from "../images/icon-tool-entity.svg";
-    import TrashImg from "../images/trash.svg";
-    import MagnifyingGlassSvg from "../images/loupe.svg";
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
-    import { IconX } from "@wa-icons";
+    import ArrowBarRight from "../Icons/ArrowBarRight.svelte";
+    import type { WorkAdventureComponent } from "../../../types/component";
+    import { IconX, IconTexture, IconLamp, IconMapSearch, IconSettings, IconTrash } from "@wa-icons";
 
-    const availableTools: { toolName: EditorToolName; img: string; tooltiptext: LocalizedString }[] = [];
-    // $: showTooltip = false;
+    type SideBarTool = {
+        toolName: EditorToolName;
+        iconComponent: WorkAdventureComponent;
+        tooltiptext: LocalizedString;
+    };
 
-    // const [popperRef, popperContent] = createPopperActions({
-    //     placement: "left",
-    //
-    // });
+    const direction = document.documentElement.getAttribute("dir") || "ltr";
 
-    // const extraOpts = {
-    //     modifiers: [
-    //         { name: "offset", options: { offset: [0, 18] } },
-    //     ],
-    // };
-
-    availableTools.push({
+    const exploreTheRoomTool = {
         toolName: EditorToolName.ExploreTheRoom,
-        img: MagnifyingGlassSvg,
+        iconComponent: IconMapSearch,
         tooltiptext: $LL.mapEditor.sideBar.exploreTheRoom(),
-    });
+    };
 
     const entityEditorTool = {
         toolName: EditorToolName.EntityEditor,
-        img: EntityToolImg,
+        iconComponent: IconLamp,
         tooltiptext: $LL.mapEditor.sideBar.entityEditor(),
     };
     const trashEditorTool = {
         toolName: EditorToolName.TrashEditor,
-        img: TrashImg,
+        iconComponent: IconTrash,
         tooltiptext: $LL.mapEditor.sideBar.trashEditor(),
     };
 
-    $: if ($mapEditorActivatedForThematics && !$mapEditorActivated) {
-        availableTools.push(entityEditorTool);
-        availableTools.push(trashEditorTool);
-    }
+    let availableTools = $derived.by<SideBarTool[]>(() => {
+        const tools: SideBarTool[] = [exploreTheRoomTool];
 
-    $: if ($mapEditorActivated && !isMobile) {
-        availableTools.push({
-            toolName: EditorToolName.AreaEditor,
-            img: AreaToolImg,
-            tooltiptext: $LL.mapEditor.sideBar.areaEditor(),
-        });
-        availableTools.push(entityEditorTool);
-        availableTools.push({
-            toolName: EditorToolName.WAMSettingsEditor,
-            img: ConfigureImg,
-            tooltiptext: $LL.mapEditor.sideBar.configureMyRoom(),
-        });
-        availableTools.push(trashEditorTool);
-    }
+        if ($mapEditorActivatedForThematics && !$mapEditorActivated) {
+            tools.push(entityEditorTool, trashEditorTool);
+        }
 
-    // const popperActions = availableTools.map(() => createPopperActions({ placement: "left" }));
+        if ($mapEditorActivated && !isMobile) {
+            tools.push({
+                toolName: EditorToolName.AreaEditor,
+                iconComponent: IconTexture,
+                tooltiptext: $LL.mapEditor.sideBar.areaEditor(),
+            });
+            tools.push(entityEditorTool);
+            tools.push({
+                toolName: EditorToolName.WAMSettingsEditor,
+                iconComponent: IconSettings,
+                tooltiptext: $LL.mapEditor.sideBar.configureMyRoom(),
+            });
+            tools.push(trashEditorTool);
+        }
+
+        return tools;
+    });
 
     function switchTool(newTool: EditorToolName) {
         // The map sidebar is opened when the user clicks on the explorer for the first time.
@@ -81,14 +75,17 @@
         gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(newTool);
     }
 
+    function toggleMapEditor() {
+        mapEditorVisibilityStore.set(!$mapEditorVisibilityStore);
+    }
+
     let sectionSideBarContainer: HTMLElement;
-    let isMobile = isMediaBreakpointUp("md");
+    let isMobile = $state(isMediaBreakpointUp("md"));
     const resizeObserver = new ResizeObserver(() => {
         isMobile = isMediaBreakpointUp("md");
     });
 
     onMount(() => {
-        // showTooltip = true;
         resizeObserver.observe(sectionSideBarContainer);
     });
 
@@ -97,39 +94,6 @@
     });
 </script>
 
-<!--<div-->
-<!--    class="!flex !fixed justify-center !w-full !h-fit bottom-0">-->
-<!--    &lt;!&ndash; svelte-ignore a11y-click-events-have-key-events &ndash;&gt;-->
-<!--    <div-->
-<!--        class="flex items-center !h-fit !w-fit rounded-t-2xl bg-dark-purple/80 backdrop-blur-lg text-white p-4 pt-6 gap-2"-->
-<!--    >-->
-<!--        {#each availableTools as tool (tool.toolName)}-->
-<!--            {#if $mapEditorSelectedToolStore === tool.toolName}-->
-<!--                <img src={tool.img} class="w-fit h-4" alt="open tool {tool.toolName}" />-->
-<!--            {/if}-->
-<!--        {/each}-->
-<!--        {#if $mapEditorSelectedToolStore === EditorToolName.ExploreTheRoom}-->
-<!--            {$LL.mapEditor.sideBar.exploreTheRoomActivated()}-->
-<!--        {:else if $mapEditorSelectedToolStore === EditorToolName.AreaEditor}-->
-<!--            {$LL.mapEditor.sideBar.areaEditorActivated()}-->
-<!--        {:else if $mapEditorSelectedToolStore === EditorToolName.EntityEditor}-->
-<!--            {$LL.mapEditor.sideBar.entityEditorActivated()}-->
-<!--        {:else if $mapEditorSelectedToolStore === EditorToolName.TrashEditor}-->
-<!--            {$LL.mapEditor.sideBar.trashEditorActivated()}-->
-<!--        {:else if $mapEditorSelectedToolStore === EditorToolName.WAMSettingsEditor}-->
-<!--            {$LL.mapEditor.sideBar.configureMyRoomActivated()}-->
-<!--        {:else}-->
-<!--            {$LL.mapEditor.sideBar.mapManagerActivated()}-->
-<!--        {/if}-->
-<!--        <img-->
-<!--            src={CloseImg}-->
-<!--            class="h-4 ml-4 pointer-events-auto cursor-pointer"-->
-<!--            alt={$LL.mapEditor.sideBar.closeMapEditor()}-->
-<!--            on:click|preventDefault={() => switchTool(EditorToolName.CloseMapEditor)}-->
-<!--        />-->
-<!--    </div>-->
-<!--</div>-->
-
 <section
     bind:this={sectionSideBarContainer}
     class="side-bar-container z-[1999] pointer-events-auto"
@@ -137,17 +101,43 @@
 >
     <!--put a section to avoid lower div to be affected by some css-->
     <div class="flex flex-col items-center gap-4 pt-24 side-bar">
-        <div class="close-window p-2 bg-contrast/80 rounded-2xl backdrop-blur-md">
-            <button
-                class="p-3 hover:bg-white/10 rounded aspect-square w-12 m-0"
-                data-testid="closeMapEditorButton"
-                on:click|preventDefault={() => switchTool(EditorToolName.CloseMapEditor)}
-            >
-                <IconX font-size="20" />
-            </button>
+        <div class="flex flex-col gap-1">
+            <div class="close-window p-2 bg-contrast/80 rounded-2xl backdrop-blur-md">
+                <button
+                    class="p-3 hover:bg-white/10 rounded aspect-square w-12 m-0"
+                    data-testid="closeMapEditorButton"
+                    onclick={(event) => {
+                        event.preventDefault();
+                        switchTool(EditorToolName.CloseMapEditor);
+                    }}
+                >
+                    <IconX font-size="20" />
+                </button>
+            </div>
+            <div class="close-window p-2 bg-contrast/80 rounded-2xl backdrop-blur-md">
+                <button
+                    class="p-3 hover:bg-white/10 rounded aspect-square w-12 m-0"
+                    data-testid="hideMapEditorButton"
+                    onclick={(event) => {
+                        event.preventDefault();
+                        toggleMapEditor();
+                    }}
+                >
+                    <ArrowBarRight
+                        height="h-5"
+                        width="w-5"
+                        strokeColor="stroke-white"
+                        fillColor="fill-transparent"
+                        classList={`aspect-ratio transition-all ${direction === "rtl" ? "rotate-180" : ""} ${
+                            $mapEditorVisibilityStore ? "" : "rotate-180"
+                        }`}
+                    />
+                </button>
+            </div>
         </div>
         <div class="p-2 bg-contrast/80 rounded-2xl flex flex-col gap-2 backdrop-blur-md">
             {#each availableTools as tool (tool.toolName)}
+                {@const ToolIcon = tool.iconComponent}
                 <div class="tool-button relative">
                     <button
                         class="peer p-3 aspect-square w-12 rounded {$mapEditorSelectedToolStore === tool.toolName
@@ -155,10 +145,13 @@
                             : 'hover:bg-white/10'}"
                         id={tool.toolName}
                         class:active={$mapEditorSelectedToolStore === tool.toolName}
-                        on:click|preventDefault={() => switchTool(tool.toolName)}
+                        onclick={(event) => {
+                            event.preventDefault();
+                            switchTool(tool.toolName);
+                        }}
                         type="button"
                     >
-                        <img draggable="false" class="h-6 w-6" src={tool.img} alt="open tool {tool.toolName}" />
+                        <ToolIcon font-size="22" />
                     </button>
                     <div
                         class=" bg-contrast/90 backdrop-blur-xl text-white tooltip absolute text-nowrap p-2 invisible opacity-0 transition-all peer-hover:visible peer-hover:opacity-100 rounded top-1/2 -translate-y-1/2 right-[130%]"

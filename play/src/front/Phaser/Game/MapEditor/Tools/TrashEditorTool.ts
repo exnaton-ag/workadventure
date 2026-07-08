@@ -1,21 +1,24 @@
 import type { AreaData } from "@workadventure/map-editor";
-import { EditMapCommandMessage } from "@workadventure/messages";
+import type { EditMapCommandMessage } from "@workadventure/messages";
 import { get } from "svelte/store";
 import { userIsAdminStore, userIsEditorStore } from "../../../../Stores/GameStore";
 import { mapEditorSelectedAreaPreviewStore, mapEditorVisibilityStore } from "../../../../Stores/MapEditorStore";
 import { AreaPreview, AreaPreviewEvent } from "../../../Components/MapEditor/AreaPreview";
 import { SizeAlteringSquare } from "../../../Components/MapEditor/SizeAlteringSquare";
 import { Entity } from "../../../ECS/Entity";
-import { MapEditorModeManager } from "../MapEditorModeManager";
+import type { MapEditorModeManager } from "../MapEditorModeManager";
 import { EntityRelatedEditorTool } from "./EntityRelatedEditorTool";
-import { AreaEditorTool } from "./AreaEditorTool";
+import type { AreaEditorTool } from "./AreaEditorTool";
 
 export class TrashEditorTool extends EntityRelatedEditorTool {
     protected ctrlKey?: Phaser.Input.Keyboard.Key;
     private areaPreviews: AreaPreview[] = [];
     private active = false;
 
-    constructor(mapEditorModeManager: MapEditorModeManager, private areaEditorTool: AreaEditorTool) {
+    constructor(
+        mapEditorModeManager: MapEditorModeManager,
+        private areaEditorTool: AreaEditorTool,
+    ) {
         super(mapEditorModeManager);
 
         this.active = false;
@@ -145,7 +148,7 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
 
     private bindAreaPreviewEventHandlers(areaPreview: AreaPreview): void {
         areaPreview.on(AreaPreviewEvent.Delete, () =>
-            this.areaEditorTool.handleDeleteAreaFrontCommandExecution(areaPreview.getAreaData().id, this)
+            this.areaEditorTool.handleDeleteAreaFrontCommandExecution(areaPreview.getAreaData().id, this),
         );
     }
 
@@ -183,7 +186,7 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
 
     private pointerHoverEventHandler = (
         pointer: Phaser.Input.Pointer,
-        gameObjects: Phaser.GameObjects.GameObject[]
+        gameObjects: Phaser.GameObjects.GameObject[],
     ) => {
         if (!this.active) {
             return;
@@ -219,7 +222,7 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
     }
 
     private getAreaEditorToolObjectsFromGameObjects(
-        gameObjects: Phaser.GameObjects.GameObject[]
+        gameObjects: Phaser.GameObjects.GameObject[],
     ): (AreaPreview | SizeAlteringSquare)[] {
         const areaPreviews = gameObjects.filter((obj) => this.isAreaPreview(obj));
         const sizeAlteringSquares = gameObjects.filter((obj) => this.isSizeAlteringSquare(obj));

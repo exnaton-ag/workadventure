@@ -1,7 +1,7 @@
 export function isIOS(): boolean {
     return (
         ["iPad Simulator", "iPhone Simulator", "iPod Simulator", "iPad", "iPhone", "iPod"].includes(
-            navigator.platform
+            navigator.platform,
         ) ||
         // iPad on iOS 13 detection
         (navigator.userAgent.includes("Mac") && "ontouchend" in document)
@@ -34,4 +34,12 @@ export function isFirefox(): boolean {
 
 export function isSafari(): boolean {
     return getNavigatorType() === NavigatorType.safari;
+}
+
+export function isMac(): boolean {
+    const nav = navigator as Navigator & { userAgentData?: { platform: string } };
+    if (nav.userAgentData?.platform) {
+        return nav.userAgentData.platform === "macOS";
+    }
+    return /Mac/i.test(navigator.userAgent);
 }

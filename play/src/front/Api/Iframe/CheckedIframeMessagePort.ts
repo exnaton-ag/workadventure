@@ -1,11 +1,12 @@
-import { z } from "zod";
-import { Observable, Subject } from "rxjs";
-import {
+import type { z } from "zod";
+import type { Observable } from "rxjs";
+import { Subject } from "rxjs";
+import type {
     IframeMessagePortMap,
-    iframeMessagePortTypeGuards,
     MessagePortIframeEvent,
     MessagePortWorkAdventureEvent,
 } from "../Events/MessagePortEvents";
+import { iframeMessagePortTypeGuards } from "../Events/MessagePortEvents";
 
 type MessagePortMessageEvent<K extends keyof IframeMessagePortMap> = MessageEvent<
     z.infer<MessagePortWorkAdventureEvent<K>["data"]>
@@ -20,7 +21,10 @@ export class CheckedIframeMessagePort<K extends keyof IframeMessagePortMap> {
     private readonly _messages: Subject<MessagePortMessageEvent<K>> = new Subject<MessagePortMessageEvent<K>>();
     public readonly messages: Observable<MessagePortMessageEvent<K>> = this._messages.asObservable();
 
-    constructor(port: MessagePort, private type: K) {
+    constructor(
+        port: MessagePort,
+        private type: K,
+    ) {
         this.port = port;
 
         this.port.onmessage = (event: MessageEvent) => {

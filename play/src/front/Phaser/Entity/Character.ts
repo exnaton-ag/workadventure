@@ -1,42 +1,33 @@
-import type OutlinePipelinePlugin from "phaser3-rex-plugins/plugins/outlinepipeline-plugin.js";
-import { Unsubscriber, get, readable, Readable } from "svelte/store";
-import type CancelablePromise from "cancelable-promise";
-import { Deferred } from "ts-deferred";
-import {
-    AvailabilityStatus as AvailabilityStatusType,
-    SayMessageType,
-    AvailabilityStatus,
-    PositionMessage_Direction,
-} from "@workadventure/messages";
-import { defaultWoka } from "@workadventure/shared-utils";
+import type { Unsubscriber, Readable } from "svelte/store";
+import { get, readable } from "svelte/store";
+import type { CancelablePromise } from "cancelable-promise";
+import type { AvailabilityStatus as AvailabilityStatusType } from "@workadventure/messages";
+import { SayMessageType, AvailabilityStatus, PositionMessage_Direction } from "@workadventure/messages";
+import { defaultWoka, Deferred, type Movable, type PositionInterface } from "@workadventure/shared-utils";
+import { Subject } from "rxjs";
 import { currentPlayerWokaStore } from "../../Stores/CurrentPlayerWokaStore";
-import { PlayerStatusDot } from "../Components/PlayerStatusDot";
-import { TalkIcon } from "../Components/TalkIcon";
 import type { OutlineableInterface } from "../Game/OutlineableInterface";
 import { createColorStore } from "../../Stores/OutlineColorStore";
 import type { PictureStore } from "../../Stores/PictureStore";
 import { TexturesHelper } from "../Helpers/TexturesHelper";
-import { DEPTH_INGAME_TEXT_INDEX } from "../Game/DepthIndexes";
 import type { GameScene } from "../Game/GameScene";
 import { Companion } from "../Companion/Companion";
 import { CharacterTextureError } from "../../Exception/CharacterTextureError";
 import { getPlayerAnimations, PlayerAnimationTypes } from "../Player/Animation";
 import { ProtobufClientUtils } from "../../Network/ProtobufClientUtils";
-import { SpeakerIcon } from "../Components/SpeakerIcon";
-import { MegaphoneIcon } from "../Components/MegaphoneIcon";
-import { StringUtils } from "../../Utils/StringUtils";
+import { WOKA_SPEED } from "../../Enum/EnvironmentVariable";
 
+import { UsernameDisplay } from "../Components/UsernameDisplay";
 import { lazyLoadPlayerCharacterTextures } from "./PlayerTexturesLoadingManager";
 import { SpeechBubble } from "./SpeechBubble";
 import { SpeechDomElement } from "./SpeechDomElement";
 import { ThinkingCloud } from "./ThinkingCloud";
-import Text = Phaser.GameObjects.Text;
 import Container = Phaser.GameObjects.Container;
 import Sprite = Phaser.GameObjects.Sprite;
 import DOMElement = Phaser.GameObjects.DOMElement;
 import RenderTexture = Phaser.GameObjects.RenderTexture;
 
-const playerNameY = -25;
+const playerNameY = -18;
 const interactiveRadius = 25;
 
 export const CHARACTER_BODY_WIDTH = 16;
@@ -44,13 +35,17 @@ export const CHARACTER_BODY_HEIGHT = 16;
 export const CHARACTER_BODY_OFFSET_X = 0;
 export const CHARACTER_BODY_OFFSET_Y = 8;
 
-export abstract class Character extends Container implements OutlineableInterface {
+export const PLAYTEXT_NEW_MEDIA_DEVICE_PREFIX = "playtext-mediadevice-";
+
+export type PathFollowResult = { x: number; y: number; cancelled: boolean };
+
+export abstract class Character extends Container implements OutlineableInterface, Movable {
+    private readonly movedSubject = new Subject<PositionInterface>();
+    public readonly moved$ = this.movedSubject.asObservable();
+
     private bubble: RenderTexture | null | DOMElement = null;
-    private playerNameText: Text | undefined;
-    private readonly talkIcon: TalkIcon;
-    protected readonly statusDot: PlayerStatusDot;
-    protected readonly speakerIcon: SpeakerIcon;
-    protected readonly megaphoneIcon: MegaphoneIcon;
+    private usernameDisplay: UsernameDisplay | undefined;
+    private availabilityStatus: AvailabilityStatusType = AvailabilityStatus.ONLINE;
     public readonly playerName: string;
     public sprites: Map<string, Sprite>;
     protected _lastDirection: PositionMessage_Direction = PositionMessage_Direction.DOWN;
@@ -69,6 +64,14 @@ export abstract class Character extends Container implements OutlineableInterfac
     private outlineColorStoreUnsubscribe: Unsubscriber | undefined;
     private texturePromise: CancelablePromise<string[] | void> | undefined;
     private destroyed = false;
+    protected pathToFollow?: { x: number; y: number }[];
+    protected pathWalkingSpeed?: number;
+    private currentPathSegmentDistanceFromStart = 0;
+    private pathFollowingResolve?: (result: PathFollowResult) => void;
+    private readonly syncDisplayPositionWithPhysics = (): void => {
+        this.setDepthIfNeeded(this.y + 16);
+        this.updateUsernameDisplayPosition();
+    };
 
     /**
      * A deferred promise that resolves when the texture of the character is actually displayed.
@@ -85,8 +88,8 @@ export abstract class Character extends Container implements OutlineableInterfac
         moving: boolean,
         frame: string | number,
         isClickable: boolean,
-        companionTexturePromise: CancelablePromise<string>,
-        userId?: string | null
+        companionTexturePromise: CancelablePromise<string> | undefined,
+        userId?: string | null,
     ) {
         super(scene, x, y /*, texture, frame*/);
         this.scene = scene;
@@ -156,7 +159,7 @@ export abstract class Character extends Container implements OutlineableInterfac
                 this.texturePromise = undefined;
             });
 
-        if (typeof companionTexturePromise !== "undefined") {
+        if (companionTexturePromise != undefined) {
             this.addCompanion(companionTexturePromise);
         }
 
@@ -169,46 +172,23 @@ export abstract class Character extends Container implements OutlineableInterfac
                 return;
             }
 
-            // Todo: Replace the font family with a better one
-            // Use larger font size for non-Latin characters (Arabic, CJK, etc.) for better readability
-            const fontSize = StringUtils.containsNonLatinCharacters(name) ? "11px" : "8px";
-            this.playerNameText = new Text(scene, 0, playerNameY, name, {
-                fontFamily: '"Press Start 2P"',
-                fontSize,
-                strokeThickness: 2,
-                stroke: "#14304C",
-                metrics: {
-                    ascent: 20,
-                    descent: 10,
-                    fontSize: 35,
-                },
-            });
-
-            this.playerNameText.setOrigin(0.5).setDepth(DEPTH_INGAME_TEXT_INDEX);
-            this.add([this.playerNameText]);
-
-            // Reposition status dot and megaphone icon
-            this.statusDot.x = (this.playerNameText.getLeftCenter().x ?? 0) - 6;
-            this.megaphoneIcon.setX((this.playerNameText.getRightCenter().x ?? 0) + 8);
-            this.statusDot.visible = true;
-            this.megaphoneIcon.visible = true;
-
-            scene.getOutlineManager().add(this.playerNameText, () => {
-                return this.getCurrentOutline();
-            });
+            const playerNameOutlineColor = get(this.outlineColorStore);
+            this.usernameDisplay = new UsernameDisplay(
+                scene,
+                this.x,
+                this.y + playerNameY,
+                this.playerName,
+                playerNameOutlineColor,
+            );
+            this.usernameDisplay.setAvailabilityStatus(this.availabilityStatus, true, true);
+            this.usernameDisplay.setPlayerDepth(this.depth);
 
             this.outlineColorStoreUnsubscribe = this.outlineColorStore.subscribe((color) => {
-                this.setOutline(color);
+                this.usernameDisplay?.setPlayerNameOutlineColor(color);
+                this.scene.markDirty();
             });
+            this.scene.markDirty();
         }, 0);
-
-        this.statusDot = new PlayerStatusDot(scene, 0, playerNameY - 1);
-        this.megaphoneIcon = new MegaphoneIcon(scene, 0, playerNameY - 1);
-        this.statusDot.visible = false;
-        this.megaphoneIcon.visible = false;
-        this.talkIcon = new TalkIcon(scene, 0, -45);
-        this.speakerIcon = new SpeakerIcon(scene, 0, -45);
-        this.add([this.talkIcon, this.speakerIcon, this.statusDot, this.megaphoneIcon]);
 
         if (isClickable) {
             this.setInteractive({
@@ -223,12 +203,14 @@ export abstract class Character extends Container implements OutlineableInterfac
         scene.add.existing(this);
 
         this.scene.physics.world.enableBody(this);
-        this.getBody().setImmovable(true);
-        this.getBody().setCollideWorldBounds(true);
+        const body = this.getBody();
+        body.setImmovable(true);
+        body.setCollideWorldBounds(true);
         this.setSize(CHARACTER_BODY_WIDTH, CHARACTER_BODY_HEIGHT);
-        this.getBody().setSize(CHARACTER_BODY_WIDTH, CHARACTER_BODY_HEIGHT); //edit the hitbox to better match the character model
-        this.getBody().setOffset(CHARACTER_BODY_OFFSET_X, CHARACTER_BODY_OFFSET_Y);
-        this.setDepth(this.y + 16);
+        body.setSize(CHARACTER_BODY_WIDTH, CHARACTER_BODY_HEIGHT); //edit the hitbox to better match the character model
+        body.setOffset(CHARACTER_BODY_OFFSET_X, CHARACTER_BODY_OFFSET_Y);
+        this.scene.events.on(Phaser.Scenes.Events.POST_UPDATE, this.syncDisplayPositionWithPhysics);
+        this.setDepthIfNeeded(this.y + 16);
     }
 
     private waitAndGetSnapshot(): Promise<string> {
@@ -261,6 +243,13 @@ export abstract class Character extends Container implements OutlineableInterfac
         });
     }
 
+    private setDepthIfNeeded(depth: number): void {
+        if (this.depth !== depth) {
+            this.setDepth(depth);
+            this.usernameDisplay?.setPlayerDepth(depth);
+        }
+    }
+
     public setClickable(clickable = true): void {
         if (this.clickable === clickable) {
             return;
@@ -281,7 +270,7 @@ export abstract class Character extends Container implements OutlineableInterfac
         return this.clickable;
     }
 
-    public getPosition(): { x: number; y: number } {
+    public getPosition(): PositionInterface {
         return { x: this.x, y: this.y };
     }
 
@@ -325,27 +314,19 @@ export abstract class Character extends Container implements OutlineableInterfac
         });
     }
 
-    public toggleTalk(show = true, forceClose = false): void {
-        if (this.getAvailabilityStatus() === AvailabilityStatus.SPEAKER) {
-            this.talkIcon.show(false, forceClose);
-            this.speakerIcon.show(show, forceClose);
-        } else {
-            this.talkIcon.show(show, forceClose);
-            this.speakerIcon.show(false, forceClose);
-        }
+    public toggleTalk(show = true): void {
+        this.usernameDisplay?.setTalking(show, this.getAvailabilityStatus() === AvailabilityStatus.SPEAKER);
     }
 
     public setAvailabilityStatus(availabilityStatus: AvailabilityStatusType, instant = false): void {
-        this.statusDot.setAvailabilityStatus(availabilityStatus, instant);
-        if (this.getAvailabilityStatus() === AvailabilityStatus.SPEAKER) {
-            this.megaphoneIcon.show(true, false);
-        } else {
-            this.megaphoneIcon.show(false, false);
+        if (availabilityStatus !== AvailabilityStatus.UNCHANGED) {
+            this.availabilityStatus = availabilityStatus;
         }
+        this.usernameDisplay?.setAvailabilityStatus(availabilityStatus, instant, false);
     }
 
     public getAvailabilityStatus() {
-        return this.statusDot.availabilityStatus;
+        return this.usernameDisplay?.getAvailabilityStatus() ?? this.availabilityStatus;
     }
 
     public addCompanion(texturePromise: CancelablePromise<string>): void {
@@ -381,10 +362,6 @@ export abstract class Character extends Container implements OutlineableInterfac
         }
     }
 
-    private getOutlinePlugin(): OutlinePipelinePlugin | undefined {
-        return this.scene.plugins.get("rexOutlinePipeline") as unknown as OutlinePipelinePlugin | undefined;
-    }
-
     protected playAnimation(direction: PositionMessage_Direction, moving: boolean): void {
         if (this.invisible) return;
         for (const [texture, sprite] of this.sprites.entries()) {
@@ -409,9 +386,132 @@ export abstract class Character extends Container implements OutlineableInterfac
         return body;
     }
 
+    protected updateUsernameDisplayPosition(x = this.x, y = this.y): void {
+        this.usernameDisplay?.setPosition(x, y + playerNameY);
+    }
+
+    setPosition(x: number, y: number): this {
+        super.setPosition(Math.round(x), Math.round(y));
+        this.setDepth(this.y + 16);
+        this.usernameDisplay?.setPlayerDepth(this.depth);
+        this.updateUsernameDisplayPosition();
+        this.movedSubject?.next({ x: this.x, y: this.y });
+        return this;
+    }
+
     stop() {
         this.getBody().setVelocity(0, 0);
         this.playAnimation(this._lastDirection, false);
+    }
+
+    protected setPathToFollow(path: { x: number; y: number }[], speed?: number): Promise<PathFollowResult> {
+        const isPreviousPathInProgress = this.isFollowingPath();
+        this.pathToFollow = this.adjustPathToColliderBounds(path);
+        this.pathToFollow.unshift({ x: this.x, y: this.y });
+        this.pathWalkingSpeed = speed;
+        this.currentPathSegmentDistanceFromStart = 0;
+
+        return new Promise((resolve) => {
+            this.pathFollowingResolve?.call(this, { x: this.x, y: this.y, cancelled: isPreviousPathInProgress });
+            this.pathFollowingResolve = resolve;
+        });
+    }
+
+    public finishFollowingPath(cancelled = false): void {
+        this.pathToFollow = undefined;
+        this.pathWalkingSpeed = undefined;
+        this.currentPathSegmentDistanceFromStart = 0;
+        this.stop();
+
+        const resolve = this.pathFollowingResolve;
+        this.pathFollowingResolve = undefined;
+        resolve?.({ x: this.x, y: this.y, cancelled });
+    }
+
+    protected isFollowingPath(): boolean {
+        return this.pathToFollow !== undefined || this.pathFollowingResolve !== undefined;
+    }
+
+    protected getPathWalkingSpeed(): number {
+        return this.pathWalkingSpeed ?? WOKA_SPEED;
+    }
+
+    protected adjustPathToColliderBounds(path: { x: number; y: number }[]): { x: number; y: number }[] {
+        const body = this.getBody();
+        return path.map((step) => ({
+            x: step.x,
+            y: step.y - body.height / 2 - body.offset.y,
+        }));
+    }
+
+    protected followPath(delta: number): void {
+        if (this.pathToFollow !== undefined && this.pathToFollow.length === 1) {
+            this.finishFollowingPath();
+            return;
+        }
+        if (!this.pathToFollow) {
+            return;
+        }
+
+        let segmentStartPos = this.pathToFollow[0];
+        let segmentEndPos = this.pathToFollow[1];
+        let xDistance = segmentEndPos.x - segmentStartPos.x;
+        let yDistance = segmentEndPos.y - segmentStartPos.y;
+        let pathSegmentLength = Math.sqrt(xDistance * xDistance + yDistance * yDistance);
+
+        this.currentPathSegmentDistanceFromStart += (this.getPathWalkingSpeed() * delta * 20) / 1000;
+
+        while (this.currentPathSegmentDistanceFromStart >= pathSegmentLength) {
+            this.currentPathSegmentDistanceFromStart -= pathSegmentLength;
+            this.pathToFollow.shift();
+
+            if (this.pathToFollow.length === 1) {
+                this.setPosition(this.pathToFollow[0].x, this.pathToFollow[0].y);
+                this.finishFollowingPath();
+                return;
+            }
+
+            segmentStartPos = this.pathToFollow[0];
+            segmentEndPos = this.pathToFollow[1];
+            xDistance = segmentEndPos.x - segmentStartPos.x;
+            yDistance = segmentEndPos.y - segmentStartPos.y;
+            pathSegmentLength = Math.sqrt(xDistance * xDistance + yDistance * yDistance);
+        }
+
+        const newX =
+            segmentStartPos.x +
+            (this.currentPathSegmentDistanceFromStart / pathSegmentLength) * (segmentEndPos.x - segmentStartPos.x);
+        const newY =
+            segmentStartPos.y +
+            (this.currentPathSegmentDistanceFromStart / pathSegmentLength) * (segmentEndPos.y - segmentStartPos.y);
+
+        this.moveToPathPosition(newX, newY);
+        this.scene.markDirty();
+    }
+
+    protected moveToPathPosition(x: number, y: number): void {
+        const oldX = this.x;
+        const oldY = this.y;
+        this.setPosition(x, y);
+
+        // In path finding mode, diagonal movement can make x and y deltas almost equal.
+        // Biasing y prevents the animation from flickering between horizontal and vertical directions.
+        if (Math.abs(x - oldX) > Math.abs((y - oldY) * 1.5)) {
+            if (x < oldX) {
+                this._lastDirection = PositionMessage_Direction.LEFT;
+            } else if (x > oldX) {
+                this._lastDirection = PositionMessage_Direction.RIGHT;
+            }
+        } else {
+            if (y < oldY) {
+                this._lastDirection = PositionMessage_Direction.UP;
+            } else if (y > oldY) {
+                this._lastDirection = PositionMessage_Direction.DOWN;
+            }
+        }
+
+        this.playAnimation(this._lastDirection, true);
+        this.companion?.setTarget(this.x, this.y, this._lastDirection);
     }
 
     say(text: string, type: SayMessageType) {
@@ -433,7 +533,7 @@ export abstract class Character extends Container implements OutlineableInterfac
                     this.scene,
                     0,
                     0 - CHARACTER_BODY_HEIGHT / 2 - 50,
-                    speechBubble.getElement()
+                    speechBubble.getElement(),
                 );
                 this.add(this.bubble);
                 break;
@@ -459,8 +559,10 @@ export abstract class Character extends Container implements OutlineableInterfac
     }
 
     destroy(): void {
-        for (const sprite of this.sprites.values()) {
-            if (this.scene) {
+        this.usernameDisplay?.destroy();
+        if (this.scene) {
+            this.scene.events.off(Phaser.Scenes.Events.POST_UPDATE, this.syncDisplayPositionWithPhysics);
+            for (const sprite of this.sprites.values()) {
                 this.scene.sys.updateList.remove(sprite);
             }
         }
@@ -488,12 +590,13 @@ export abstract class Character extends Container implements OutlineableInterfac
         duration = 10000,
         callback = () => this.destroyText(id),
         createStackAnimation = true,
-        type: "warning" | "message" = "message"
+        type: "warning" | "message" = "message",
+        escapeCallback?: () => void,
     ) {
         if (this.texts.has(id)) {
             this.destroyText(id);
         }
-        this.textsToBuild.set(id, { text, duration, callback, type });
+        this.textsToBuild.set(id, { text, duration, callback, type, escapeCallback });
 
         // If there is already one text created, we don't need to create a stack animation
         if (this.texts.size == 1 && createStackAnimation) {
@@ -508,11 +611,17 @@ export abstract class Character extends Container implements OutlineableInterfac
             -1,
             -30 + this.texts.size * 2,
             callback,
-            type
+            type,
+            escapeCallback,
         );
         this.add(speechDomElement);
         this.texts.set(id, speechDomElement);
-        speechDomElement.play(-1, -50 + this.texts.size * 2, duration, (id) => {
+
+        let y = -60 + this.texts.size * 2;
+        if (escapeCallback !== undefined) {
+            y = -70 + this.texts.size * 2;
+        }
+        speechDomElement.play(-1, y, duration, (id) => {
             this.destroyText(id);
         });
     }
@@ -566,24 +675,6 @@ export abstract class Character extends Container implements OutlineableInterfac
         });
     }
 
-    private setOutline(color: number | undefined) {
-        if (!this.playerNameText) {
-            throw new Error("Player name text is not defined when setOuline is called");
-        }
-        if (color === undefined) {
-            this.getOutlinePlugin()?.remove(this.playerNameText);
-        } else {
-            this.getOutlinePlugin()?.remove(this.playerNameText);
-            this.getOutlinePlugin()?.add(this.playerNameText, {
-                thickness: 2,
-                outlineColor: color,
-            });
-        }
-
-        //Using outline quickfix
-        this.scene.refreshSceneForOutline();
-    }
-
     private cancelPreviousEmote() {
         if (!this.emote) return;
 
@@ -620,8 +711,8 @@ export abstract class Character extends Container implements OutlineableInterfac
         // Recreate all texts in the correct order (from the biggest length to the smallest)
         Array.from(this.textsToBuild.entries())
             .sort((a, b) => a[1].text.length - b[1].text.length)
-            .forEach(([id, { text, duration, callback }]) => {
-                this.playText(id, text, duration, callback, false);
+            .forEach(([id, { text, duration, callback, type = "message", escapeCallback }]) => {
+                this.playText(id, text, duration, callback, false, type, escapeCallback);
             });
     }
 
@@ -647,10 +738,12 @@ export abstract class Character extends Container implements OutlineableInterfac
 
     public pointerOverOutline(color: number): void {
         this.outlineColorStore.pointerOver(color);
+        this.usernameDisplay?.setToForeFront(true);
     }
 
     public pointerOutOutline(): void {
         this.outlineColorStore.pointerOut();
+        this.usernameDisplay?.setToForeFront(false);
     }
 
     public characterCloseByOutline(color: number): void {
@@ -659,10 +752,6 @@ export abstract class Character extends Container implements OutlineableInterfac
 
     public characterFarAwayOutline(): void {
         this.outlineColorStore.characterFarAway();
-    }
-
-    private getCurrentOutline(): { thickness: number; color?: number } {
-        return { thickness: 2, color: get(this.outlineColorStore) };
     }
 
     /**
@@ -682,5 +771,40 @@ export abstract class Character extends Container implements OutlineableInterfac
         for (const [, text] of this.texts) {
             (text as SpeechDomElement).callback();
         }
+    }
+
+    /**
+     * Dismisses "new media device" prompts without switching devices, and reports each device id for persistence.
+     * @returns true if at least one prompt was dismissed.
+     */
+    public dismissNewMediaDevicePrompts(onIgnoreDeviceId: (deviceId: string) => void): boolean {
+        let dismissed = false;
+        for (const id of this.texts.keys()) {
+            if (!id.startsWith(PLAYTEXT_NEW_MEDIA_DEVICE_PREFIX)) {
+                continue;
+            }
+            const deviceId = id.slice(PLAYTEXT_NEW_MEDIA_DEVICE_PREFIX.length);
+            if (deviceId) {
+                onIgnoreDeviceId(deviceId);
+            }
+            this.destroyText(id);
+            dismissed = true;
+        }
+        return dismissed;
+    }
+
+    /**
+     * Returns the collision rectangle for this character.
+     * Uses the physics body dimensions and actual position.
+     */
+    public getCollisionRectangle(): { x: number; y: number; width: number; height: number } {
+        const body = this.getBody();
+        // Use body.left and body.top which give the actual world position of the collision box
+        return {
+            x: body.left,
+            y: body.top,
+            width: body.width,
+            height: body.height,
+        };
     }
 }

@@ -1,13 +1,18 @@
-import { ClientEvent, EventType, MatrixClient, PendingEventOrdering, RoomEvent, SyncState } from "matrix-js-sdk";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import type { MatrixClient } from "matrix-js-sdk";
+import { ClientEvent, EventType, PendingEventOrdering, RoomEvent, SyncState } from "matrix-js-sdk";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { KnownMembership } from "matrix-js-sdk/lib/types";
-import { get, readable, Readable, writable } from "svelte/store";
-import { AvailabilityStatus } from "@workadventure/messages";
+import type { Readable } from "svelte/store";
+import { get, readable, writable } from "svelte/store";
+import type { AvailabilityStatus } from "@workadventure/messages";
 import { MatrixChatConnection } from "../MatrixChatConnection";
-import { CreateRoomOptions } from "../../ChatConnection";
-import { MatrixChatRoom } from "../MatrixChatRoom";
-import { MatrixSecurity } from "../MatrixSecurity";
-import { RequestedStatus } from "../../../../Rules/StatusRules/statusRules";
+import { MatrixRoomFolder } from "../MatrixRoomFolder";
+import type { CreateRoomOptions } from "../../ChatConnection";
+import type { MatrixChatRoom } from "../MatrixChatRoom";
+import { MatrixChatRoom as MatrixChatRoomClass } from "../MatrixChatRoom";
+import { selectedRoomStore } from "../../../Stores/SelectRoomStore";
+import type { MatrixSecurity } from "../MatrixSecurity";
+import type { RequestedStatus } from "../../../../Rules/StatusRules/statusRules";
 
 vi.mock("../../../../Phaser/Game/GameManager", () => {
     return {
@@ -27,12 +32,10 @@ vi.mock("../../../../Phaser/Entity/CharacterLayerManager", () => {
     };
 });
 
-vi.mock("../../../../Enum/EnvironmentVariable.ts", () => {
-    return {
-        MATRIX_ADMIN_USER: "admin",
-        MATRIX_DOMAIN: "domain",
-    };
-});
+vi.mock(
+    "../../../../Enum/EnvironmentVariable.ts",
+    () => import("../../../../../../tests/front/mocks/frontEnvironmentVariableMock"),
+);
 
 vi.mock("../../../Stores/ChatStore.ts", () => {
     return {
@@ -41,6 +44,11 @@ vi.mock("../../../Stores/ChatStore.ts", () => {
 });
 describe("MatrixChatConnection", () => {
     const flushPromises = () => new Promise(setImmediate);
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
 
     const basicStatusStore: Readable<
         | AvailabilityStatus.ONLINE
@@ -58,11 +66,12 @@ describe("MatrixChatConnection", () => {
 
     const basicMockMatrixSecurity = {
         isEncryptionRequiredAndNotSet: false,
+        updateMatrixClientStore: vi.fn(),
     } as unknown as MatrixSecurity;
 
     const getMatrixConnection = async (
         clientPromise: Promise<MatrixClient>,
-        matrixSecurity = basicMockMatrixSecurity
+        matrixSecurity = basicMockMatrixSecurity,
     ) => {
         const matrixChatConnection = new MatrixChatConnection(clientPromise, basicStatusStore, matrixSecurity);
         await matrixChatConnection.init();
@@ -71,22 +80,22 @@ describe("MatrixChatConnection", () => {
     describe("Constructor", () => {
         const directChatRoom = {
             id: "directChatRoom",
-            type: "direct",
+            type: readable("direct"),
             myMembership: readable(KnownMembership.Join),
         } as unknown as MatrixChatRoom;
         const InviteDirectChatRoom = {
             id: "InviteDirectChatRoom",
-            type: "direct",
+            type: readable("direct"),
             myMembership: readable(KnownMembership.Invite),
         } as unknown as MatrixChatRoom;
         const multipleChatRoom = {
             id: "multipleChatRoom",
-            type: "multiple",
+            type: readable("multiple"),
             myMembership: readable(KnownMembership.Join),
         } as unknown as MatrixChatRoom;
         const InviteMultipleChatRoom = {
             id: "InviteMultipleChatRoom",
-            type: "multiple",
+            type: readable("multiple"),
             myMembership: readable(KnownMembership.Invite),
         } as unknown as MatrixChatRoom;
 
@@ -106,9 +115,14 @@ describe("MatrixChatConnection", () => {
             matrixChatConnection["roomList"].set(multipleChatRoom.id, multipleChatRoom);
             matrixChatConnection["roomList"].set(InviteMultipleChatRoom.id, InviteMultipleChatRoom);
 
+            // createJoinedRoomsReadable defers updates with queueMicrotask; flush after roomList changes.
+            await Promise.resolve();
+
             expect(get(matrixChatConnection["directRooms"])).toHaveLength(1);
 
             matrixChatConnection["roomList"].set(directChatRoom.id + "2", directChatRoom);
+
+            await Promise.resolve();
 
             expect(get(matrixChatConnection["directRooms"])).toHaveLength(2);
             expect(get(matrixChatConnection["directRooms"]).includes(directChatRoom)).toBeTruthy();
@@ -129,9 +143,16 @@ describe("MatrixChatConnection", () => {
             matrixChatConnection["roomList"].set(multipleChatRoom.id, multipleChatRoom);
             matrixChatConnection["roomList"].set(InviteMultipleChatRoom.id, InviteMultipleChatRoom);
 
+            // Unlike directRooms (constructor subscribes for unread sync), `rooms` has no subscriber until first read.
+            // Prime so roomList updates schedule the join-list microtask before we flush.
+            get(matrixChatConnection["rooms"]);
+            await Promise.resolve();
+
             expect(get(matrixChatConnection["rooms"])).toHaveLength(1);
 
             matrixChatConnection["roomList"].set(multipleChatRoom.id + "2", multipleChatRoom);
+
+            await Promise.resolve();
 
             expect(get(matrixChatConnection["rooms"])).toHaveLength(2);
             expect(get(matrixChatConnection["rooms"]).includes(multipleChatRoom)).toBeTruthy();
@@ -170,12 +191,13 @@ describe("MatrixChatConnection", () => {
 
             const mockMatrixSecurity = {
                 isEncryptionRequiredAndNotSet: false,
+                updateMatrixClientStore: vi.fn(),
             } as unknown as MatrixSecurity;
 
             const matrixChatConnection = await getMatrixConnection(clientPromise, mockMatrixSecurity);
 
             expect(matrixChatConnection["isEncryptionRequiredAndNotSet"]).toBe(
-                mockMatrixSecurity.isEncryptionRequiredAndNotSet
+                mockMatrixSecurity.isEncryptionRequiredAndNotSet,
             );
         });
         it.each([[true], [false]])(
@@ -187,12 +209,13 @@ describe("MatrixChatConnection", () => {
 
                 const mockMatrixSecurity = {
                     isEncryptionRequiredAndNotSet: expected,
+                    updateMatrixClientStore: vi.fn(),
                 } as unknown as MatrixSecurity;
 
                 const matrixChatConnection = await getMatrixConnection(clientPromise, mockMatrixSecurity);
 
                 expect(matrixChatConnection["isEncryptionRequiredAndNotSet"]).toBe(expected);
-            }
+            },
         );
 
         it("should call startMatrixClient when client promise resolve", async () => {
@@ -204,11 +227,8 @@ describe("MatrixChatConnection", () => {
 
             await getMatrixConnection(clientPromise);
 
-            clientPromise
-                .then(() => {
-                    expect(startMatrixClientSpy).toHaveBeenCalledOnce();
-                })
-                .catch((e) => console.error(e));
+            await clientPromise;
+            expect(startMatrixClientSpy).toHaveBeenCalledOnce();
         });
         it("should not call startMatrixClient when client promise reject", async () => {
             const clientPromise = Promise.reject(new Error(""));
@@ -217,9 +237,8 @@ describe("MatrixChatConnection", () => {
 
             await getMatrixConnection(clientPromise);
 
-            clientPromise.catch(() => {
-                expect(startMatrixClientSpy).not.toHaveBeenCalled();
-            });
+            await expect(clientPromise).rejects.toThrow();
+            expect(startMatrixClientSpy).not.toHaveBeenCalled();
         });
     });
 
@@ -330,7 +349,7 @@ describe("MatrixChatConnection", () => {
             expect(mockStartClient).toHaveBeenCalledOnce();
 
             expect(mockStartClient).toHaveBeenCalledWith({
-                threadSupport: false,
+                threadSupport: true,
                 pendingEventOrdering: PendingEventOrdering.Detached,
             });
         });
@@ -435,8 +454,8 @@ describe("MatrixChatConnection", () => {
 
             expect(
                 matrixChatConnection["computeInitialState"](roomOptions).find(
-                    (option) => option.type === EventType.RoomHistoryVisibility
-                )
+                    (option) => option.type === EventType.RoomHistoryVisibility,
+                ),
             ).toEqual(undefined);
         });
     });
@@ -799,7 +818,12 @@ describe("MatrixChatConnection", () => {
             expect(matrixChatConnection["addDMRoomInAccountData"]).toHaveBeenCalledOnce();
         });
 
-        it("Room not present after synchronization", async () => {
+        it("should fall back to the room returned by joinRoom when it is not yet in the client store", async () => {
+            // Newer matrix-js-sdk sync timing can leave a freshly-joined room momentarily absent
+            // from the client store (getRoom returns null) even though client.joinRoom() already
+            // resolved with the Room. joinRoom must use that returned room instead of failing.
+            const roomID = "room-id";
+            const mockGetDMInviter = vi.fn().mockReturnValue(undefined);
             const expected = {
                 room_id: "1",
             };
@@ -820,7 +844,7 @@ describe("MatrixChatConnection", () => {
                 startClient: mockStartClient,
                 createRoom: vi.fn().mockResolvedValue(expected),
                 getRoom: vi.fn().mockReturnValue(null),
-                joinRoom: vi.fn().mockResolvedValue(""),
+                joinRoom: vi.fn().mockResolvedValue({ roomId: roomID, getDMInviter: mockGetDMInviter }),
             } as unknown as MatrixClient;
 
             const clientPromise = Promise.resolve(mockMatrixClient);
@@ -833,13 +857,13 @@ describe("MatrixChatConnection", () => {
 
             await clientPromise;
 
-            const roomID = "room-id";
-
             matrixChatConnection["addDMRoomInAccountData"] = vi.fn();
 
-            await expect(matrixChatConnection.joinRoom(roomID)).rejects.toThrow(
-                "Room not present after synchronization"
-            );
+            await expect(matrixChatConnection.joinRoom(roomID)).resolves.toBeDefined();
+            //eslint-disable-next-line @typescript-eslint/unbound-method
+            expect(mockMatrixClient.joinRoom).toHaveBeenCalledOnce();
+            // getDMInviter is read from the fallback room returned by joinRoom.
+            expect(mockGetDMInviter).toHaveBeenCalledOnce();
         });
     });
     describe("addDMRoomInAccountData", () => {
@@ -937,6 +961,645 @@ describe("MatrixChatConnection", () => {
             expect(mockSetAccountData.mock.calls[0][0]).toBe("m.direct");
             expect(mockSetAccountData.mock.calls[0][1][userId]).toContain(roomId);
             expect(mockSetAccountData.mock.calls[0][1][userId]).toContain(roomId2);
+        });
+    });
+
+    describe("space topology handling", () => {
+        it("should remove existing child when folder getChildren sees an m.space.child event without via", () => {
+            const roomId = "!child:server";
+            const childRoom = {
+                roomId,
+                getMyMembership: vi.fn().mockReturnValue(KnownMembership.Join),
+                isSpaceRoom: vi.fn().mockReturnValue(false),
+            };
+            const parentRoom = {
+                client: {
+                    getRoomUpgradeHistory: vi.fn().mockReturnValue([childRoom]),
+                },
+                getLiveTimeline: vi.fn().mockReturnValue({
+                    getState: vi.fn().mockReturnValue({
+                        getStateEvents: vi.fn().mockReturnValue([
+                            {
+                                getStateKey: vi.fn().mockReturnValue(roomId),
+                                getContent: vi.fn().mockReturnValue({}),
+                            },
+                        ]),
+                    }),
+                }),
+            };
+            const staleRoom = { destroy: vi.fn() };
+            const folder = Object.create(MatrixRoomFolder.prototype) as MatrixRoomFolder;
+            folder["room"] = parentRoom as never;
+            folder.roomList = new Map([[roomId, staleRoom]]) as never;
+            folder.folderList = new Map() as never;
+
+            folder.getChildren();
+
+            expect(folder.roomList.has(roomId)).toBeFalsy();
+            expect(staleRoom.destroy).toHaveBeenCalledOnce();
+        });
+
+        it("should repoint selectedRoomStore to the rebuilt wrapper when folder getChildren re-adds the open room", () => {
+            // Reproduces the invite-accept regression: the open room's previous wrapper was destroyed when the
+            // room was detached from its old placement, leaving selectedRoomStore on a dead wrapper. getChildren
+            // rebuilds the wrapper for the same room id and must re-point selectedRoomStore at the live one,
+            // otherwise messages sent right after joining never render until the room is re-opened.
+            const roomId = "!child:server";
+            const childRoom = {
+                roomId,
+                getMyMembership: vi.fn().mockReturnValue(KnownMembership.Join),
+                isSpaceRoom: vi.fn().mockReturnValue(false),
+            };
+            const parentRoom = {
+                client: {
+                    getRoomUpgradeHistory: vi.fn().mockReturnValue([childRoom]),
+                },
+                getLiveTimeline: vi.fn().mockReturnValue({
+                    getState: vi.fn().mockReturnValue({
+                        getStateEvents: vi.fn().mockReturnValue([
+                            {
+                                getStateKey: vi.fn().mockReturnValue(roomId),
+                                getContent: vi.fn().mockReturnValue({ via: ["server"] }),
+                            },
+                        ]),
+                    }),
+                }),
+            };
+
+            vi.mocked(MatrixChatRoomClass).mockImplementation(function (this: unknown, room: { roomId: string }) {
+                return {
+                    id: room.roomId,
+                    conversationKind: "room",
+                    isEncrypted: writable(false),
+                    destroy: vi.fn(),
+                } as unknown as MatrixChatRoom;
+            });
+
+            const destroyedWrapper = {
+                id: roomId,
+                conversationKind: "room",
+                isEncrypted: writable(false),
+                destroy: vi.fn(),
+            } as unknown as MatrixChatRoom;
+            selectedRoomStore.set(destroyedWrapper);
+
+            const folder = Object.create(MatrixRoomFolder.prototype) as MatrixRoomFolder;
+            folder["room"] = parentRoom as never;
+            folder.roomList = new Map() as never;
+            folder.folderList = new Map() as never;
+
+            folder.getChildren();
+
+            const rebuiltWrapper = folder.roomList.get(roomId);
+            expect(rebuiltWrapper).toBeDefined();
+            expect(get(selectedRoomStore)).toBe(rebuiltWrapper);
+            expect(get(selectedRoomStore)).not.toBe(destroyedWrapper);
+
+            selectedRoomStore.set(undefined);
+        });
+
+        it("should ignore a parent relation when the parent has no matching m.space.child", () => {
+            const roomId = "!child:server";
+            const staleParentId = "!space-parent:server";
+            const directParentId = "!space-direct-parent:server";
+
+            const makeStateEvent = (stateKey: string, content: unknown) => ({
+                getStateKey: vi.fn().mockReturnValue(stateKey),
+                getContent: vi.fn().mockReturnValue(content),
+            });
+            const makeRoomWithChildren = (childEvents: ReturnType<typeof makeStateEvent>[]) => ({
+                getMyMembership: vi.fn().mockReturnValue(KnownMembership.Join),
+                getLiveTimeline: vi.fn().mockReturnValue({
+                    getState: vi.fn().mockReturnValue({
+                        getStateEvents: vi.fn().mockReturnValue(childEvents),
+                    }),
+                }),
+            });
+
+            const staleParentRoom = makeRoomWithChildren([makeStateEvent(directParentId, { via: ["server"] })]);
+            const directParentRoom = makeRoomWithChildren([makeStateEvent(roomId, { via: ["server"] })]);
+            const matrixClient = {
+                getRoom: vi.fn().mockImplementation((id: string) => {
+                    if (id === staleParentId) return staleParentRoom;
+                    if (id === directParentId) return directParentRoom;
+                    return undefined;
+                }),
+            };
+            const room = {
+                roomId,
+                client: matrixClient,
+                getLiveTimeline: vi.fn().mockReturnValue({
+                    getState: vi.fn().mockReturnValue({
+                        getStateEvents: vi
+                            .fn()
+                            .mockReturnValue([
+                                makeStateEvent(staleParentId, { via: ["server"] }),
+                                makeStateEvent(directParentId, { via: ["server"] }),
+                            ]),
+                    }),
+                }),
+            };
+            const matrixChatConnection = new MatrixChatConnection(
+                Promise.resolve(matrixClient as unknown as MatrixClient),
+                basicStatusStore,
+                basicMockMatrixSecurity,
+            );
+
+            expect(matrixChatConnection["getParentRoomID"](room as never)).toEqual([directParentId]);
+        });
+
+        it("should ignore a parent relation when the parent space is left", () => {
+            const roomId = "!child:server";
+            const leftParentId = "!space-left-parent:server";
+
+            const childEvent = {
+                getStateKey: vi.fn().mockReturnValue(roomId),
+                getContent: vi.fn().mockReturnValue({ via: ["server"] }),
+            };
+            const leftParentRoom = {
+                getMyMembership: vi.fn().mockReturnValue(KnownMembership.Leave),
+                getLiveTimeline: vi.fn().mockReturnValue({
+                    getState: vi.fn().mockReturnValue({
+                        getStateEvents: vi.fn().mockReturnValue([childEvent]),
+                    }),
+                }),
+            };
+            const matrixClient = {
+                getRoom: vi.fn().mockImplementation((id: string) => {
+                    if (id === leftParentId) return leftParentRoom;
+                    return undefined;
+                }),
+            };
+            const room = {
+                roomId,
+                client: matrixClient,
+                getLiveTimeline: vi.fn().mockReturnValue({
+                    getState: vi.fn().mockReturnValue({
+                        getStateEvents: vi.fn().mockReturnValue([
+                            {
+                                getStateKey: vi.fn().mockReturnValue(leftParentId),
+                                getContent: vi.fn().mockReturnValue({ via: ["server"] }),
+                            },
+                        ]),
+                    }),
+                }),
+            };
+            const matrixChatConnection = new MatrixChatConnection(
+                Promise.resolve(matrixClient as unknown as MatrixClient),
+                basicStatusStore,
+                basicMockMatrixSecurity,
+            );
+
+            expect(matrixChatConnection["getParentRoomID"](room as never)).toEqual([]);
+        });
+
+        it("should return the nested folder itself when searching a deep folder node", async () => {
+            const rootFolder = Object.assign(Object.create(MatrixRoomFolder.prototype), {
+                id: "!space-root:server",
+                roomList: new Map(),
+                folderList: new Map(),
+                loadRoomsAndFolderPromise: { promise: Promise.resolve() },
+            }) as MatrixRoomFolder;
+            const intermediateFolder = Object.assign(Object.create(MatrixRoomFolder.prototype), {
+                id: "!space-intermediate:server",
+                roomList: new Map(),
+                folderList: new Map(),
+                loadRoomsAndFolderPromise: { promise: Promise.resolve() },
+            }) as MatrixRoomFolder;
+            const nestedFolder = Object.assign(Object.create(MatrixRoomFolder.prototype), {
+                id: "!space-nested:server",
+                roomList: new Map(),
+                folderList: new Map(),
+                loadRoomsAndFolderPromise: { promise: Promise.resolve() },
+            }) as MatrixRoomFolder;
+            rootFolder.folderList.set(intermediateFolder.id, intermediateFolder);
+            intermediateFolder.folderList.set(nestedFolder.id, nestedFolder);
+
+            await expect(rootFolder.getNode(nestedFolder.id)).resolves.toBe(nestedFolder);
+        });
+
+        it("should reconcile joined child rooms when leaving a folder", async () => {
+            const folderId = "!space-left:server";
+            const childRoomId = "!child:server";
+            const childNode = {
+                id: childRoomId,
+                myMembership: readable(KnownMembership.Join),
+            };
+            const folder = Object.assign(Object.create(MatrixRoomFolder.prototype), {
+                id: folderId,
+                roomList: new Map([[childRoomId, childNode]]),
+                folderList: new Map(),
+                loadRoomsAndFolderPromise: { promise: Promise.resolve() },
+            }) as MatrixRoomFolder;
+            const matrixChatConnection = new MatrixChatConnection(
+                Promise.resolve({} as MatrixClient),
+                basicStatusStore,
+                basicMockMatrixSecurity,
+            );
+            matrixChatConnection["roomFolders"].set(folderId, folder);
+            const reconcileRoomPlacement = vi
+                .spyOn(
+                    matrixChatConnection as unknown as {
+                        reconcileRoomPlacement: (roomId: string) => Promise<"root">;
+                    },
+                    "reconcileRoomPlacement",
+                )
+                .mockResolvedValue("root");
+
+            matrixChatConnection["onRoomEventMembership"](
+                { roomId: folderId, name: "Left space" } as never,
+                KnownMembership.Leave,
+                KnownMembership.Join,
+            );
+            await flushPromises();
+
+            expect(matrixChatConnection["roomFolders"].has(folderId)).toBeFalsy();
+            expect(reconcileRoomPlacement).toHaveBeenCalledWith(childRoomId);
+        });
+
+        it("should reparent child rooms to the visible parent space when leaving a nested folder", async () => {
+            const parentFolderId = "!space-parent:server";
+            const leftFolderId = "!space-left:server";
+            const childRoomId = "!child:server";
+            const childNode = {
+                id: childRoomId,
+                myMembership: readable(KnownMembership.Join),
+            };
+            const leftFolder = Object.assign(Object.create(MatrixRoomFolder.prototype), {
+                id: leftFolderId,
+                roomList: new Map([[childRoomId, childNode]]),
+                folderList: new Map(),
+                myMembership: readable(KnownMembership.Leave),
+                loadRoomsAndFolderPromise: { promise: Promise.resolve() },
+            }) as MatrixRoomFolder;
+            const parentFolder = Object.assign(Object.create(MatrixRoomFolder.prototype), {
+                id: parentFolderId,
+                roomList: new Map(),
+                folderList: new Map([[leftFolderId, leftFolder]]),
+                myMembership: readable(KnownMembership.Join),
+                loadRoomsAndFolderPromise: { promise: Promise.resolve() },
+            }) as MatrixRoomFolder;
+            parentFolder.deleteNode = vi.fn().mockImplementation((id: string) => {
+                parentFolder.folderList.delete(id);
+                return true;
+            });
+            const makeStateEvent = (stateKey: string, content: unknown) => ({
+                getStateKey: vi.fn().mockReturnValue(stateKey),
+                getContent: vi.fn().mockReturnValue(content),
+            });
+            const makeParentRoom = (membership: KnownMembership) => ({
+                getMyMembership: vi.fn().mockReturnValue(membership),
+                getLiveTimeline: vi.fn().mockReturnValue({
+                    getState: vi.fn().mockReturnValue({
+                        getStateEvents: vi.fn().mockReturnValue([makeStateEvent(childRoomId, { via: ["server"] })]),
+                    }),
+                }),
+            });
+            const matrixClient = {
+                getRoom: vi.fn(),
+            };
+            const childRoom = {
+                roomId: childRoomId,
+                client: matrixClient,
+                isSpaceRoom: vi.fn().mockReturnValue(false),
+                getMyMembership: vi.fn().mockReturnValue(KnownMembership.Join),
+                getLiveTimeline: vi.fn().mockReturnValue({
+                    getState: vi.fn().mockReturnValue({
+                        getStateEvents: vi
+                            .fn()
+                            .mockReturnValue([
+                                makeStateEvent(leftFolderId, { via: ["server"] }),
+                                makeStateEvent(parentFolderId, { via: ["server"] }),
+                            ]),
+                    }),
+                }),
+            };
+            matrixClient.getRoom.mockImplementation((id: string) => {
+                if (id === childRoomId) return childRoom;
+                if (id === leftFolderId) return makeParentRoom(KnownMembership.Leave);
+                if (id === parentFolderId) return makeParentRoom(KnownMembership.Join);
+                return undefined;
+            });
+            const matrixChatConnection = new MatrixChatConnection(
+                Promise.resolve(matrixClient as unknown as MatrixClient),
+                basicStatusStore,
+                basicMockMatrixSecurity,
+            );
+            matrixChatConnection["client"] = matrixClient as never;
+            matrixChatConnection["roomFolders"].set(parentFolderId, parentFolder);
+            const addRoomToParentFolder = vi
+                .spyOn(
+                    matrixChatConnection as unknown as {
+                        addRoomToParentFolder: (room: unknown, folder: MatrixRoomFolder) => void;
+                    },
+                    "addRoomToParentFolder",
+                )
+                .mockImplementation(() => undefined);
+
+            matrixChatConnection["onRoomEventMembership"](
+                { roomId: leftFolderId, name: "Left nested space" } as never,
+                KnownMembership.Leave,
+                KnownMembership.Join,
+            );
+            await flushPromises();
+
+            expect(addRoomToParentFolder).toHaveBeenCalledOnce();
+            expect(addRoomToParentFolder.mock.calls[0][0]).toBe(childRoom);
+            expect(addRoomToParentFolder.mock.calls[0][1]).toBe(parentFolder);
+        });
+
+        it("should fallback a pending joined room to root after bounded placement retries", async () => {
+            vi.useFakeTimers();
+            const roomId = "!child:server";
+            const unknownParentId = "!unknown-parent:server";
+            const room = {
+                roomId,
+                isSpaceRoom: vi.fn().mockReturnValue(false),
+                getMyMembership: vi.fn().mockReturnValue(KnownMembership.Join),
+                getLiveTimeline: vi.fn().mockReturnValue({
+                    getState: vi.fn().mockReturnValue({
+                        getStateEvents: vi.fn().mockReturnValue([
+                            {
+                                getStateKey: vi.fn().mockReturnValue(unknownParentId),
+                                getContent: vi.fn().mockReturnValue({ via: ["server"] }),
+                            },
+                        ]),
+                    }),
+                }),
+            };
+            const matrixClient = {
+                getRoom: vi.fn().mockImplementation((id: string) => {
+                    if (id === roomId) return room;
+                    return undefined;
+                }),
+            };
+            const matrixChatConnection = new MatrixChatConnection(
+                Promise.resolve(matrixClient as unknown as MatrixClient),
+                basicStatusStore,
+                basicMockMatrixSecurity,
+            );
+            matrixChatConnection["client"] = matrixClient as never;
+            vi.spyOn(
+                matrixChatConnection as unknown as { removeRoomFromAllFolders: (roomId: string) => Promise<boolean> },
+                "removeRoomFromAllFolders",
+            ).mockResolvedValue(false);
+            const handleOrphanRoom = vi
+                .spyOn(
+                    matrixChatConnection as unknown as { handleOrphanRoom: (room: unknown) => void },
+                    "handleOrphanRoom",
+                )
+                .mockImplementation(() => undefined);
+
+            matrixChatConnection["scheduleRoomPlacementReconciliation"](roomId);
+            await vi.advanceTimersByTimeAsync(3000);
+
+            expect(handleOrphanRoom).toHaveBeenCalledWith(room);
+        });
+
+        it("should remove an invalidated m.space.child from its parent folder and reschedule placement reconciliation", async () => {
+            const roomId = "!child:server";
+            const parentId = "!space:server";
+            const staleRoom = { destroy: vi.fn() };
+            const parentFolder = Object.assign(Object.create(MatrixRoomFolder.prototype), {
+                id: parentId,
+                roomList: new Map([[roomId, staleRoom]]),
+                folderList: new Map(),
+                deleteNode: vi.fn().mockResolvedValue(true),
+            }) as MatrixRoomFolder & { deleteNode: ReturnType<typeof vi.fn> };
+
+            const mockMatrixClient = {
+                isGuest: vi.fn().mockReturnValue(true),
+                on: vi.fn(),
+                off: vi.fn(),
+                store: {
+                    startup: vi.fn(),
+                },
+                initRustCrypto: vi.fn(),
+                startClient: vi.fn(),
+                isInitialSyncComplete: vi.fn().mockReturnValue(true),
+                getVisibleRooms: vi.fn().mockReturnValue([]),
+                getRoom: vi.fn(),
+            } as unknown as MatrixClient;
+
+            const matrixChatConnection = await getMatrixConnection(Promise.resolve(mockMatrixClient));
+            matrixChatConnection["roomFolders"].set(parentId, parentFolder);
+            const scheduleReconciliationSpy = vi.spyOn(
+                matrixChatConnection as unknown as { scheduleRoomPlacementReconciliation: (id: string) => void },
+                "scheduleRoomPlacementReconciliation",
+            );
+
+            const event = {
+                getType: vi.fn().mockReturnValue(EventType.SpaceChild),
+                getStateKey: vi.fn().mockReturnValue(roomId),
+                getRoomId: vi.fn().mockReturnValue(parentId),
+                getContent: vi.fn().mockReturnValue({}),
+            };
+
+            matrixChatConnection["onRoomStateEvent"](event as never);
+            await flushPromises();
+
+            expect(parentFolder.deleteNode).toHaveBeenCalledWith(roomId);
+            expect(scheduleReconciliationSpy).toHaveBeenCalledWith(roomId);
+        });
+
+        it("should keep retrying room placement while reconciliation is pending", async () => {
+            vi.useFakeTimers();
+            const roomId = "!child:server";
+            const mockMatrixClient = {
+                isGuest: vi.fn().mockReturnValue(true),
+                on: vi.fn(),
+                off: vi.fn(),
+                store: {
+                    startup: vi.fn(),
+                },
+                initRustCrypto: vi.fn(),
+                startClient: vi.fn(),
+                isInitialSyncComplete: vi.fn().mockReturnValue(true),
+                getVisibleRooms: vi.fn().mockReturnValue([]),
+                getRoom: vi.fn(),
+            } as unknown as MatrixClient;
+            const matrixChatConnection = await getMatrixConnection(Promise.resolve(mockMatrixClient));
+            const reconcileRoomPlacement = vi.fn().mockResolvedValue("pending");
+            matrixChatConnection["reconcileRoomPlacement"] = reconcileRoomPlacement as never;
+
+            matrixChatConnection["scheduleRoomPlacementReconciliation"](roomId);
+            await vi.advanceTimersByTimeAsync(100);
+
+            expect(reconcileRoomPlacement).toHaveBeenCalledTimes(2);
+        });
+
+        it("should stop retrying room placement when reconciliation succeeds", async () => {
+            vi.useFakeTimers();
+            const roomId = "!child:server";
+            const mockMatrixClient = {
+                isGuest: vi.fn().mockReturnValue(true),
+                on: vi.fn(),
+                off: vi.fn(),
+                store: {
+                    startup: vi.fn(),
+                },
+                initRustCrypto: vi.fn(),
+                startClient: vi.fn(),
+                isInitialSyncComplete: vi.fn().mockReturnValue(true),
+                getVisibleRooms: vi.fn().mockReturnValue([]),
+                getRoom: vi.fn(),
+            } as unknown as MatrixClient;
+            const matrixChatConnection = await getMatrixConnection(Promise.resolve(mockMatrixClient));
+            const reconcileRoomPlacement = vi.fn().mockResolvedValue("placed");
+            matrixChatConnection["reconcileRoomPlacement"] = reconcileRoomPlacement as never;
+
+            matrixChatConnection["scheduleRoomPlacementReconciliation"](roomId);
+            await vi.advanceTimersByTimeAsync(1600);
+
+            expect(reconcileRoomPlacement).toHaveBeenCalledOnce();
+        });
+
+        it("should not recreate a placement retry timer when an old reconciliation resolves after cleanup", async () => {
+            vi.useFakeTimers();
+            const roomId = "!child:server";
+            const mockMatrixClient = {
+                isGuest: vi.fn().mockReturnValue(true),
+                on: vi.fn(),
+                off: vi.fn(),
+                store: {
+                    startup: vi.fn(),
+                },
+                initRustCrypto: vi.fn(),
+                startClient: vi.fn(),
+                isInitialSyncComplete: vi.fn().mockReturnValue(true),
+                getVisibleRooms: vi.fn().mockReturnValue([]),
+                getRoom: vi.fn(),
+            } as unknown as MatrixClient;
+            const matrixChatConnection = await getMatrixConnection(Promise.resolve(mockMatrixClient));
+            let resolveReconciliation: (result: "pending") => void = () => undefined;
+            matrixChatConnection["reconcileRoomPlacement"] = vi.fn().mockReturnValue(
+                new Promise((resolve) => {
+                    resolveReconciliation = resolve;
+                }),
+            ) as never;
+
+            matrixChatConnection["scheduleRoomPlacementReconciliation"](roomId);
+            matrixChatConnection["clearRoomPlacementRetry"](roomId);
+            resolveReconciliation("pending");
+            await vi.advanceTimersByTimeAsync(1600);
+
+            expect(matrixChatConnection["roomPlacementRetryTimers"].has(roomId)).toBeFalsy();
+            expect(matrixChatConnection["reconcileRoomPlacement"]).toHaveBeenCalledOnce();
+        });
+
+        it("should keep root room when m.space.child event has no via", async () => {
+            const roomId = "!child:server";
+            const parentId = "!space:server";
+            const matrixRoom = {
+                roomId,
+                isSpaceRoom: vi.fn().mockReturnValue(false),
+                getMyMembership: vi.fn().mockReturnValue(KnownMembership.Join),
+            };
+
+            const mockMatrixClient = {
+                isGuest: vi.fn().mockReturnValue(true),
+                on: vi.fn(),
+                off: vi.fn(),
+                store: {
+                    startup: vi.fn(),
+                },
+                initRustCrypto: vi.fn(),
+                startClient: vi.fn(),
+                isInitialSyncComplete: vi.fn().mockReturnValue(true),
+                getVisibleRooms: vi.fn().mockReturnValue([]),
+                getRoom: vi.fn().mockImplementation((id: string) => (id === roomId ? matrixRoom : undefined)),
+            } as unknown as MatrixClient;
+
+            const matrixChatConnection = await getMatrixConnection(Promise.resolve(mockMatrixClient));
+            const rootRoom = { id: roomId, destroy: vi.fn() } as unknown as MatrixChatRoom;
+            matrixChatConnection["roomList"].set(roomId, rootRoom);
+
+            const event = {
+                getType: vi.fn().mockReturnValue(EventType.SpaceChild),
+                getStateKey: vi.fn().mockReturnValue(roomId),
+                getRoomId: vi.fn().mockReturnValue(parentId),
+                getContent: vi.fn().mockReturnValue({}),
+            };
+
+            matrixChatConnection["onRoomStateEvent"](event as never);
+
+            expect(matrixChatConnection["roomList"].has(roomId)).toBeTruthy();
+        });
+
+        it("should keep root room when parent folder is not found", async () => {
+            const roomId = "!child:server";
+            const parentId = "!space:server";
+            const matrixRoom = {
+                roomId,
+                isSpaceRoom: vi.fn().mockReturnValue(false),
+                getMyMembership: vi.fn().mockReturnValue(KnownMembership.Join),
+            };
+
+            const mockMatrixClient = {
+                isGuest: vi.fn().mockReturnValue(true),
+                on: vi.fn(),
+                off: vi.fn(),
+                store: {
+                    startup: vi.fn(),
+                },
+                initRustCrypto: vi.fn(),
+                startClient: vi.fn(),
+                isInitialSyncComplete: vi.fn().mockReturnValue(true),
+                getVisibleRooms: vi.fn().mockReturnValue([]),
+                getRoom: vi.fn().mockImplementation((id: string) => (id === roomId ? matrixRoom : undefined)),
+            } as unknown as MatrixClient;
+
+            const matrixChatConnection = await getMatrixConnection(Promise.resolve(mockMatrixClient));
+            const rootRoom = { id: roomId, destroy: vi.fn() } as unknown as MatrixChatRoom;
+            matrixChatConnection["roomList"].set(roomId, rootRoom);
+            const scheduleReconciliationSpy = vi.spyOn(
+                matrixChatConnection as unknown as { scheduleRoomPlacementReconciliation: (id: string) => void },
+                "scheduleRoomPlacementReconciliation",
+            );
+
+            const event = {
+                getType: vi.fn().mockReturnValue(EventType.SpaceChild),
+                getStateKey: vi.fn().mockReturnValue(roomId),
+                getRoomId: vi.fn().mockReturnValue(parentId),
+                getContent: vi.fn().mockReturnValue({ via: ["server"] }),
+            };
+
+            matrixChatConnection["onRoomStateEvent"](event as never);
+            await flushPromises();
+
+            expect(matrixChatConnection["roomList"].has(roomId)).toBeTruthy();
+            expect(scheduleReconciliationSpy).toHaveBeenCalledWith(roomId);
+        });
+
+        it("should init existing nested folder when adding a space child", async () => {
+            const roomId = "!child-space:server";
+            const existingChildFolder = {
+                refreshRooms: vi.fn().mockResolvedValue(undefined),
+                init: vi.fn(),
+            };
+            const folderList = {
+                get: vi.fn().mockReturnValue(existingChildFolder),
+                set: vi.fn(),
+            };
+            const parentFolder = {
+                folderList,
+                roomList: new Map(),
+                myMembership: readable(KnownMembership.Invite),
+            };
+            const spaceRoom = {
+                roomId,
+                isSpaceRoom: vi.fn().mockReturnValue(true),
+            };
+
+            const matrixChatConnection = await getMatrixConnection(
+                Promise.resolve({ isGuest: vi.fn().mockReturnValue(true) } as unknown as MatrixClient),
+            );
+            matrixChatConnection["roomFolders"].set(roomId, { id: roomId, destroy: vi.fn() } as never);
+
+            matrixChatConnection["addRoomToParentFolder"](spaceRoom as never, parentFolder as never);
+
+            expect(existingChildFolder.refreshRooms).not.toHaveBeenCalled();
+            expect(existingChildFolder.init).toHaveBeenCalledOnce();
         });
     });
 });

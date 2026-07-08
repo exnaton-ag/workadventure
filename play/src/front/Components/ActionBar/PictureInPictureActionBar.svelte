@@ -1,5 +1,4 @@
 <script lang="ts">
-    import { createEventDispatcher } from "svelte";
     import { silentStore } from "../../Stores/MediaStore";
 
     import {
@@ -9,37 +8,32 @@
         proximityMeetingStore,
     } from "../../Stores/MyMediaStore";
     import { bottomActionBarVisibilityStore } from "../../Stores/BottomActionBarStore";
-    import { highlightFullScreen } from "../../Stores/ActionsCamStore";
-    import { videoStreamElementsStore } from "../../Stores/PeerStore";
     import CameraMenuItem from "./MenuIcons/CameraMenuItem.svelte";
     import MicrophoneMenuItem from "./MenuIcons/MicrophoneMenuItem.svelte";
     import ScreenSharingMenuItem from "./MenuIcons/ScreenSharingMenuItem.svelte";
     import ChatMenuItem from "./MenuIcons/ChatMenuItem.svelte";
 
-    const dispatch = createEventDispatcher<{
-        screenSharingClick: void;
-    }>();
+    interface Props {
+        screenSharingClick?: () => void;
+    }
+
+    const { screenSharingClick }: Props = $props();
 
     function toggleChat() {
         window.focus();
     }
 
     function toggleScreensharing() {
-        dispatch("screenSharingClick");
+        screenSharingClick?.();
     }
 </script>
 
-<div
-    class="@container/actions w-full z-[301] transition-all pointer-events-none flex-0 bp-menu {$videoStreamElementsStore.length >
-        0 && $highlightFullScreen
-        ? 'hidden'
-        : ''}"
->
+<div class="@container/actions w-full z-[301] transition-all pointer-events-none flex-0 bp-menu">
     <div class="flex w-full p-2 gap-2 @xl/actions:p-4 @xl/actions:gap-4 justify-items-center">
         <div class="justify-items-center flex-1 w-32">
             <div class="flex relative transition-all duration-150 z-[2]">
                 <div class="mr-3">
-                    <ChatMenuItem on:click={toggleChat} last={true} />
+                    <ChatMenuItem onclick={toggleChat} last={true} />
                 </div>
                 <div>
                     <!-- ACTION WRAPPER : CAM & MIC -->
@@ -55,7 +49,7 @@
 
                         <!-- NAV : SCREENSHARING START -->
                         {#if $bottomActionBarVisibilityStore}
-                            <ScreenSharingMenuItem on:click={toggleScreensharing} />
+                            <ScreenSharingMenuItem onclick={toggleScreensharing} />
                         {/if}
                         <!-- NAV : SCREENSHARING END -->
                     </div>

@@ -1,11 +1,22 @@
-import { Direction, EventType, MatrixEvent, MatrixEventEvent, MsgType, RelationType, Room } from "matrix-js-sdk";
-import { writable, Writable } from "svelte/store";
+import type { MatrixEvent, Room } from "matrix-js-sdk";
+import { Direction, EventType, MatrixEventEvent, MsgType, RelationType } from "matrix-js-sdk";
+import type { Writable } from "svelte/store";
+import { writable } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
 import { MapStore } from "@workadventure/store-utils";
-import { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser } from "../ChatConnection";
-import { chatUserFactory } from "./MatrixChatUser";
+import type {
+    ChatMessage,
+    ChatMessageContent,
+    ChatMessageType,
+    ChatThread,
+    ChatThreadSummary,
+    ChatUser,
+} from "../ChatConnection";
+import { chatUserFactoryFromRoom } from "./MatrixChatUser";
 import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
 import { MatrixChatRelation } from "./MatrixChatRelation";
+import { resolveAttachmentMediaFromEvent, resolveImageMediaFromEvent } from "./MatrixMediaResolver";
+import { shouldRenderQuotedReply } from "./MatrixThreadUtils";
 
 export class MatrixChatMessage implements ChatMessage {
     id: string;
@@ -21,8 +32,29 @@ export class MatrixChatMessage implements ChatMessage {
     reactions: MapStore<string, MatrixChatMessageReaction>;
     relations: MatrixChatRelation | undefined;
     readonly canDelete: Writable<boolean>;
+    threadSummary = writable<ChatThreadSummary | null>(null);
+    openThread: (() => Promise<ChatThread | undefined>) | undefined;
+    private imageMediaCleanup: () => void = () => undefined;
+    private imageMediaAbortController: AbortController | undefined;
+    private attachmentMediaCleanup: () => void = () => undefined;
+    private attachmentMediaAbortController: AbortController | undefined;
+    private readonly decryptedListener = () => this.updateMessageContentOnDecryptedEvent();
+    // Fired when an m.replace edit is applied to this event; re-render so the edit shows.
+    private readonly replacedListener = () => this.modifyContent();
+    // Fired when the first relation container is created for this event. initReactions() returns early
+    // when the message had no reactions at construction (so it never subscribed to reaction updates); this
+    // re-runs it so reactions that arrive later via aggregation/pagination still appear.
+    private readonly relationsCreatedListener = (relationType: string) => {
+        if (relationType === RelationType.Annotation) {
+            this.initReactions();
+        }
+    };
 
-    constructor(private event: MatrixEvent, private room: Room, isQuotedMessage?: boolean) {
+    constructor(
+        private event: MatrixEvent,
+        private room: Room,
+        isQuotedMessage?: boolean,
+    ) {
         this.id = event.getId() ?? uuidv4();
         this.type = this.mapMatrixMessageTypeToChatMessage();
         this.date = event.getDate();
@@ -41,11 +73,11 @@ export class MatrixChatMessage implements ChatMessage {
         let senderPowerLevel = 0;
 
         if (myRoomMember) {
-            myPowerLevel = myRoomMember.powerLevelNorm;
+            myPowerLevel = myRoomMember.powerLevel;
         }
 
         if (senderRoomMember) {
-            senderPowerLevel = senderRoomMember.powerLevelNorm;
+            senderPowerLevel = senderRoomMember.powerLevel;
         }
 
         const hasSufficientPowerLevel =
@@ -56,21 +88,18 @@ export class MatrixChatMessage implements ChatMessage {
 
         this.canDelete = writable(this.isMyMessage || (hasSufficientPowerLevel && myPowerLevel > senderPowerLevel));
 
-        event.on(MatrixEventEvent.Decrypted, () => {
-            this.updateMessageContentOnDecryptedEvent();
-        });
+        event.on(MatrixEventEvent.Decrypted, this.decryptedListener);
+        event.on(MatrixEventEvent.Replaced, this.replacedListener);
+        event.on(MatrixEventEvent.RelationsCreated, this.relationsCreatedListener);
+        this.loadImageMediaIfNeeded();
+        this.loadAttachmentMediaIfNeeded();
 
         this.initReactions();
     }
 
     private getSender() {
-        let messageUser;
         const senderUserId = this.event.getSender();
-        if (senderUserId) {
-            const matrixUser = this.room.client.getUser(senderUserId);
-            messageUser = matrixUser ? chatUserFactory(matrixUser, this.room.client) : undefined;
-        }
-        return messageUser;
+        return senderUserId ? chatUserFactoryFromRoom(this.room, senderUserId) : undefined;
     }
 
     private initMessageContent(): Writable<ChatMessageContent> {
@@ -79,21 +108,21 @@ export class MatrixChatMessage implements ChatMessage {
 
     private updateMessageContentOnDecryptedEvent() {
         this.content.set(this.getMessageContent());
+        this.loadImageMediaIfNeeded();
+        this.loadAttachmentMediaIfNeeded();
     }
 
     private getMessageContent(): ChatMessageContent {
-        const unsigned = this.event.getUnsigned();
-        const relation = unsigned["m.relations"];
         if (this.event.isDecryptionFailure()) {
             return { body: "🔐 Failed to decrypt", url: undefined };
         }
-        if (relation) {
-            if (relation["m.replace"]) {
-                return { body: relation["m.replace"].content?.["m.new_content"]?.body, url: undefined };
-            }
-        }
 
-        const content = this.event.getOriginalContent();
+        // getContent() returns the effective content: the latest edit's `m.new_content` when the event has
+        // been replaced, and the decrypted content in E2EE rooms. The previous code read the raw
+        // `m.replace` bundle from unsigned, which in E2EE rooms is the *wire* (encrypted) content, so edited
+        // messages rendered with an empty body and lost msgtype/formatting/media. Live edits now re-render
+        // via the MatrixEventEvent.Replaced listener.
+        const content = this.event.getContent();
         const quotedMessage = this.getQuotedMessage();
 
         if (quotedMessage !== undefined && content.formatted_body) {
@@ -104,14 +133,113 @@ export class MatrixChatMessage implements ChatMessage {
             };
         }
 
-        if (this.type !== "text") {
+        if (this.type === "image") {
             return {
                 body: content.body,
-                url: this.room.client.mxcUrlToHttp(this.event.getOriginalContent().url) ?? undefined,
+                url: this.room.client.mxcUrlToHttp(content.url ?? content.file?.url) ?? undefined,
+                thumbnailUrl: this.room.client.mxcUrlToHttp(content.info?.thumbnail_url) ?? undefined,
+                mediaState: content.file !== undefined ? "loading" : "ready",
+            };
+        }
+
+        if (this.type === "file" || this.type === "audio" || this.type === "video") {
+            return {
+                body: content.body,
+                url: this.room.client.mxcUrlToHttp(content.url ?? content.file?.url) ?? undefined,
+                mediaState: content.file !== undefined ? "loading" : "ready",
             };
         }
 
         return { body: content.body, url: undefined };
+    }
+
+    private loadImageMediaIfNeeded() {
+        if (this.type !== "image") {
+            return;
+        }
+        this.imageMediaAbortController?.abort();
+        this.imageMediaCleanup();
+
+        const abortController = new AbortController();
+        this.imageMediaAbortController = abortController;
+
+        this.resolveImageMedia(abortController.signal).catch(() => undefined);
+    }
+
+    private async resolveImageMedia(signal: AbortSignal): Promise<void> {
+        this.content.update((content) => ({ ...content, mediaState: "loading", mediaErrorKind: undefined }));
+
+        try {
+            const media = await resolveImageMediaFromEvent(this.event, this.room.client, signal);
+            if (signal.aborted) {
+                media.cleanup();
+                return;
+            }
+
+            this.imageMediaCleanup = media.cleanup;
+            this.content.update((content) => ({
+                ...content,
+                url: media.sourceUrl,
+                thumbnailUrl: media.thumbnailUrl ?? media.sourceUrl,
+                mediaErrorKind: media.error,
+                mediaState: media.error ? "error" : "ready",
+            }));
+        } catch (error) {
+            if (error instanceof DOMException && error.name === "AbortError") {
+                return;
+            }
+            this.content.update((content) => ({
+                ...content,
+                mediaState: "error",
+                mediaErrorKind: "download",
+            }));
+        }
+    }
+
+    private loadAttachmentMediaIfNeeded() {
+        if (this.type !== "file" && this.type !== "audio" && this.type !== "video") {
+            return;
+        }
+        const rawContent = this.event.getOriginalContent();
+        if (typeof rawContent !== "object" || rawContent === null || rawContent.file === undefined) {
+            return;
+        }
+        this.attachmentMediaAbortController?.abort();
+        this.attachmentMediaCleanup();
+
+        const abortController = new AbortController();
+        this.attachmentMediaAbortController = abortController;
+
+        this.resolveAttachmentMedia(abortController.signal).catch(() => undefined);
+    }
+
+    private async resolveAttachmentMedia(signal: AbortSignal): Promise<void> {
+        this.content.update((content) => ({ ...content, mediaState: "loading", mediaErrorKind: undefined }));
+
+        try {
+            const media = await resolveAttachmentMediaFromEvent(this.event, this.room.client, signal);
+            if (signal.aborted) {
+                media.cleanup();
+                return;
+            }
+
+            this.attachmentMediaCleanup = media.cleanup;
+            this.content.update((content) => ({
+                ...content,
+                url: media.sourceUrl,
+                mediaErrorKind: media.error,
+                mediaState: media.error ? "error" : "ready",
+            }));
+        } catch (error) {
+            if (error instanceof DOMException && error.name === "AbortError") {
+                return;
+            }
+            this.content.update((content) => ({
+                ...content,
+                mediaState: "error",
+                mediaErrorKind: "download",
+            }));
+        }
     }
 
     public initReactions() {
@@ -132,6 +260,10 @@ export class MatrixChatMessage implements ChatMessage {
     }
 
     private getQuotedMessage() {
+        if (!shouldRenderQuotedReply(this.event)) {
+            return;
+        }
+
         const replyEventId = this.event.replyEventId;
         if (replyEventId) {
             const replyToEvent = this.room.findEventById(replyEventId);
@@ -193,9 +325,14 @@ export class MatrixChatMessage implements ChatMessage {
         }
     }
 
-    public modifyContent(newContent: string) {
-        this.content.set({ body: newContent, url: undefined });
+    // Re-render from the (now SDK-replaced) event rather than a caller-supplied body string: getContent()
+    // resolves the edit's m.new_content and preserves msgtype/formatting/media instead of the old
+    // body-only update that dropped the URL of edited image/file messages.
+    public modifyContent() {
+        this.content.set(this.getMessageContent());
         this.isModified.set(true);
+        this.loadImageMediaIfNeeded();
+        this.loadAttachmentMediaIfNeeded();
     }
 
     public markAsRemoved() {
@@ -210,5 +347,19 @@ export class MatrixChatMessage implements ChatMessage {
         } catch (error) {
             console.error(error);
         }
+    }
+
+    destroy() {
+        this.event.off(MatrixEventEvent.Decrypted, this.decryptedListener);
+        this.event.off(MatrixEventEvent.Replaced, this.replacedListener);
+        this.event.off(MatrixEventEvent.RelationsCreated, this.relationsCreatedListener);
+        this.imageMediaAbortController?.abort();
+        this.imageMediaCleanup();
+        this.attachmentMediaAbortController?.abort();
+        this.attachmentMediaCleanup();
+    }
+
+    public getMatrixEvent(): MatrixEvent {
+        return this.event;
     }
 }

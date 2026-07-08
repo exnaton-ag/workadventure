@@ -1,4 +1,4 @@
-import type CancelablePromise from "cancelable-promise";
+import type { CancelablePromise } from "cancelable-promise";
 
 export interface CoWebsite {
     getId(): string;
@@ -8,4 +8,7 @@ export interface CoWebsite {
     getWidthPercent(): number | undefined;
     isClosable(): boolean;
     getHideUrl(): boolean;
+    getTitle(): string;
+    getIcon(): string;
+    shouldCloseOnOpenInNewTab(): boolean;
 }

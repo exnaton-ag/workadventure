@@ -1,5 +1,5 @@
 import { AvailabilityStatus } from "@workadventure/messages";
-import { TimedRules } from "../statusRules";
+import type { TimedRules } from "../statusRules";
 import { askIfUserWantToJoinBubbleOf, askToChangeStatus } from "../statusChangerFunctions";
 //import { helpNotificationSettingsVisibleStore } from "../../../Stores/HelpSettingsStore";
 import { localUserStore } from "../../../Connection/LocalUserStore";
@@ -12,7 +12,7 @@ export class BusyStatusStrategy extends BasicStatusStrategy {
         protected status: AvailabilityStatus = AvailabilityStatus.BUSY,
         protected basicRules: Array<() => void> = [],
         protected timedRules: Array<TimedRules> = [],
-        protected interactionRules: Array<() => void> = []
+        protected interactionRules: Array<() => void> = [],
     ) {
         super(status, basicRules, timedRules, interactionRules);
         timedRules.push({

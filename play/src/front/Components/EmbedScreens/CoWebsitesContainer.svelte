@@ -1,23 +1,25 @@
 <script lang="ts">
     import { onDestroy, onMount } from "svelte";
-    import { Unsubscriber } from "svelte/store";
+    import type { Unsubscriber } from "svelte/store";
     import { coWebsiteRatio, coWebsites, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
-    import FullScreenIcon from "../Icons/FullScreenIcon.svelte";
     import JitsiCowebsiteComponent from "../Cowebsites/JistiCowebsiteComponent.svelte";
     import SimpleCowebsiteComponent from "../Cowebsites/SimpleCowebsiteComponent.svelte";
+    import ImageCowebsiteComponent from "../Cowebsites/ImageCowebsiteComponent.svelte";
+    import { ImageCoWebsite } from "../../WebRtc/CoWebsite/ImageCoWebsite";
     import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
     import { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
     import { BBBCoWebsite } from "../../WebRtc/CoWebsite/BBBCoWebsite";
+    import { VideoCoWebsite } from "../../WebRtc/CoWebsite/VideoCoWebsite";
     import BigBlueButtonCowebsiteComponent from "../Cowebsites/BigBlueButtonCowebsiteComponent.svelte";
-    import { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
-    import ChevronLeftIcon from "../Icons/ChevronLeftIcon.svelte";
-    import ChevronRightIcon from "../Icons/ChevronRightIcon.svelte";
+    import VideoCowebsiteComponent from "../Cowebsites/VideoCowebsiteComponent.svelte";
+    import type { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
     import { screenOrientationStore } from "../../Stores/ScreenOrientationStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import CoWebsiteTab from "./CoWebsiteTab.svelte";
+    import { IconChevronLeft, IconChevronRight, IconArrowsMinimize } from "@wa-icons";
 
     //let container: HTMLElement;
-    let activeCowebsite: CoWebsite = $coWebsites[0];
+    let activeCowebsite: CoWebsite = $state($coWebsites[0]);
     let resizeBar: HTMLElement;
     let unsubscribeCowebsitesUpdate: Unsubscriber | undefined;
 
@@ -145,12 +147,10 @@
         document.removeEventListener("touchend", handleTouchEnd);
     });
 
-    let tabsContainer: HTMLElement | undefined;
-    let tabsContainerWidth = 0;
-    let tabsOverflowing = false;
-    let tabsScrollX = 0;
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-    $: tabsContainerWidth, $coWebsites, (tabsOverflowing = areTabsOverflowing());
+    let tabsContainer: HTMLElement | undefined = $state();
+    let tabsContainerWidth = $state(0);
+    let tabsOverflowing = $derived(tabsContainerWidth >= 0 && $coWebsites.length >= 0 && areTabsOverflowing());
+    let tabsScrollX = $state(0);
 
     function areTabsOverflowing(): boolean {
         if (!tabsContainer) {
@@ -212,9 +212,9 @@
                 <div class="flex-0 w-10">
                     <button
                         class="w-10 h-10 rounded flex items-center justify-center hover:bg-white/10 me-2"
-                        on:click={scrollTabsLeft}
+                        onclick={scrollTabsLeft}
                     >
-                        <ChevronLeftIcon />
+                        <IconChevronLeft font-size="20" class="text-white" />
                     </button>
                 </div>
             {/if}
@@ -223,21 +223,19 @@
             <div class="tab-bar flex-1 w-32" bind:clientWidth={tabsContainerWidth}>
                 <div
                     bind:this={tabsContainer}
-                    class="flex items-center overflow-x-hidden space-x-2 snap-x touch-pan-x"
-                    on:scroll={onTabsScroll}
+                    class="flex items-stretch overflow-x-hidden space-x-2 snap-x touch-pan-x"
+                    onscroll={onTabsScroll}
                 >
                     {#each $coWebsites as coWebsite, index (coWebsite.getId())}
-                        <!-- svelte-ignore a11y-click-events-have-key-events -->
-                        <div
-                            on:click={() => setActiveCowebsite(coWebsite)}
-                            data-testid="tab{index + 1}"
-                            class="snap-start"
-                        >
+                        <!-- svelte-ignore a11y_click_events_have_key_events -->
+                        <!-- svelte-ignore a11y_no_static_element_interactions -->
+                        <div data-testid="tab{index + 1}" class="snap-start">
                             <CoWebsiteTab
                                 {coWebsite}
-                                isLoading={true}
+                                isLoading={false}
                                 active={activeCowebsite === coWebsite}
-                                on:close={() => coWebsites.remove(coWebsite)}
+                                onclose={() => coWebsites.remove(coWebsite)}
+                                onclick={() => setActiveCowebsite(coWebsite)}
                             />
                         </div>
                     {/each}
@@ -248,44 +246,24 @@
                 <div class="flex-0 w-10">
                     <button
                         class="w-10 h-10 rounded flex items-center justify-center hover:bg-white/10 me-2"
-                        on:click={scrollTabsRight}
+                        onclick={scrollTabsRight}
                     >
-                        <ChevronRightIcon />
+                        <IconChevronRight font-size="20" class="text-white" />
                     </button>
                 </div>
             {/if}
 
-            <!-- svelte-ignore a11y-click-events-have-key-events -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="flex justify-end w-10 flex-none">
                 <div
                     class="ms-full h-10 w-10 rounded flex items-center justify-center hover:bg-white/10 me-2 cursor-pointer"
-                    on:click={toggleFullScreen}
+                    onclick={toggleFullScreen}
                 >
                     {#if !$fullScreenCowebsite}
-                        <FullScreenIcon />
+                        <IconArrowsMinimize font-size="20" class="text-white" />
                     {:else}
-                        <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            class="icon icon-tabler icon-tabler-arrows-minimize"
-                            width="24"
-                            height="24"
-                            viewBox="0 0 24 24"
-                            stroke-width="1.5"
-                            stroke="#ffffff"
-                            fill="none"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        >
-                            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-                            <path d="M5 9l4 0l0 -4" />
-                            <path d="M3 3l6 6" />
-                            <path d="M5 15l4 0l0 4" />
-                            <path d="M3 21l6 -6" />
-                            <path d="M19 9l-4 0l0 -4" />
-                            <path d="M15 9l6 -6" />
-                            <path d="M19 15l-4 0l0 4" />
-                            <path d="M15 15l6 6" />
-                        </svg>
+                        <IconArrowsMinimize font-size="20" class="text-white" />
                     {/if}
                 </div>
             </div>
@@ -300,6 +278,10 @@
                         actualCowebsite={coWebsite}
                         visible={coWebsite === activeCowebsite}
                     />
+                {:else if coWebsite instanceof VideoCoWebsite}
+                    <VideoCowebsiteComponent actualCowebsite={coWebsite} visible={coWebsite === activeCowebsite} />
+                {:else if coWebsite instanceof ImageCoWebsite}
+                    <ImageCowebsiteComponent actualCowebsite={coWebsite} visible={coWebsite === activeCowebsite} />
                 {:else if coWebsite instanceof SimpleCoWebsite}
                     <SimpleCowebsiteComponent
                         actualCowebsite={coWebsite}
@@ -311,21 +293,22 @@
         </div>
     </div>
     <!-- We make the drag handle bigger than it really is to make it more easily selectable (especially on mobile) with "after" pseudo element -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
         class={$screenOrientationStore === "portrait"
-            ? "-mt-1.5 mx-auto w-40 h-1 bg-white rounded cursor-row-resize relative after:content-[''] after:absolute after:-start-4 after:-top-1  after:w-48 after:h-6"
-            : "absolute start-1 top-0 bottom-0 m-auto w-1 h-40 bg-white rounded cursor-col-resize after:content-[''] after:absolute after:-start-4 after:-top-4 after:h-48 after:w-6"}
+            ? "-mt-1.5 mx-auto w-40 h-1 bg-white rounded cursor-row-resize relative after:content-[''] after:absolute after:-start-4 after:-top-1  after:w-48 after:h-6 select-none"
+            : "absolute start-1 top-0 bottom-0 m-auto w-1 h-40 bg-white rounded cursor-col-resize after:content-[''] after:absolute after:-start-4 after:-top-4 after:h-48 after:w-6 select-none"}
         class:hidden={$fullScreenCowebsite}
         bind:this={resizeBar}
-        on:mousedown={addDivForResize}
-        on:mouseup={removeDivForResize}
-        on:touchstart={addDivForResize}
-        on:touchstart={() => {
+        onmousedown={addDivForResize}
+        onmouseup={removeDivForResize}
+        ontouchstart={() => {
+            addDivForResize();
             /*isResized.set(true)*/
         }}
-        on:dragend={removeDivForResize}
-        on:touchend={removeDivForResize}
-    />
+        ondragend={removeDivForResize}
+        ontouchend={removeDivForResize}
+    ></div>
 </div>
 
 <style>

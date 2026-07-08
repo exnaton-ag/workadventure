@@ -1,38 +1,18 @@
 import * as Sentry from "@sentry/svelte";
 import { get } from "svelte/store";
-import type { ApplicationDefinitionInterface, AvailabilityStatus } from "@workadventure/messages";
-import {
-    ErrorApiErrorData,
-    ErrorApiRetryData,
-    ErrorApiUnauthorizedData,
-    isRegisterData,
-    MeResponse,
-    ErrorScreenMessage,
-} from "@workadventure/messages";
-import { isAxiosError } from "axios";
-import { defautlNativeIntegrationAppName, KlaxoonService } from "@workadventure/shared-utils";
+import type { ErrorApiErrorData, ErrorApiRetryData, ErrorApiUnauthorizedData } from "@workadventure/messages";
+import { isRegisterData, MeResponse, ErrorScreenMessage } from "@workadventure/messages";
+import axios, { AxiosError, isAxiosError } from "axios";
 import { Subject } from "rxjs";
 import { asError } from "catch-unknown";
+import { v4 as uuidv4 } from "uuid";
+import axiosRetry, { exponentialDelay, isNetworkOrIdempotentRequestError } from "axios-retry";
 import { analyticsClient } from "../Administration/AnalyticsClient";
 import { userIsConnected, warningBannerStore } from "../Stores/MenuStore";
 import { loginSceneVisibleIframeStore } from "../Stores/LoginSceneStore";
 import { _ServiceWorker } from "../Network/ServiceWorker";
 import { GameConnexionTypes, urlManager } from "../Url/UrlManager";
-import {
-    CARDS_ENABLED,
-    ENABLE_OPENID,
-    ERASER_ENABLED,
-    EXCALIDRAW_DOMAINS,
-    EXCALIDRAW_ENABLED,
-    GOOGLE_DOCS_ENABLED,
-    GOOGLE_DRIVE_ENABLED,
-    GOOGLE_SHEETS_ENABLED,
-    GOOGLE_SLIDES_ENABLED,
-    KLAXOON_CLIENT_ID,
-    KLAXOON_ENABLED,
-    TLDRAW_ENABLED,
-    YOUTUBE_ENABLED,
-} from "../Enum/EnvironmentVariable";
+import { ENABLE_OPENID } from "../Enum/EnvironmentVariable";
 import { limitMapStore } from "../Stores/GameStore";
 import { showLimitRoomModalStore } from "../Stores/ModalStore";
 import { gameManager } from "../Phaser/Game/GameManager";
@@ -43,17 +23,26 @@ import { ABSOLUTE_PUSHER_URL } from "../Enum/ComputedConst";
 import { openChatRoom } from "../Chat/Utils";
 import LL from "../../i18n/i18n-svelte";
 import waLogo from "../Components/images/logo.svg";
+import WebsocketReconnectingToast from "../Components/Toasts/WebsocketReconnectingToast.svelte";
 import { errorScreenStore } from "../Stores/ErrorScreenStore";
+import { toastStore } from "../Stores/ToastStoreSingleton";
 import { axiosToPusher, axiosWithRetry } from "./AxiosUtils";
 import { Room } from "./Room";
 import { LocalUser } from "./LocalUser";
 import { localUserStore } from "./LocalUserStore";
-import type { OnConnectInterface, PositionInterface, ViewportInterface } from "./ConnexionModels";
+import type { OnConnectInterface } from "./ConnexionModels";
 import { RoomConnection } from "./RoomConnection";
 import { HtmlUtils } from "./../WebRtc/HtmlUtils";
 import { hasCapability } from "./Capabilities";
 
+const connectionRetryBaseDelayMs = 1_000;
+const connectionRetryMaxDelayMs = 10_000;
+const connectionRetryJitterMs = 500;
+const websocketReconnectingToastId = "websocket-reconnecting-toast";
+
 class ConnectionManager {
+    private static readonly TAB_ID_STORAGE_KEY = "workadventure_tab_id";
+
     private localUser!: LocalUser;
 
     private connexionType?: GameConnexionTypes;
@@ -64,23 +53,11 @@ class ConnectionManager {
 
     private serviceWorker?: _ServiceWorker;
 
-    private _klaxoonToolActivated: boolean | undefined;
-    private _klaxoonToolClientId: string | undefined;
-    private _youtubeToolActivated: boolean | undefined;
-    private _googleDocsToolActivated: boolean | undefined;
-    private _googleSheetsToolActivated: boolean | undefined;
-    private _googleSlidesToolActivated: boolean | undefined;
-    private _eraserToolActivated: boolean | undefined;
-    private _googleDriveActivated: boolean | undefined;
-    private _excalidrawToolActivated: boolean | undefined;
-    private _excalidrawToolDomains: string[] | undefined;
-    private _cardsToolActivated: boolean | undefined;
-    private _tldrawToolActivated: boolean | undefined;
-
-    private _applications: ApplicationDefinitionInterface[] = [];
-
     private readonly _roomConnectionStream = new Subject<RoomConnection>();
     public readonly roomConnectionStream = this._roomConnectionStream.asObservable();
+
+    // Unique identifier for this browser tab, kept across reloads but remains scoped to the tab context.
+    private readonly _tabId: string = ConnectionManager.getOrCreateTabId();
 
     get unloading() {
         return this._unloading;
@@ -93,23 +70,21 @@ class ConnectionManager {
             this._unloading = true;
             if (this.reconnectingTimeout) clearTimeout(this.reconnectingTimeout);
         });
+    }
 
-        // Initialise default application
-        this.klaxoonToolActivated = KLAXOON_ENABLED;
-        this._klaxoonToolClientId = KLAXOON_CLIENT_ID;
-        if (this._klaxoonToolClientId) {
-            KlaxoonService.initWindowKlaxoonActivityPicker();
+    private static getOrCreateTabId(): string {
+        try {
+            const existingTabId = sessionStorage.getItem(ConnectionManager.TAB_ID_STORAGE_KEY);
+            if (existingTabId) {
+                return existingTabId;
+            }
+
+            const tabId = uuidv4();
+            sessionStorage.setItem(ConnectionManager.TAB_ID_STORAGE_KEY, tabId);
+            return tabId;
+        } catch {
+            return uuidv4();
         }
-        this.youtubeToolActivated = YOUTUBE_ENABLED;
-        this.googleDriveToolActivated = GOOGLE_DRIVE_ENABLED;
-        this.googleDocsToolActivated = GOOGLE_DOCS_ENABLED;
-        this.googleSheetsToolActivated = GOOGLE_SHEETS_ENABLED;
-        this.googleSlidesToolActivated = GOOGLE_SLIDES_ENABLED;
-        this.eraserToolActivated = ERASER_ENABLED;
-        this.excalidrawToolActivated = EXCALIDRAW_ENABLED;
-        this.excalidrawToolDomains = EXCALIDRAW_DOMAINS;
-        this.cardsToolActivated = CARDS_ENABLED;
-        this.tldrawToolActivated = TLDRAW_ENABLED;
     }
 
     /**
@@ -270,8 +245,8 @@ class ConnectionManager {
                         window.location.host +
                         roomUrl +
                         (query ? "?" + query : "") + //use urlParams because the token param must be deleted
-                        window.location.hash
-                )
+                        window.location.hash,
+                ),
             );
             urlManager.pushRoomIdToUrl(this._currentRoom);
         } else if (this.connexionType === GameConnexionTypes.room || this.connexionType === GameConnexionTypes.empty) {
@@ -315,12 +290,18 @@ class ConnectionManager {
 
             //todo: add here some kind of warning if authToken has expired.
             if (!this.authToken) {
-                if (!this._currentRoom.authenticationMandatory) {
+                const defaultWokaName = this._currentRoom.defaultWokaName;
+
+                if (!this._currentRoom.authenticationMandatory || defaultWokaName !== undefined) {
                     await this.anonymousLogin();
 
                     const characterTextures = localUserStore.getCharacterTextures();
                     if (characterTextures === null || characterTextures.length === 0) {
-                        nextScene = "selectCharacterScene";
+                        if (defaultWokaName) {
+                            nextScene = "gameScene";
+                        } else {
+                            nextScene = "selectCharacterScene";
+                        }
                     }
                 } else {
                     const redirect = this.loadOpenIDScreen(false);
@@ -401,7 +382,7 @@ class ConnectionManager {
             return Promise.reject(new Error("Invalid URL"));
         }
         if (this.localUser) {
-            analyticsClient.identifyUser(this.localUser.uuid, this.localUser.email);
+            analyticsClient.identifyUser(this.localUser.uuid, this.localUser.email, this._currentRoom.id);
         }
 
         //if limit room active test headband
@@ -450,151 +431,87 @@ class ConnectionManager {
         roomUrl: string,
         name: string,
         characterTextureIds: string[],
-        position: PositionInterface,
-        viewport: ViewportInterface,
         companionTextureId: string | null,
-        availabilityStatus: AvailabilityStatus,
-        lastCommandId?: string
+        lastCommandId?: string,
+        retryAttempt = 0,
     ): Promise<OnConnectInterface> {
+        Sentry.setTag("roomId", roomUrl);
         return new Promise<OnConnectInterface>((resolve, reject) => {
             const connection = new RoomConnection(
                 this.authToken,
                 roomUrl,
-                name,
                 characterTextureIds,
-                position,
-                viewport,
                 companionTextureId,
-                availabilityStatus,
-                lastCommandId
+                lastCommandId,
             );
 
-            // The roomJoinedMessageStream stream is completed in the RoomConnection. No need to unsubscribe.
+            // The websocketErrorStream stream is completed in the RoomConnection. No need to unsubscribe.
             //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
             connection.websocketErrorStream.subscribe((error: Event) => {
                 console.info("onConnectError => An error occurred while connecting to socket server. Retrying", error);
                 reject(asError(error));
             });
 
-            // The roomJoinedMessageStream stream is completed in the RoomConnection. No need to unsubscribe.
-            //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
-            connection.connectionErrorStream.subscribe((event: CloseEvent) => {
-                console.info(
-                    "An error occurred while connecting to socket server. Retrying => Event: ",
-                    event.reason,
-                    event.code,
-                    event
-                );
+            connection.roomConnectedPromise
+                .then((connect) => {
+                    // Set the default application integration for the room
 
-                //However, Chrome will rarely report any close code 1006 reasons to the Javascript side.
-                //This is likely due to client security rules in the WebSocket spec to prevent abusing WebSocket.
-                //(such as using it to scan for open ports on a destination server, or for generating lots of connections for a denial-of-service attack).
-                // more detail here: https://www.rfc-editor.org/rfc/rfc6455#section-7.4.1
-                if (event.code === 1006) {
-                    //check cookies
-                    const cookies = document.cookie.split(";");
-                    for (const cookie of cookies) {
-                        //check id cookie posthog exist
-                        const numberIndexPh = cookie.indexOf("_posthog=");
-                        if (numberIndexPh !== -1) {
-                            //if exist, remove posthog cookie
-                            document.cookie =
-                                cookie.slice(0, numberIndexPh + 9) +
-                                "; domain=.workadventu.re; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/";
+                    this.bindWebsocketReconnectingToast(connection);
+                    this._roomConnectionStream.next(connection);
+                    errorScreenStore.delete();
+                    resolve(connect);
+                })
+                .catch((err: unknown) => {
+                    if (!(err instanceof CloseEvent)) {
+                        console.error("An unknown error occurred while connecting to socket server", err);
+                        Sentry.captureException(err);
+
+                        reject(
+                            new Error(
+                                "An error occurred while connecting to socket server. Retrying." + asError(err).message,
+                            ),
+                        );
+
+                        return;
+                    }
+
+                    const event = err;
+
+                    console.info(
+                        "An error occurred while connecting to socket server. Retrying => Event: ",
+                        event.reason,
+                        event.code,
+                        event,
+                    );
+
+                    //However, Chrome will rarely report any close code 1006 reasons to the Javascript side.
+                    //This is likely due to client security rules in the WebSocket spec to prevent abusing WebSocket.
+                    //(such as using it to scan for open ports on a destination server, or for generating lots of connections for a denial-of-service attack).
+                    // more detail here: https://www.rfc-editor.org/rfc/rfc6455#section-7.4.1
+                    if (event.code === 1006) {
+                        //check cookies
+                        const cookies = document.cookie.split(";");
+                        for (const cookie of cookies) {
+                            //check id cookie posthog exist
+                            const numberIndexPh = cookie.indexOf("_posthog=");
+                            if (numberIndexPh !== -1) {
+                                //if exist, remove posthog cookie
+                                document.cookie =
+                                    cookie.slice(0, numberIndexPh + 9) +
+                                    "; domain=.workadventu.re; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/";
+                            }
                         }
                     }
-                }
 
-                reject(
-                    new Error(
-                        "An error occurred while connecting to socket server. Retrying. Code: " +
-                            event.code +
-                            ", Reason: " +
-                            event.reason
-                    )
-                );
-            });
-
-            // The roomJoinedMessageStream stream is completed in the RoomConnection. No need to unsubscribe.
-            //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
-            connection.roomJoinedMessageStream.subscribe((connect: OnConnectInterface) => {
-                // Set the default application integration for the room
-                const KlaxoonApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.KLAXOON
-                );
-                this.klaxoonToolActivated = KlaxoonApp?.enabled ?? KLAXOON_ENABLED;
-
-                const YoutubeApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.YOUTUBE
-                );
-                this.youtubeToolActivated = YoutubeApp?.enabled ?? YOUTUBE_ENABLED;
-
-                const GoogleDriveApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.GOOGLE_DRIVE
-                );
-                this.googleDriveToolActivated = GoogleDriveApp?.enabled ?? GOOGLE_DRIVE_ENABLED;
-
-                const GoogleDocsApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.GOOGLE_DOCS
-                );
-                this.googleDocsToolActivated = GoogleDocsApp?.enabled ?? GOOGLE_DOCS_ENABLED;
-
-                const GoogleSheetsApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.GOOGLE_SHEETS
-                );
-                this.googleSheetsToolActivated = GoogleSheetsApp?.enabled ?? GOOGLE_SHEETS_ENABLED;
-
-                const GoogleSlidesApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.GOOGLE_SLIDES
-                );
-                this.googleSlidesToolActivated = GoogleSlidesApp?.enabled ?? GOOGLE_SLIDES_ENABLED;
-
-                const EraserApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.ERASER
-                );
-                this.eraserToolActivated = EraserApp?.enabled ?? ERASER_ENABLED;
-
-                const ExcalidrawApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.EXCALIDRAW
-                );
-                this.excalidrawToolActivated = ExcalidrawApp?.enabled ?? EXCALIDRAW_ENABLED;
-
-                const CardsApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.CARDS
-                );
-                this.cardsToolActivated = CardsApp?.enabled ?? CARDS_ENABLED;
-
-                const TldrawApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.TLDRAW
-                );
-                this.tldrawToolActivated = TldrawApp?.enabled ?? TLDRAW_ENABLED;
-
-                // Set other applications
-                for (const app of connect.room.applications ?? []) {
-                    if (
-                        defautlNativeIntegrationAppName.KLAXOON === app.name ||
-                        defautlNativeIntegrationAppName.YOUTUBE === app.name ||
-                        defautlNativeIntegrationAppName.GOOGLE_DRIVE === app.name ||
-                        defautlNativeIntegrationAppName.GOOGLE_DOCS === app.name ||
-                        defautlNativeIntegrationAppName.GOOGLE_SHEETS === app.name ||
-                        defautlNativeIntegrationAppName.GOOGLE_SLIDES === app.name ||
-                        defautlNativeIntegrationAppName.ERASER === app.name ||
-                        defautlNativeIntegrationAppName.EXCALIDRAW === app.name ||
-                        defautlNativeIntegrationAppName.CARDS === app.name ||
-                        defautlNativeIntegrationAppName.TLDRAW === app.name
-                    ) {
-                        continue;
-                    }
-
-                    // Save applications in the connection manager to use it in the map editor
-                    if (this._applications.find((a) => a.name === app.name) === undefined) {
-                        this._applications.push(app);
-                    }
-                }
-                this._roomConnectionStream.next(connection);
-                errorScreenStore.delete();
-                resolve(connect);
-            });
+                    reject(
+                        new Error(
+                            "An error occurred while connecting to socket server. Retrying. Code: " +
+                                event.code +
+                                ", Reason: " +
+                                event.reason,
+                        ),
+                    );
+                });
         }).catch((err) => {
             console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => err", err);
 
@@ -605,43 +522,58 @@ class ConnectionManager {
                     title: get(LL).messageScreen.connecting(),
                     subtitle: get(LL).messageScreen.pleaseWait(),
                     image: gameManager?.currentStartedRoom?.loadingLogo ?? waLogo,
-                })
+                }),
             );
-            // Let's retry in 4-6 seconds
-            return new Promise<OnConnectInterface>((resolve) => {
+            const retryDelay = this.getConnectionRetryDelay(retryAttempt);
+            return new Promise<OnConnectInterface>((resolve, reject) => {
                 console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => reconnectingTimeout");
 
                 this.reconnectingTimeout = setTimeout(() => {
-                    //todo: allow a way to break recursion?
-                    //todo: find a way to avoid recursive function. Otherwise, the call stack will grow indefinitely.
                     console.info(
-                        "[ConnectionManager] connectToRoomSocket => catch => ew Promise[OnConnectInterface] reconnectingTimeout => setTimeout",
+                        "[ConnectionManager] connectToRoomSocket => catch => new Promise[OnConnectInterface] reconnectingTimeout => setTimeout",
                         roomUrl,
                         name,
                         characterTextureIds,
-                        position,
-                        viewport,
                         companionTextureId,
-                        availabilityStatus,
-                        lastCommandId
+                        lastCommandId,
                     );
 
-                    void this.connectToRoomSocket(
+                    this.connectToRoomSocket(
                         roomUrl,
                         name,
                         characterTextureIds,
-                        position,
-                        viewport,
                         companionTextureId,
-                        availabilityStatus,
-                        lastCommandId
-                    ).then((connection) => {
-                        this._roomConnectionStream.next(connection.connection);
-                        resolve(connection);
-                    });
-                }, 4000 + Math.floor(Math.random() * 2000));
+                        lastCommandId,
+                        retryAttempt + 1,
+                    )
+                        .then((connection) => {
+                            this._roomConnectionStream.next(connection.connection);
+                            resolve(connection);
+                        })
+                        .catch(reject);
+                }, retryDelay);
             });
         });
+    }
+
+    private bindWebsocketReconnectingToast(connection: RoomConnection): void {
+        // The websocketReconnectingStream stream is completed with the RoomConnection lifecycle.
+        //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
+        connection.websocketReconnectingStream.subscribe((reconnecting) => {
+            if (reconnecting) {
+                toastStore.addToast(WebsocketReconnectingToast, {}, websocketReconnectingToastId);
+                return;
+            }
+
+            toastStore.removeToast(websocketReconnectingToastId);
+        });
+    }
+
+    private getConnectionRetryDelay(retryAttempt: number): number {
+        const exponentialDelay = connectionRetryBaseDelayMs * 2 ** retryAttempt;
+        const jitter = Math.floor(Math.random() * connectionRetryJitterMs);
+
+        return Math.max(0, Math.min(connectionRetryMaxDelayMs, exponentialDelay + jitter));
     }
 
     get getConnexionType() {
@@ -751,7 +683,7 @@ class ConnectionManager {
                     headers: {
                         Authorization: this.authToken,
                     },
-                }
+                },
             );
             return true;
         } else {
@@ -775,7 +707,7 @@ class ConnectionManager {
                     headers: {
                         Authorization: this.authToken,
                     },
-                }
+                },
             );
             return true;
         } else {
@@ -799,7 +731,7 @@ class ConnectionManager {
                     headers: {
                         Authorization: this.authToken,
                     },
-                }
+                },
             );
             return true;
         } else {
@@ -811,88 +743,60 @@ class ConnectionManager {
         return this._currentRoom;
     }
 
-    get klaxoonToolActivated(): boolean {
-        return this._klaxoonToolActivated ?? false;
-    }
-    set klaxoonToolActivated(activated: boolean | undefined) {
-        this._klaxoonToolActivated = activated;
-    }
-    get klaxoonToolClientId(): string | undefined {
-        return this._klaxoonToolClientId;
+    get tabId(): string {
+        return this._tabId;
     }
 
-    get youtubeToolActivated(): boolean {
-        return this._youtubeToolActivated ?? false;
-    }
-    set youtubeToolActivated(activated: boolean | undefined) {
-        this._youtubeToolActivated = activated;
-    }
+    // Used when a disconnect happens to wait until the pusher server is reachable again
+    public waitForPusherPing(): Promise<void> {
+        if (this._unloading) {
+            return Promise.resolve();
+        }
 
-    get googleDocsToolActivated(): boolean {
-        return this._googleDocsToolActivated ?? false;
-    }
-    set googleDocsToolActivated(activated: boolean | undefined) {
-        this._googleDocsToolActivated = activated;
-    }
+        const pingAxios = axios.create({
+            baseURL: ABSOLUTE_PUSHER_URL,
+            transitional: {
+                // Needed, otherwise timeout errors are throwing ECONNABORTED on Firefox
+                clarifyTimeoutError: true,
+            },
+        });
 
-    get googleSheetsToolActivated(): boolean {
-        return this._googleSheetsToolActivated ?? false;
-    }
-    set googleSheetsToolActivated(activated: boolean | undefined) {
-        this._googleSheetsToolActivated = activated;
-    }
+        axiosRetry(pingAxios, {
+            retries: Number.MAX_SAFE_INTEGER,
+            shouldResetTimeout: true,
+            retryDelay: (retryCount: number) => {
+                const time = exponentialDelay(retryCount);
+                if (time >= 60_000) {
+                    return 60_000;
+                }
+                return time;
+            },
+            retryCondition: (error: AxiosError) => {
+                if (this._unloading) {
+                    return false;
+                }
+                if (isNetworkOrIdempotentRequestError(error)) {
+                    return true;
+                }
+                return (
+                    error.code !== "ECONNABORTED" &&
+                    (!error.response || error.response.status === 429 || error.response.status === 404)
+                );
+            },
+        });
 
-    get googleSlidesToolActivated(): boolean {
-        return this._googleSlidesToolActivated ?? false;
-    }
-    set googleSlidesToolActivated(activated: boolean | undefined) {
-        this._googleSlidesToolActivated = activated;
-    }
-
-    get eraserToolActivated(): boolean {
-        return this._eraserToolActivated ?? false;
-    }
-    set eraserToolActivated(activated: boolean | undefined) {
-        this._eraserToolActivated = activated;
-    }
-
-    get googleDriveToolActivated(): boolean {
-        return this._googleDriveActivated ?? false;
-    }
-    set googleDriveToolActivated(activated: boolean | undefined) {
-        this._googleDriveActivated = activated;
-    }
-
-    get excalidrawToolActivated(): boolean {
-        return this._excalidrawToolActivated ?? false;
-    }
-    set excalidrawToolActivated(activated: boolean | undefined) {
-        this._excalidrawToolActivated = activated;
-    }
-
-    get excalidrawToolDomains(): string[] {
-        return this._excalidrawToolDomains ?? [];
-    }
-    set excalidrawToolDomains(domains: string[] | undefined) {
-        this._excalidrawToolDomains = domains;
-    }
-
-    get cardsToolActivated(): boolean {
-        return this._cardsToolActivated ?? false;
-    }
-    set cardsToolActivated(activated: boolean | undefined) {
-        this._cardsToolActivated = activated;
-    }
-
-    get tldrawToolActivated(): boolean {
-        return this._tldrawToolActivated ?? false;
-    }
-    set tldrawToolActivated(activated: boolean | undefined) {
-        this._tldrawToolActivated = activated;
-    }
-
-    get applications(): ApplicationDefinitionInterface[] {
-        return this._applications;
+        return pingAxios.get("ping", { responseType: "text", timeout: 5_000 }).then((response) => {
+            if (typeof response.data === "string" && response.data === "pong") {
+                return;
+            }
+            throw new AxiosError(
+                `Ping did not return pong. Got: ${String(response.data).substring(0, 1024)}`,
+                "EPING",
+                response.config,
+                response.request,
+                response,
+            );
+        });
     }
 }
 

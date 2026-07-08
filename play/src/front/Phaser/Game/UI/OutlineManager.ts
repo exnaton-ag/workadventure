@@ -1,5 +1,5 @@
-import OutlinePipelinePlugin from "phaser3-rex-plugins/plugins/outlinepipeline-plugin.js";
-import { DirtyScene } from "../DirtyScene";
+import type OutlinePipelinePlugin from "phaser3-rex-plugins/plugins/outlinepipeline-plugin.js";
+import type { DirtyScene } from "../DirtyScene";
 
 /**
  * Temporary solution to fix the issue with the postFX pipeline:
@@ -40,7 +40,7 @@ export class OutlineManager {
 
     public add(
         gameObject: Phaser.GameObjects.GameObject,
-        getOutline: () => { thickness: number; color?: number }
+        getOutline: () => { thickness: number; color?: number },
     ): void {
         this.gameObjects.set(gameObject, getOutline);
 

@@ -1,4 +1,4 @@
-import merge from "ts-deepmerge";
+import { deepmerge } from "deepmerge-ts";
 import en_US from "../en-US";
 import audio from "./audio";
 import camera from "./camera";
@@ -24,8 +24,13 @@ import area from "./area";
 import form from "./form";
 import say from "./say";
 import externalModule from "./externalModule";
+import locate from "./locate";
+import messageScreen from "./messageScreen";
+import randomNames from "./randomNames";
+import onboarding from "./onboarding";
+import recording from "./recording";
 
-const de_DE = merge(en_US, {
+const de_DE = deepmerge(en_US, {
     area,
     audio,
     camera,
@@ -50,6 +55,11 @@ const de_DE = merge(en_US, {
     form,
     say,
     externalModule,
+    locate,
+    messageScreen,
+    randomNames,
+    onboarding,
+    recording,
 });
 
 export default de_DE;

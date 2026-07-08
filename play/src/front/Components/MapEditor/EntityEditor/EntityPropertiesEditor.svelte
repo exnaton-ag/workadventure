@@ -1,7 +1,7 @@
 <script lang="ts">
-    import { EntityDataProperties, EntityDataPropertiesKeys, EntityDataProperty } from "@workadventure/map-editor";
+    import type { EntityDataProperties, EntityDataPropertiesKeys, EntityDataProperty } from "@workadventure/map-editor";
     import { onDestroy } from "svelte";
-    import { ApplicationDefinitionInterface } from "@workadventure/messages";
+    import type { ApplicationDefinitionInterface } from "@workadventure/messages";
     import { v4 as uuid } from "uuid";
     import {
         mapEditorEntityModeStore,
@@ -13,19 +13,22 @@
     import AddPropertyButtonWrapper from "../PropertyEditor/AddPropertyButtonWrapper.svelte";
     import PlayAudioPropertyEditor from "../PropertyEditor/PlayAudioPropertyEditor.svelte";
     import OpenWebsitePropertyEditor from "../PropertyEditor/OpenWebsitePropertyEditor.svelte";
-    import { connectionManager } from "../../../Connection/ConnectionManager";
+
     import { IconChevronDown, IconArrowLeft } from "../../Icons";
     import Input from "../../Input/Input.svelte";
     import TextArea from "../../Input/TextArea.svelte";
     import InputSwitch from "../../Input/InputSwitch.svelte";
     import OpenFilePropertyEditor from "../PropertyEditor/OpenFilePropertyEditor.svelte";
-    import { Entity } from "../../../Phaser/ECS/Entity";
+    import type { Entity } from "../../../Phaser/ECS/Entity";
+    import { gameManager } from "../../../Phaser/Game/GameManager";
 
-    let properties: EntityDataProperties = [];
-    let entityName = "";
-    let entityDescription = "";
-    let entitySearchable = false;
-    let showDescriptionField = false;
+    const applicationManager = gameManager.getCurrentGameScene().applicationManager;
+
+    let properties: EntityDataProperties = $state([]);
+    let entityName = $state("");
+    let entityDescription = $state("");
+    let entitySearchable = $state(false);
+    let showDescriptionField = $state(false);
     let selectedEntity: Entity | undefined = undefined;
 
     let selectedEntityUnsubscriber = mapEditorSelectedEntityStore.subscribe((currentEntity) => {
@@ -102,7 +105,7 @@
 
         properties.description = entityDescription;
         if ($mapEditorSelectedEntityStore) {
-            $mapEditorSelectedEntityStore.updateProperty(properties);
+            $mapEditorSelectedEntityStore.updateProperty($state.snapshot(properties));
         }
     }
 
@@ -115,13 +118,13 @@
 
         properties.searchable = entitySearchable;
         if ($mapEditorSelectedEntityStore) {
-            $mapEditorSelectedEntityStore.updateProperty(properties);
+            $mapEditorSelectedEntityStore.updateProperty($state.snapshot(properties));
         }
     }
 
     function onUpdateProperty(property: EntityDataProperty) {
         if ($mapEditorSelectedEntityStore) {
-            $mapEditorSelectedEntityStore.updateProperty(property);
+            $mapEditorSelectedEntityStore.updateProperty($state.snapshot(property));
         }
     }
 
@@ -138,14 +141,14 @@
                     jitsiRoomConfig: {},
                     closable: true,
                     roomName: "JITSI ROOM",
-                    buttonLabel: $LL.mapEditor.properties.jitsiProperties.label(),
+                    buttonLabel: $LL.mapEditor.properties.jitsiRoomProperty.label(),
                 };
             case "livekitRoomProperty":
                 return {
                     id,
                     type,
                     roomName: "LIVEKIT ROOM",
-                    buttonLabel: $LL.mapEditor.properties.livekitProperties.label(),
+                    buttonLabel: $LL.mapEditor.properties.livekitRoomProperty.label(),
                     livekitRoomConfig: {
                         startWithAudioMuted: false,
                         startWithVideoMuted: false,
@@ -161,7 +164,7 @@
                     name: "",
                     closable: true,
                     newTab: false,
-                    buttonLabel: $LL.mapEditor.properties.openFileProperties.label(),
+                    buttonLabel: $LL.mapEditor.properties.openFile.label(),
                     policy,
                     width: 50,
                     hideUrl: false,
@@ -170,49 +173,49 @@
                 switch (subtype) {
                     case "youtube":
                         placeholder = "https://www.youtube.com/watch?v=Y9ubBWf5w20";
-                        buttonLabel = $LL.mapEditor.properties.youtubeProperties.label();
+                        buttonLabel = $LL.mapEditor.properties.youtube.label();
                         policy =
                             "fullscreen; accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share;";
                         break;
                     case "klaxoon":
                         placeholder = "https://app.klaxoon.com/";
-                        buttonLabel = $LL.mapEditor.properties.klaxoonProperties.label();
+                        buttonLabel = $LL.mapEditor.properties.klaxoon.label();
                         break;
                     case "googleDrive":
                         placeholder = "https://drive.google.com/file/d/1DjNjZVbVeQO9EvgONLzCtl6wG-kxSr9Z/preview";
-                        buttonLabel = $LL.mapEditor.properties.googleDriveProperties.label();
+                        buttonLabel = $LL.mapEditor.properties.googleDrive.label();
                         break;
                     case "googleDocs":
                         placeholder =
                             "https://docs.google.com/document/d/1iFHmKL4HJ6WzvQI-6FlyeuCy1gzX8bWQ83dNlcTzigk/edit";
-                        buttonLabel = $LL.mapEditor.properties.googleDocsProperties.label();
+                        buttonLabel = $LL.mapEditor.properties.googleDocs.label();
                         break;
                     case "googleSheets":
                         placeholder =
                             "https://docs.google.com/spreadsheets/d/1SBIn3IBG30eeq944OhT4VI_tSg-b1CbB0TV0ejK70RA/edit";
-                        buttonLabel = $LL.mapEditor.properties.googleSheetsProperties.label();
+                        buttonLabel = $LL.mapEditor.properties.googleSheets.label();
                         break;
                     case "googleSlides":
                         placeholder =
                             "https://docs.google.com/presentation/d/1fU4fOnRiDIvOoVXbksrF2Eb0L8BYavs7YSsBmR_We3g/edit";
-                        buttonLabel = $LL.mapEditor.properties.googleSlidesProperties.label();
+                        buttonLabel = $LL.mapEditor.properties.googleSlides.label();
                         break;
                     case "eraser":
                         placeholder = "https://app.eraser.io/workspace/ExSd8Z4wPsaqMMgTN4VU";
-                        buttonLabel = $LL.mapEditor.properties.eraserProperties.label();
+                        buttonLabel = $LL.mapEditor.properties.eraser.label();
                         break;
                     case "excalidraw":
                         placeholder = "https://excalidraw.workadventu.re/";
-                        buttonLabel = $LL.mapEditor.properties.excalidrawProperties.label();
+                        buttonLabel = $LL.mapEditor.properties.excalidraw.label();
                         break;
                     case "cards":
                         placeholder =
                             "https://member.workadventu.re?tenant=<your cards tenant>&learning=<Your cards learning>";
-                        buttonLabel = $LL.mapEditor.properties.cardsProperties.label();
+                        buttonLabel = $LL.mapEditor.properties.cards.label();
                         break;
                     default:
                         placeholder = "https://workadventu.re";
-                        buttonLabel = $LL.mapEditor.properties.linkProperties.label();
+                        buttonLabel = $LL.mapEditor.properties.openWebsite.label();
                 }
                 return {
                     id,
@@ -233,7 +236,7 @@
                 return {
                     id,
                     type,
-                    buttonLabel: $LL.mapEditor.properties.audioProperties.label(),
+                    buttonLabel: $LL.mapEditor.properties.playAudio.label(),
                     audioLink: "",
                     volume: 1,
                 };
@@ -277,15 +280,22 @@
         <div class="header-container">
             <h3>{$LL.mapEditor.entityEditor.editing({ name: $mapEditorSelectedEntityStore.getPrefab().name })}</h3>
         </div>
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <p on:click|preventDefault={backToSelectObject} class="flex flex-row items-center text-xs m-0">
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <p
+            onclick={(event) => {
+                event.preventDefault();
+                backToSelectObject();
+            }}
+            class="flex flex-row items-center text-xs m-0"
+        >
             <IconArrowLeft font-size="12" class="cursor-pointer" />
             <span class="ml-1 cursor-pointer">{$LL.mapEditor.entityEditor.itemPicker.backToSelectObject()}</span>
         </p>
         <div class="properties-buttons flex flex-row m-2">
             <AddPropertyButtonWrapper
                 property="playAudio"
-                on:click={() => {
+                onclick={() => {
                     onAddProperty("playAudio");
                 }}
             />
@@ -293,86 +303,86 @@
         <div class="properties-buttons flex flex-row flex-wrap m-2">
             <AddPropertyButtonWrapper
                 property="openWebsite"
-                on:click={() => {
+                onclick={() => {
                     onAddProperty("openWebsite");
                 }}
             />
             <AddPropertyButtonWrapper
                 property="openFile"
-                on:click={() => {
+                onclick={() => {
                     onAddProperty("openFile");
                 }}
             />
             <AddPropertyButtonWrapper
                 property="openWebsite"
                 subProperty="klaxoon"
-                on:click={() => {
+                onclick={() => {
                     onAddProperty("openWebsite", "klaxoon");
                 }}
             />
             <AddPropertyButtonWrapper
                 property="openWebsite"
                 subProperty="youtube"
-                on:click={() => {
+                onclick={() => {
                     onAddProperty("openWebsite", "youtube");
                 }}
             />
             <AddPropertyButtonWrapper
                 property="openWebsite"
                 subProperty="googleDrive"
-                on:click={() => {
+                onclick={() => {
                     onAddProperty("openWebsite", "googleDrive");
                 }}
             />
             <AddPropertyButtonWrapper
                 property="openWebsite"
                 subProperty="googleDocs"
-                on:click={() => {
+                onclick={() => {
                     onAddProperty("openWebsite", "googleDocs");
                 }}
             />
             <AddPropertyButtonWrapper
                 property="openWebsite"
                 subProperty="googleSheets"
-                on:click={() => {
+                onclick={() => {
                     onAddProperty("openWebsite", "googleSheets");
                 }}
             />
             <AddPropertyButtonWrapper
                 property="openWebsite"
                 subProperty="googleSlides"
-                on:click={() => {
+                onclick={() => {
                     onAddProperty("openWebsite", "googleSlides");
                 }}
             />
             <AddPropertyButtonWrapper
                 property="openWebsite"
                 subProperty="eraser"
-                on:click={() => {
+                onclick={() => {
                     onAddProperty("openWebsite", "eraser");
                 }}
             />
             <AddPropertyButtonWrapper
                 property="openWebsite"
                 subProperty="excalidraw"
-                on:click={() => {
+                onclick={() => {
                     onAddProperty("openWebsite", "excalidraw");
                 }}
             />
             <AddPropertyButtonWrapper
                 property="openWebsite"
                 subProperty="tldraw"
-                on:click={() => {
+                onclick={() => {
                     onAddProperty("openWebsite", "tldraw");
                 }}
             />
         </div>
         <div class="properties-buttons flex flex-row flex-wrap m-2">
-            {#each connectionManager.applications as app, index (`my-own-app-${index}`)}
+            {#each applicationManager.applications as app, index (`my-own-app-${index}`)}
                 <AddPropertyButtonWrapper
                     property="openWebsite"
                     subProperty={app.name}
-                    on:click={() => {
+                    onclick={() => {
                         onAddSpecificProperty(app);
                     }}
                 />
@@ -385,7 +395,7 @@
                 type="text"
                 placeholder={$LL.mapEditor.entityEditor.objectNamePlaceholder()}
                 bind:value={entityName}
-                onChange={onUpdateName}
+                onchange={onUpdateName}
             />
         </div>
         <div class="entity-name-container">
@@ -393,11 +403,14 @@
                 <a
                     href="#addDescriptionField"
                     class="pl-0 text-blue-500 flex flex-row items-center"
-                    on:click|preventDefault|stopPropagation={toggleDescriptionField}
-                    >+ {$LL.mapEditor.entityEditor.addDescriptionField()}</a
+                    onclick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        toggleDescriptionField();
+                    }}>+ {$LL.mapEditor.entityEditor.addDescriptionField()}</a
                 >
             {:else}
-                <button class="pl-0 text-blue-500 flex flex-row items-center" on:click={toggleDescriptionField}>
+                <button class="pl-0 text-blue-500 flex flex-row items-center" onclick={toggleDescriptionField}>
                     <IconChevronDown />{$LL.mapEditor.entityEditor.addDescriptionField()}</button
                 >
 
@@ -406,8 +419,8 @@
                     id="objectDescription"
                     placeHolder={$LL.mapEditor.entityEditor.objectDescriptionPlaceholder()}
                     bind:value={entityDescription}
-                    onChange={onUpdateDescription}
-                    onKeyPress={() => {}}
+                    onchange={onUpdateDescription}
+                    onkeypress={() => {}}
                 />
             {/if}
         </div>
@@ -416,45 +429,47 @@
             label={$LL.mapEditor.entityEditor.objectSearchable()}
             id="searchable"
             bind:value={entitySearchable}
-            onChange={onUpdateSearchable}
+            onchange={onUpdateSearchable}
         />
 
-        <div class="properties-container">
-            {#each properties as property (property.id)}
-                <div class="property-box">
-                    {#if property.type === "playAudio"}
-                        <PlayAudioPropertyEditor
-                            {property}
-                            on:close={() => {
-                                onDeleteProperty(property.id);
-                            }}
-                            on:change={() => onUpdateProperty(property)}
-                        />
-                    {:else if property.type === "openWebsite"}
-                        <OpenWebsitePropertyEditor
-                            {property}
-                            triggerOptionActivated={false}
-                            on:close={() => {
-                                onDeleteProperty(property.id);
-                            }}
-                            on:change={() => onUpdateProperty(property)}
-                        />
-                    {:else if property.type === "openFile"}
-                        <OpenFilePropertyEditor
-                            {property}
-                            on:close={() => {
-                                onDeleteProperty(property.id);
-                            }}
-                            on:change={() => onUpdateProperty(property)}
-                        />
-                    {/if}
-                </div>
+        <div class="properties-container flex flex-col gap-8 p-1">
+            {#each properties as property, i (property.id)}
+                {#if property.type !== "entityDescriptionProperties"}
+                    <div class="property-box border border-solid border-white/20 bg-white/5 rounded p-2">
+                        {#if properties[i].type === "playAudio"}
+                            <PlayAudioPropertyEditor
+                                bind:property={properties[i]}
+                                onclose={() => {
+                                    onDeleteProperty(property.id);
+                                }}
+                                onchange={() => onUpdateProperty(properties[i])}
+                            />
+                        {:else if properties[i].type === "openWebsite"}
+                            <OpenWebsitePropertyEditor
+                                bind:property={properties[i]}
+                                triggerOptionActivated={false}
+                                onclose={() => {
+                                    onDeleteProperty(property.id);
+                                }}
+                                onchange={() => onUpdateProperty(properties[i])}
+                            />
+                        {:else if properties[i].type === "openFile"}
+                            <OpenFilePropertyEditor
+                                bind:property={properties[i]}
+                                onclose={() => {
+                                    onDeleteProperty(property.id);
+                                }}
+                                onchange={() => onUpdateProperty(properties[i])}
+                            />
+                        {/if}
+                    </div>
+                {/if}
             {/each}
         </div>
     </div>
 {/if}
 
-<style lang="scss">
+<style>
     .properties-container {
         overflow-y: auto;
         overflow-x: hidden;
@@ -464,91 +479,15 @@
         display: none;
     }
 
-    .property-box {
-        margin-top: 5px;
-    }
-
     .entity-name-container {
         display: flex;
         width: 100%;
         margin-bottom: 0.5em;
         margin-top: 0.5em;
         flex-direction: column;
-        label {
-            min-width: fit-content;
-            margin-right: 0.5em;
-        }
-        input {
-            flex-grow: 1;
-            min-width: 0;
-        }
+
         * {
             margin-bottom: 0;
         }
     }
-
-    // .input-switch {
-    //     position: relative;
-    //     top: 0px;
-    //     right: 0px;
-    //     bottom: 0px;
-    //     left: 0px;
-    //     display: inline-block;
-    //     height: 1rem;
-    //     width: 2rem;
-    //     -webkit-appearance: none;
-    //     -moz-appearance: none;
-    //     appearance: none;
-    //     border-radius: 9999px;
-    //     border-width: 1px;
-    //     border-style: solid;
-    //     --border-opacity: 1;
-    //     border-color: rgb(77 75 103 / var(--border-opacity));
-    //     --bg-opacity: 1;
-    //     background-color: rgb(15 31 45 / var(--bg-opacity));
-    //     background-image: none;
-    //     padding: 0px;
-    //     --text-opacity: 1;
-    //     color: rgb(242 253 255 / var(--text-opacity));
-    //     outline: 2px solid transparent;
-    //     outline-offset: 2px;
-    //     cursor: url(../../../../../public/static/images/cursor_pointer.png), pointer;
-    // }
-
-    // .input-switch::before {
-    //     position: absolute;
-    //     left: -3px;
-    //     top: -3px;
-    //     height: 1.25rem;
-    //     width: 1.25rem;
-    //     border-radius: 9999px;
-    //     --bg-opacity: 1;
-    //     background-color: rgb(146 142 187 / var(--bg-opacity));
-    //     transition-property: all;
-    //     transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-    //     transition-duration: 150ms;
-    //     --content: "";
-    //     content: var(--content);
-    // }
-
-    // .input-switch:checked {
-    //     --border-opacity: 1;
-    //     border-color: rgb(146 142 187 / var(--border-opacity));
-    // }
-
-    // .input-switch:checked::before {
-    //     left: 13px;
-    //     top: -3px;
-    //     --bg-opacity: 1;
-    //     background-color: rgb(65 86 246 / var(--bg-opacity));
-    //     content: var(--content);
-    //     /*--shadow: 0 0 7px 0 rgba(4, 255, 210, 1);
-    //     --shadow-colored: 0 0 7px 0 var(--shadow-color);
-    //     box-shadow: var(--ring-offset-shadow, 0 0 #0000), var(--ring-shadow, 0 0 #0000), var(--shadow);*/
-    // }
-
-    // .input-switch:disabled {
-    //     cursor: not-allowed;
-    //     opacity: 0.4;
-    // }
 </style>

@@ -57,7 +57,7 @@ export class FileListener {
         const userIsAdmin = gameScene.connection?.isAdmin();
         const userIsEditor = gameScene.connection?.hasTag("editor");
 
-        const gameMapAreas = gameScene.getGameMap().getGameMapAreas();
+        const gameMapAreas = gameScene.getGameMap().getWamFile()?.getGameMapAreas();
         const userId = gameScene.connection?.getUserId();
         const userTags = gameScene.connection?.getAllTags() ?? [];
 
@@ -95,7 +95,7 @@ export class FileListener {
                         }),
                         {
                             closable: true,
-                        }
+                        },
                     );
                     draggingFile.set(false);
                     return;
@@ -108,14 +108,14 @@ export class FileListener {
                             {
                                 file: file,
                             },
-                            "popupDropFileEntity"
+                            "popupDropFileEntity",
                         );
                     }
                 } else {
                     console.error("File format not supported", file?.type);
                     warningMessageStore.addWarningMessage(
                         get(LL).mapEditor.entityEditor.uploadEntity.errorOnFileFormat(),
-                        { closable: true }
+                        { closable: true },
                     );
                 }
             }

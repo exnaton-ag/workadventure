@@ -1,6 +1,8 @@
 <script lang="ts">
-    import { createEventDispatcher, onMount } from "svelte";
-    import { ExitPropertyData, WAMFileFormat } from "@workadventure/map-editor";
+    import { onMount } from "svelte";
+    import { SvelteMap } from "svelte/reactivity";
+    import type { ExitPropertyData } from "@workadventure/map-editor";
+    import { WAMFileFormat } from "@workadventure/map-editor";
     import { wamFileMigration } from "@workadventure/map-editor/src/Migrations/WamFileMigration";
     import axios from "axios";
     import { LL } from "../../../../i18n/i18n-svelte";
@@ -9,23 +11,27 @@
     import { IconDoorOut } from "../../Icons";
     import PropertyEditorBase from "./PropertyEditorBase.svelte";
 
-    export let property: ExitPropertyData;
+    interface Props {
+        property: ExitPropertyData;
+        onchange?: () => void;
+        onclose?: () => void;
+    }
 
-    const dispatch = createEventDispatcher<{
-        change: undefined;
-        close: undefined;
-    }>();
+    let { property = $bindable(), onchange, onclose }: Props = $props();
+
     // Key: room URL
-    let mapsUrl = new Map<
-        string,
-        {
-            name: string;
-            wamUrl: string | undefined;
-        }
-    >();
-    let startAreas: string[] = [];
+    let mapsUrl = $state(
+        new Map<
+            string,
+            {
+                name: string;
+                wamUrl: string | undefined;
+            }
+        >(),
+    );
+    let startAreas: string[] = $state([]);
     function onValueChange() {
-        dispatch("change");
+        onchange?.();
     }
 
     const connection = gameManager.getCurrentGameScene().connection;
@@ -34,19 +40,29 @@
         const response = await gameManager.getCurrentGameScene().connection?.queryRoomsFromSameWorld();
 
         if (response) {
+            const nextMapsUrl = new SvelteMap(mapsUrl);
             for (const room of response) {
                 //const url = new URL(room.url);
-                mapsUrl.set(room.roomUrl, {
+                nextMapsUrl.set(room.roomUrl, {
                     name: room.name,
                     wamUrl: room.wamUrl,
                 });
             }
-            mapsUrl = mapsUrl;
+            mapsUrl = nextMapsUrl;
         }
     }
 
     async function fetchStartAreasName(): Promise<void> {
-        if (connection && property.url) {
+        if (property.url == undefined || property.url == "") {
+            // Find the first map in the mapsUrl map
+            const firstMap = mapsUrl.entries().next().value;
+            if (firstMap) {
+                property.url = firstMap[0];
+                onValueChange();
+            }
+        }
+
+        if (connection) {
             const wamUrl = mapsUrl.get(property.url)?.wamUrl;
 
             if (!wamUrl) {
@@ -73,47 +89,62 @@
 </script>
 
 <PropertyEditorBase
-    on:close={() => {
-        dispatch("close");
+    onclose={() => {
+        onclose?.();
     }}
 >
-    <span slot="header" class="flex justify-center items-center">
-        <IconDoorOut font-size="18" class="mr-2" />
-        {$LL.mapEditor.properties.exitProperties.label()}
-    </span>
-    <span slot="content">
-        <div>
-            <Select
-                id="exitMapSelector"
-                label={$LL.mapEditor.properties.exitProperties.exitMap()}
-                bind:value={property.url}
-                onChange={() => {
-                    onValueChange();
-                    fetchStartAreasName().catch((e) => console.error(e));
-                }}
-            >
-                {#each [...mapsUrl.entries()] as map (map[0])}
-                    <option value={map[0]}>{map[1].name}</option>
-                {/each}
-            </Select>
-        </div>
-        {#if property.url}
+    {#snippet header()}
+        <span class="flex justify-center items-center">
+            <IconDoorOut font-size="18" class="mr-2" />
+            {$LL.mapEditor.properties.exit.label()}
+        </span>
+    {/snippet}
+    {#snippet content()}
+        <span>
             <div>
                 <Select
-                    id="startAreaNameSelector"
-                    label={$LL.mapEditor.properties.exitProperties.defaultStartArea()}
-                    bind:value={property.areaName}
-                    onChange={onValueChange}
-                    on:blur={onValueChange}
+                    id="exitMapSelector"
+                    label={$LL.mapEditor.properties.exit.exitMap()}
+                    bind:value={property.url}
+                    onchange={(value: unknown) => {
+                        property.areaName = "";
+                        onValueChange();
+                        fetchStartAreasName().catch((e) => console.error(e));
+                    }}
+                    onblur={() => {
+                        onValueChange();
+                        fetchStartAreasName().catch((e) => console.error(e));
+                    }}
                 >
-                    <option value="" selected={!property.areaName}
-                        >{$LL.mapEditor.properties.exitProperties.defaultStartArea()}</option
-                    >
-                    {#each startAreas as areaName (areaName)}
-                        <option value={areaName} selected={areaName === property.areaName}>{areaName}</option>
+                    {#each [...mapsUrl.entries()] as map (map[0])}
+                        <option value={map[0]} selected={map[0] === property.url}>{map[1].name}</option>
                     {/each}
                 </Select>
             </div>
-        {/if}
-    </span>
+            {#if property.url}
+                <div>
+                    <Select
+                        id="startAreaNameSelector"
+                        label={$LL.mapEditor.properties.exit.defaultStartArea()}
+                        bind:value={property.areaName}
+                        onchange={() => {
+                            onValueChange();
+                            fetchStartAreasName().catch((e) => console.error(e));
+                        }}
+                        onblur={() => {
+                            onValueChange();
+                            fetchStartAreasName().catch((e) => console.error(e));
+                        }}
+                    >
+                        <option value="" selected={!property.areaName}
+                            >{$LL.mapEditor.properties.exit.defaultStartArea()}</option
+                        >
+                        {#each startAreas as areaName (areaName)}
+                            <option value={areaName} selected={areaName === property.areaName}>{areaName}</option>
+                        {/each}
+                    </Select>
+                </div>
+            {/if}
+        </span>
+    {/snippet}
 </PropertyEditorBase>

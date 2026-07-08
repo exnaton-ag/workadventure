@@ -14,27 +14,27 @@ import {
     CompanionDetail,
     isCapabilities,
 } from "@workadventure/messages";
-import type { SchemaObject } from "openapi3-ts";
+import type { SchemaObject } from "openapi3-ts/oas31";
 import { isFetchMemberDataByUuidResponse } from "./AdminApi";
 import { WorldChatMembersData } from "./WorldChatMembersData";
+import { IceServer } from "./IceServer";
 
 class SwaggerGenerator {
     definitions(type: string | null): {
         definitions: { [K: string]: SchemaObject };
     } {
-        const definitions = {
-            definitions: {
-                AdminApiData: generateSchema(isAdminApiData),
-                ErrorApiUnauthorizedData: generateSchema(isErrorApiUnauthorizedData),
-                FetchMemberDataByUuidResponse: generateSchema(isFetchMemberDataByUuidResponse),
-                MapDetailsData: generateSchema(isMapDetailsData),
-                RoomRedirect: generateSchema(isRoomRedirect),
-                WokaDetail: generateSchema(WokaDetail),
-                WorldChatMembersData: generateSchema(WorldChatMembersData),
-            },
-        };
         if (type === "external") {
-            return definitions;
+            return {
+                definitions: {
+                    AdminApiData: generateSchema(isAdminApiData),
+                    ErrorApiUnauthorizedData: generateSchema(isErrorApiUnauthorizedData),
+                    FetchMemberDataByUuidResponse: generateSchema(isFetchMemberDataByUuidResponse),
+                    MapDetailsData: generateSchema(isMapDetailsData),
+                    RoomRedirect: generateSchema(isRoomRedirect),
+                    WokaDetail: generateSchema(WokaDetail),
+                    WorldChatMembersData: generateSchema(WorldChatMembersData),
+                },
+            };
         }
         return {
             definitions: {
@@ -48,6 +48,7 @@ class SwaggerGenerator {
                 ErrorApiRetryData: generateSchema(isErrorApiRetryData),
                 ErrorApiUnauthorizedData: generateSchema(isErrorApiUnauthorizedData),
                 FetchMemberDataByUuidResponse: generateSchema(isFetchMemberDataByUuidResponse),
+                IceServer: generateSchema(IceServer),
                 MapDetailsData: generateSchema(isMapDetailsData),
                 RoomRedirect: generateSchema(isRoomRedirect),
                 WokaDetail: generateSchema(WokaDetail),

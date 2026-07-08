@@ -1,8 +1,8 @@
-import { Readable } from "svelte/store";
+import type { Readable } from "svelte/store";
 import { SimplePeer } from "../../WebRtc/SimplePeer";
-import { SpaceInterface } from "../SpaceInterface";
-import { Streamable } from "../../Stores/StreamableCollectionStore";
-import {
+import type { SpaceInterface } from "../SpaceInterface";
+import type { LocalStreamStoreValue } from "../../Stores/MediaStore";
+import type {
     SimplePeerConnectionInterface,
     PeerFactoryInterface,
     ICommunicationState,
@@ -13,9 +13,10 @@ export const defaultPeerFactory: PeerFactoryInterface = {
     create: (
         _space: SpaceInterface,
         _streamableSubjects: StreamableSubjects,
-        _blockedUsersStore: Readable<Set<string>>
+        _blockedUsersStore: Readable<Set<string>>,
+        _screenSharingLocalStreamStore: Readable<LocalStreamStoreValue | undefined>,
     ) => {
-        const peer = new SimplePeer(_space, _streamableSubjects, _blockedUsersStore);
+        const peer = new SimplePeer(_space, _streamableSubjects, _blockedUsersStore, _screenSharingLocalStreamStore);
         return peer;
     },
 };
@@ -27,9 +28,15 @@ export class WebRTCState implements ICommunicationState {
         private _space: SpaceInterface,
         private _streamableSubjects: StreamableSubjects,
         _blockedUsersStore: Readable<Set<string>>,
-        private _peerFactory: PeerFactoryInterface = defaultPeerFactory
+        _screenSharingLocalStreamStore: Readable<LocalStreamStoreValue | undefined>,
+        private _peerFactory: PeerFactoryInterface = defaultPeerFactory,
     ) {
-        this._peer = this._peerFactory.create(this._space, this._streamableSubjects, _blockedUsersStore);
+        this._peer = this._peerFactory.create(
+            this._space,
+            this._streamableSubjects,
+            _blockedUsersStore,
+            _screenSharingLocalStreamStore,
+        );
     }
 
     destroy() {
@@ -52,19 +59,15 @@ export class WebRTCState implements ICommunicationState {
         this._peer.blockedFromRemotePlayer(userId);
     }
 
-    getVideoForUser(spaceUserId: string): Streamable | undefined {
-        return this._peer.getVideoForUser(spaceUserId);
-    }
-
-    getScreenSharingForUser(spaceUserId: string): Streamable | undefined {
-        return this._peer.getScreenSharingForUser(spaceUserId);
-    }
-
     /**
      * Starts the shutdown process of the communication state. It does not remove all video peers immediately,
      * but any asynchronous operation receiving a new stream should be ignored after this call.
      */
     shutdown(): void {
         this._peer.shutdown();
+    }
+
+    retryAllFailedConnections(): void {
+        this._peer.retryAllFailedConnections();
     }
 }

@@ -1,24 +1,32 @@
 <script lang="ts">
-    import { createEventDispatcher } from "svelte";
-    import { EntityVariant } from "../../../Phaser/Game/MapEditor/Entities/EntityVariant";
+    import type { EntityVariant } from "../../../Phaser/Game/MapEditor/Entities/EntityVariant";
+    import type { CategoryTag } from "../../../Stores/MapEditorStore";
     import LL from "../../../../i18n/i18n-svelte";
     import EntityImage from "./EntityItem/EntityImage.svelte";
     import { IconChevronRight, IconChevronLeft } from "@wa-icons";
 
-    export let tag: string;
-    export let entitiesPrefabsVariants: EntityVariant[];
+    interface Props {
+        tag: CategoryTag;
+        label?: string;
+        entitiesPrefabsVariants: EntityVariant[];
+        selectedTag?: (tag: CategoryTag) => void;
+    }
 
-    const dispatch = createEventDispatcher<{
-        onSelectedTag: string;
-    }>();
+    let { tag, label, entitiesPrefabsVariants, selectedTag = () => {} }: Props = $props();
 
     const isRtl = document.dir === "rtl";
+
+    function format(text: string): string {
+        return `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+    }
 </script>
 
 {#if entitiesPrefabsVariants.length !== 0}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <li
-        class="min-w-full group transition-all bg-white bg-opacity-10 rounded mt-2 hover:bg-opacity-100 hover:text-dark hover:!cursor-pointer"
-        on:click={() => dispatch("onSelectedTag", tag)}
+        class="min-w-full group transition-all bg-white/10 rounded mt-2 hover:bg-white hover:text-dark hover:!cursor-pointer"
+        onclick={() => selectedTag(tag)}
     >
         <div class="entities-tag-list-item-grid p-2">
             <div class="asset">
@@ -29,7 +37,7 @@
                 />
             </div>
             <div class="tag">
-                <p class="m-0">{`${tag.charAt(0).toUpperCase()}${tag.slice(1)}`}</p>
+                <p class="m-0">{label ? format(label) : format(tag.tag)}</p>
             </div>
             <div class="entitiesCount">
                 {entitiesPrefabsVariants.length}
@@ -46,7 +54,7 @@
     </li>
 {/if}
 
-<style lang="scss">
+<style>
     .entities-tag-list-item-grid {
         display: grid;
         column-gap: 6px;

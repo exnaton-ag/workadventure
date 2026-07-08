@@ -1,7 +1,8 @@
-import Phaser from "phaser";
-import { GameScene } from "../Game/GameScene";
+import * as Phaser from "phaser";
+import type { GameScene } from "../Game/GameScene";
 import { DEPTH_CONVERSATION_BUBBLE_INDEX } from "../Game/DepthIndexes";
-import { Character } from "./Character";
+import { MINIMUM_DISTANCE } from "../../Enum/EnvironmentVariable";
+import type { Character } from "./Character";
 import { RemotePlayer } from "./RemotePlayer";
 
 /** A very small interface for whatever "player" object you use.
@@ -15,7 +16,7 @@ export interface Avatar {
 /** Jelly-like circle that bulges / dimples toward or away from avatars. */
 export class ConversationBubble extends Phaser.GameObjects.Sprite {
     // ==== Tunables =========================================================
-    private readonly R0 = 64; // resting radius (px)
+    private readonly R0 = MINIMUM_DISTANCE; // resting radius (px)
     private readonly lambda = 40; // fall-off distance for influence (px)
     private readonly kInside = 2; // angular sharpness of the bump from players inside the bubble
     private readonly kOutside = 20; // angular sharpness of the bump from players outside the bubble
@@ -23,6 +24,8 @@ export class ConversationBubble extends Phaser.GameObjects.Sprite {
     private readonly segments = 64; // angular samples (higher = smoother)
     private readonly speed = 0.1; // If set to 1, the bubble size instantly matches the avatars position. Set between 0 and 1 to have a smooth transition.
     private readonly stopAnimationThreshold = 0.1; // As long as one of the radii changes more than this value, the bubble is considered animating.
+    private readonly influenceRadius = this.R0 + this.lambda * 2;
+    private readonly influenceRadiusSquared = this.influenceRadius * this.influenceRadius;
 
     // ==== Internal state ===================================================
     private center = new Phaser.Math.Vector2();
@@ -35,6 +38,7 @@ export class ConversationBubble extends Phaser.GameObjects.Sprite {
     private generatedTextureKey: string | null = null;
     // Whether the bubble is currently wobbling
     private _isAnimating: boolean = true;
+    private _needsStep: boolean = true;
 
     constructor(scene: GameScene, x: number, y: number, locked: boolean, userIds: number[]) {
         super(scene, x, y, "");
@@ -51,28 +55,22 @@ export class ConversationBubble extends Phaser.GameObjects.Sprite {
 
     public updateUsers(userIds: number[]): void {
         this.userIds = userIds;
-        this.drawSpline();
+        this._needsStep = true;
     }
 
-    private getAvatarsList(): Avatar[] {
-        const avatars: Avatar[] = [];
-
-        for (const remotePlayer of this.gameScene.MapPlayersByKey.values()) {
-            const avatar = this.turnInAvatar(remotePlayer);
-            if (avatar) {
-                avatars.push(avatar);
-            }
-        }
-
-        const currentPlayerAvatar = this.turnInAvatar(this.gameScene.CurrentPlayer);
-        if (currentPlayerAvatar) {
-            avatars.push(currentPlayerAvatar);
-        }
-
-        return avatars;
+    public getInfluenceRadius(): number {
+        return this.influenceRadius;
     }
 
-    private turnInAvatar(character: Character): Avatar | undefined {
+    public containsUserId(userId: number): boolean {
+        return this.userIds.includes(userId);
+    }
+
+    public getUserIds(): readonly number[] {
+        return this.userIds;
+    }
+
+    public turnInAvatar(character: Character): Avatar | undefined {
         let userId: number;
         if (character instanceof RemotePlayer) {
             userId = character.userId;
@@ -96,8 +94,8 @@ export class ConversationBubble extends Phaser.GameObjects.Sprite {
             // Is the player close enough to be considered?
             const dx = character.x - this.center.x;
             const dy = character.y - this.center.y;
-            const dist = dx + dy; // using an approximation of distance for performance
-            if (dist < this.R0 + this.lambda * 2) {
+            const dist = dx * dx + dy * dy;
+            if (dist < this.influenceRadiusSquared) {
                 return {
                     x: character.x,
                     y: character.y,
@@ -109,10 +107,10 @@ export class ConversationBubble extends Phaser.GameObjects.Sprite {
     }
 
     /** Call once per frame with the avatars that might affect this bubble. */
-    public step(): void {
-        const avatars = this.getAvatarsList();
-
+    public step(avatars: Avatar[]): void {
+        this._needsStep = false;
         this._isAnimating = false; // reset animation state
+        this.updateCenterFromInsideAvatars(avatars);
 
         /* --- 1.  Update radius samples ----------------------------------- */
         for (let s = 0; s < this.segments; s++) {
@@ -161,10 +159,38 @@ export class ConversationBubble extends Phaser.GameObjects.Sprite {
         return c <= 0 ? 0 : Math.pow(c, isInside ? this.kInside : this.kOutside);
     }
 
+    private updateCenterFromInsideAvatars(avatars: Avatar[]): void {
+        let x = 0;
+        let y = 0;
+        let count = 0;
+
+        for (const avatar of avatars) {
+            if (!avatar.inside) {
+                continue;
+            }
+
+            x += avatar.x;
+            y += avatar.y;
+            count++;
+        }
+
+        if (count === 0) {
+            return;
+        }
+
+        this.center.set(x / count, y / count);
+        this.setPosition(this.center.x, this.center.y);
+    }
+
     /**
      * Build Catmull-Rom spline, create texture from it and apply to sprite.
      */
     private drawSpline(): void {
+        if (!this.scene.renderer) {
+            // In case we don't have a renderer at all (bots, etc...), no need to render the bubble.
+            return;
+        }
+
         // Convert polar samples to Cartesian points
         const pts: Phaser.Math.Vector2[] = [];
         for (let s = 0; s < this.segments; s++) {
@@ -242,12 +268,6 @@ export class ConversationBubble extends Phaser.GameObjects.Sprite {
     // Optional utilities
     // -----------------------------------------------------------------------
 
-    /** Move the whole bubble (e.g. follow the group's centroid). */
-    public setCenter(x: number, y: number): void {
-        this.center.set(x, y);
-        this.setPosition(x, y);
-    }
-
     public setLocked(locked: boolean): void {
         this.locked = locked;
         this.drawSpline(); // redraw with new style
@@ -261,7 +281,7 @@ export class ConversationBubble extends Phaser.GameObjects.Sprite {
     /** Clean up resources when destroying the object */
     public destroy(fromScene?: boolean): void {
         // Remove the generated texture before destroying the sprite
-        if (this.generatedTextureKey && this.scene.textures.exists(this.generatedTextureKey)) {
+        if (this.generatedTextureKey && this.scene?.textures?.exists(this.generatedTextureKey)) {
             this.scene.textures.remove(this.generatedTextureKey);
         }
         super.destroy(fromScene);
@@ -269,5 +289,9 @@ export class ConversationBubble extends Phaser.GameObjects.Sprite {
 
     public get isAnimating(): boolean {
         return this._isAnimating;
+    }
+
+    public get needsStep(): boolean {
+        return this._needsStep;
     }
 }

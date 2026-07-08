@@ -1,29 +1,21 @@
 import { Buffer } from "buffer";
-import Olm from "@matrix-org/olm";
 
-import {
-    createClient,
-    ICreateClientOpts,
-    IndexedDBCryptoStore,
-    IndexedDBStore,
-    MatrixClient,
-    SecretStorage,
-} from "matrix-js-sdk";
+import type { ICreateClientOpts, MatrixClient, SecretStorage } from "matrix-js-sdk";
+import { createClient, IndexedDBCryptoStore, IndexedDBStore } from "matrix-js-sdk";
 
-import { SecretStorageKeyDescriptionAesV1 } from "matrix-js-sdk/lib/secret-storage";
-import { openModal } from "svelte-modals";
+import type { SecretStorageKeyDescriptionAesV1 } from "matrix-js-sdk/lib/secret-storage";
 import { VerificationMethod } from "matrix-js-sdk/lib/types";
-import { LocalUser } from "../../../Connection/LocalUser";
+import type { LocalUser } from "../../../Connection/LocalUser";
 import AccessSecretStorageDialog from "./AccessSecretStorageDialog.svelte";
 import { matrixSecurity } from "./MatrixSecurity";
 import { customMatrixLogger } from "./CustomMatrixLogger";
+import { modals } from "@wa-modals";
 
-globalThis.Olm = Olm;
 window.Buffer = Buffer;
 
 export interface MatrixClientWrapperInterface {
     initMatrixClient(): Promise<MatrixClient>;
-    cacheSecretStorageKey(keyId: string, key: Uint8Array): void;
+    cacheSecretStorageKey(keyId: string, key: Uint8Array<ArrayBuffer>): void;
 }
 
 export interface MatrixLocalUserStore {
@@ -63,13 +55,14 @@ export class InvalidLoginTokenError extends Error {
 
 export class MatrixClientWrapper implements MatrixClientWrapperInterface {
     private client!: MatrixClient;
-    private secretStorageKeys: Record<string, Uint8Array> = {};
+    private secretStorageKeys: Record<string, Uint8Array<ArrayBuffer>> = {};
+    private secretStorageKeyRequestPromise: Promise<[string, Uint8Array<ArrayBuffer>] | null> | undefined;
     private clientClosed = false;
 
     constructor(
         private baseUrl: string,
         private localUserStore: MatrixLocalUserStore,
-        private _createClient: (opts: ICreateClientOpts) => MatrixClient = createClient
+        private _createClient: (opts: ICreateClientOpts) => MatrixClient = createClient,
     ) {}
 
     public async initMatrixClient(): Promise<MatrixClient> {
@@ -188,7 +181,7 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
 
         const indexDbCryptoStore = new IndexedDBCryptoStore(
             globalThis.indexedDB,
-            `crypto-store-${this.baseUrl}-${matrixUserId}`
+            `crypto-store-${this.baseUrl}-${matrixUserId}`,
         );
 
         return { matrixStore: indexDbStore, matrixCryptoStore: indexDbCryptoStore };
@@ -196,7 +189,7 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
 
     private async retrieveMatrixConnectionDataFromLoginToken(
         matrixServerUrl: string,
-        loginToken: string
+        loginToken: string,
     ): Promise<{
         matrixUserId: string;
         accessToken: string;
@@ -210,13 +203,12 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
         const client = this._createClient(options);
 
         try {
-            const { user_id, access_token, refresh_token, expires_in_ms, device_id } = await client.login(
-                "m.login.token",
-                {
-                    token: loginToken,
-                    initial_device_display_name: "WorkAdventure",
-                }
-            );
+            // login(type, data) is deprecated in 41.8.0 in favour of loginRequest({ type, ...data }).
+            const { user_id, access_token, refresh_token, expires_in_ms, device_id } = await client.loginRequest({
+                type: "m.login.token",
+                token: loginToken,
+                initial_device_display_name: "WorkAdventure",
+            });
 
             this.localUserStore.setMatrixUserId(user_id);
             this.localUserStore.setMatrixAccessToken(access_token);
@@ -250,7 +242,7 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
         keys,
     }: {
         keys: Record<string, SecretStorageKeyDescriptionAesV1>;
-    }): Promise<[string, Uint8Array] | null> {
+    }): Promise<[string, Uint8Array<ArrayBuffer>] | null> {
         let keyId = await this.client.secretStorage.getDefaultKeyId();
         let keyInfo!: SecretStorage.SecretStorageKeyDescription;
         if (keyId) {
@@ -275,15 +267,30 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
             return [keyId, this.secretStorageKeys[keyId]];
         }
 
-        const key = await new Promise<Uint8Array | null>((resolve, reject) => {
+        if (this.secretStorageKeyRequestPromise) {
+            return this.secretStorageKeyRequestPromise;
+        }
+
+        this.secretStorageKeyRequestPromise = this.openSecretStorageKeyDialog(keyId, keyInfo).finally(() => {
+            this.secretStorageKeyRequestPromise = undefined;
+        });
+
+        return this.secretStorageKeyRequestPromise;
+    }
+
+    private async openSecretStorageKeyDialog(
+        keyId: string,
+        keyInfo: SecretStorage.SecretStorageKeyDescription,
+    ): Promise<[string, Uint8Array<ArrayBuffer>] | null> {
+        const key = await new Promise<Uint8Array<ArrayBuffer> | null>((resolve) => {
             if (!matrixSecurity.shouldDisplayModal) {
                 resolve(null);
                 return;
             }
-            openModal(AccessSecretStorageDialog, {
+            modals.open(AccessSecretStorageDialog, {
                 keyInfo,
                 matrixClient: this.client,
-                onClose: (key: Uint8Array | null) => resolve(key),
+                onClose: (key: Uint8Array<ArrayBuffer> | null) => resolve(key),
             });
         });
 
@@ -295,7 +302,7 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
         return [keyId, key];
     }
 
-    public cacheSecretStorageKey(keyId: string, key: Uint8Array) {
+    public cacheSecretStorageKey(keyId: string, key: Uint8Array<ArrayBuffer>) {
         this.secretStorageKeys[keyId] = key;
     }
 

@@ -23,19 +23,46 @@ const menu: BaseTranslation = {
     profile: {
         login: "Sign in",
         logout: "Log out",
+        helpAndTips: "Help & Tips",
     },
     settings: {
         videoBandwidth: {
             title: "Video quality",
             low: "Low",
             recommended: "Recommended",
-            unlimited: "Unlimited",
+            high: "High",
         },
         shareScreenBandwidth: {
             title: "Screen sharing quality",
             low: "Low",
             recommended: "Recommended",
-            unlimited: "Unlimited",
+            high: "High",
+        },
+        bandwidthConstrainedPreference: {
+            title: "If network bandwidth is limited",
+            maintainFramerateTitle: "Keep smooth animations",
+            maintainFramerateDescription:
+                "Prioritize framerate over resolution. Use this when smooth animations are important like streaming video games.",
+            maintainResolutionTitle: "Keep text readable",
+            maintainResolutionDescription:
+                "Prioritize resolution over framerate. Use this when text readability is important like in presentations, or when sharing code.",
+            balancedTitle: "Keep framerate and resolution balanced",
+            balancedDescription: "Try to keep a balance between framerate and resolution.",
+        },
+        microphone: {
+            title: "Microphone settings",
+            autoGainControl: "Automatic gain control",
+            autoGainControlDescription: "Automatically adjust your microphone volume.",
+            echoCancellation: "Echo cancellation",
+            enableAdvancedNoiseReduction: "Enable advanced noise reduction",
+            noiseSuppressionMode: "Noise suppression mode:",
+            workAdventureNoiseSuppression: "WorkAdventure noise suppression",
+            workAdventureNoiseSuppressionDescription: "Process your microphone with WorkAdventure's noise suppression.",
+            recommended: "Recommended",
+            browserNoiseSuppression: "Browser noise suppression",
+            browserNoiseSuppressionDescription: "Use your browser's built-in noise suppression.",
+            voiceIsolation: "Voice isolation",
+            voiceIsolationDescription: "Use your browser and operating system voice isolation when available.",
         },
         language: {
             title: "Language",
@@ -63,6 +90,7 @@ const menu: BaseTranslation = {
             ding: "Ding",
             wobble: "Wobble",
         },
+        displayVideoQualityStats: "Display video quality statistics",
     },
     invite: {
         description: "Share the link of the room!",
@@ -132,7 +160,6 @@ const menu: BaseTranslation = {
     sub: {
         profile: "Profile",
         settings: "Settings",
-        invite: "Share",
         credit: "Credit",
         globalMessages: "Global Messages",
         contact: "Contact",
@@ -165,6 +192,7 @@ const menu: BaseTranslation = {
         emote6: "Emote 6",
         openSayPopup: "Open Say Popup",
         openThinkPopup: "Open Think Popup",
+        walkMyDesk: "Walk to My Desk",
     },
 };
 

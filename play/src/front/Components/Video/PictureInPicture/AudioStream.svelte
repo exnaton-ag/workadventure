@@ -1,27 +1,36 @@
 <script lang="ts">
-    import { createEventDispatcher, onDestroy, onMount } from "svelte";
+    import { onDestroy, onMount } from "svelte";
     import Debug from "debug";
     import * as Sentry from "@sentry/svelte";
-    import { Readable } from "svelte/store";
+    import type { Readable } from "svelte/store";
+    import { signalAudioPlaybackBlocked } from "../../../Stores/AudioPlaybackStore";
+    import { userActivationManager } from "../../../Stores/UserActivationStore";
 
-    export let streamStore: Readable<MediaStream | undefined>;
-    export let outputDeviceId: string | undefined = undefined;
-    export let isBlocked: Readable<boolean>;
+    interface Props {
+        streamStore: Readable<MediaStream | undefined>;
+        outputDeviceId?: string;
+        isBlocked: Readable<boolean>;
+        volume: Readable<number>;
+        onselectoutputaudiodeviceerror?: () => void;
+    }
+
+    let {
+        streamStore,
+        outputDeviceId = undefined,
+        isBlocked,
+        volume,
+        onselectoutputaudiodeviceerror,
+    }: Props = $props();
 
     const debug = Debug("AudioStream");
 
-    const dispatch = createEventDispatcher<{
-        selectOutputAudioDeviceError: void;
-    }>();
+    let audioElement: HTMLAudioElement | undefined = $state();
 
-    export let volume: number;
-    let audioElement: HTMLAudioElement;
-
-    $: {
+    $effect(() => {
         if (audioElement) {
-            audioElement.volume = volume;
+            audioElement.volume = $volume;
         }
-    }
+    });
 
     let lastRequestedDeviceId: string | undefined;
 
@@ -58,7 +67,7 @@
                     console.error("Error resetting the audio output device: ", e);
                 }
 
-                dispatch("selectOutputAudioDeviceError");
+                onselectoutputaudiodeviceerror?.();
                 return false;
             }
             console.error("Error setting the audio output device: ", e);
@@ -66,35 +75,86 @@
         }
     }
 
-    $: {
+    $effect(() => {
         if (outputDeviceId && audioElement) {
             safeSetSinkId(outputDeviceId, audioElement).catch((e) => {
                 console.error("Error setting the audio output device: ", e);
                 Sentry.captureException(e);
             });
         }
-    }
+    });
 
     let destroyed = false;
 
-    $: stream = $streamStore ? $streamStore : undefined;
+    // Some Chromium-based browsers (Brave, Vivaldi) do NOT honor the `autoplay` attribute for a MediaStream
+    // assigned to `srcObject` (verified: the element stays paused regardless of assignment timing), so the
+    // remote peer is inaudible. We therefore start playback explicitly with el.play(). That call only needs
+    // *sticky* user activation (any prior interaction, e.g. moving the avatar), so in normal use no click is
+    // needed. If there has been no interaction at all yet, play() is blocked; we then raise the app-level
+    // BrowserNoSoundInfoToast (see signalAudioPlaybackBlocked) and retry this element once the page gains
+    // activation. The retry is NOT registered in audioPlaybackStore here: that would tie the toast's lifetime
+    // to this component, which BACK_IN_A_MOMENT destroys, making the toast flash and vanish.
+    let activationRetryScheduled = false;
 
-    $: if (audioElement && stream) {
-        if (audioElement.srcObject !== stream) {
-            audioElement.srcObject = stream;
+    function playAudio(): void {
+        const el = audioElement;
+        if (!el || destroyed || !el.srcObject) {
+            return;
         }
+        el.play().catch((e) => {
+            // If the `autoplay` attribute already started playback, this rejection is harmless.
+            if (destroyed || !el.paused) {
+                return;
+            }
+            // Genuine block (missing user activation, e.g. Brave / Vivaldi: "play() can only be initiated
+            // by a user gesture").
+            debug("Audio playback blocked, waiting for a user gesture to retry", e);
+            // Keep the toast + BACK_IN_A_MOMENT status alive at app level (survives this component being
+            // destroyed when the bubble closes).
+            signalAudioPlaybackBlocked();
+            // Retry this specific element once the page gains user activation (covers the case where the
+            // bubble is NOT closed, e.g. when browser notifications are enabled). At most once, to avoid a
+            // tight loop if playback keeps failing for another reason after activation.
+            if (!activationRetryScheduled) {
+                activationRetryScheduled = true;
+                userActivationManager
+                    .waitForUserActivation()
+                    .then(() => {
+                        if (!destroyed) {
+                            playAudio();
+                        }
+                    })
+                    .catch((err: unknown) => Sentry.captureException(err));
+            }
+        });
     }
+
+    let stream = $derived($streamStore ? $streamStore : undefined);
+
+    // Assign srcObject with $effect.pre (runs *before* the DOM update, matching the Svelte 4 `$:` block this
+    // replaced) and then start playback via playAudio(). The explicit play() is what actually restores sound
+    // in Brave/Vivaldi — those browsers ignore the `autoplay` attribute for a MediaStream even with correct
+    // pre-DOM timing; .pre is kept only for parity with the pre-migration behavior.
+    $effect.pre(() => {
+        if (audioElement && stream) {
+            if (audioElement.srcObject !== stream) {
+                audioElement.srcObject = stream;
+            }
+            playAudio();
+        }
+    });
 
     onMount(() => {
         (async () => {
-            if (outputDeviceId) {
+            if (outputDeviceId && audioElement) {
                 // Because of a bug in Chrome, we need to wait for setSinkId to resolve before setting the srcObject.
                 await safeSetSinkId(outputDeviceId, audioElement);
                 if (destroyed || !audioElement) {
                     return;
                 }
                 audioElement.srcObject = stream ?? null;
-                audioElement.volume = volume;
+                audioElement.volume = $volume;
+                playAudio();
             }
         })().catch((e) => {
             console.error(e);
@@ -108,5 +168,5 @@
 </script>
 
 {#if !$isBlocked}
-    <audio bind:this={audioElement} autoplay={true} />
+    <audio bind:this={audioElement} autoplay={true}></audio>
 {/if}

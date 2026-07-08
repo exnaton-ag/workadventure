@@ -8,7 +8,7 @@ import passport from "passport";
 import bodyParser from "body-parser";
 import { setErrorHandler } from "@workadventure/shared-utils/src/ErrorHandler";
 import { mapStorageServer } from "./MapStorageServer";
-import { mapsManager } from "./MapsManager";
+
 import { proxyFiles } from "./FileFetcher/FileFetcher";
 import { UploadController } from "./Upload/UploadController";
 import { fileSystem } from "./fileSystem";
@@ -33,6 +33,7 @@ if (SENTRY_DSN != undefined) {
             release: SENTRY_RELEASE,
             environment: SENTRY_ENVIRONMENT,
             tracesSampleRate: SENTRY_TRACES_SAMPLE_RATE,
+            attachStacktrace: true,
         };
 
         Sentry.init(sentryOptions);
@@ -90,7 +91,7 @@ app.use(
     bodyParser.json({
         type: ["application/json", "application/json-patch+json"],
         limit: BODY_PARSER_JSON_SIZE_LIMIT,
-    })
+    }),
 );
 
 for (const passportStrategy of passportStrategies) {
@@ -113,15 +114,9 @@ app.get(/.*\.wam$/, (req, res, next) => {
     // the command queue.
     res.setHeader("Cache-Control", "max-age=5");
 
-    // Maybe the map is already in memory (in case this map is edited by the current map storage)
-    const gameMap = mapsManager.getGameMap(key);
-    if (gameMap) {
-        res.send(gameMap.getWam());
-    } else {
-        // Let's load the map, but do not put it in memory (because it might become outdated if another map-storage
-        // changes the map)
-        fileSystem.serveStaticFile(key, res, next);
-    }
+    // Let's load the map, but do not put it in memory (because it might become outdated if another map-storage
+    // changes the map)
+    fileSystem.serveStaticFile(key, res, next);
 });
 
 app.get("/ping", (req, res) => {
@@ -138,7 +133,7 @@ app.get(
     (req, res, next) => {
         Promise.resolve(verifyJWT(req, res, next)).catch(next);
     },
-    proxyFiles(fileSystem)
+    proxyFiles(fileSystem),
 );
 
 app.use(proxyFiles(fileSystem));
@@ -150,6 +145,24 @@ if (fs.existsSync("dist-ui")) {
         res.sendFile("index.html", { root: "dist-ui" });
     });
 }
+
+// Error-handling middlewares. They must be registered last, after all routes.
+
+// Capture route errors in Sentry, then delegate to the next error handler.
+Sentry.setupExpressErrorHandler(app);
+
+// Force error responses to be non-cacheable, then delegate to Express's default error handler
+// (which logs the stack and sends the 500).
+// Routes like `proxyFiles` set an aggressive `Cache-Control` header (e.g.
+// "public, max-age=31536000, immutable") *before* the file is fetched. If the fetch then fails
+// (e.g. a transient S3 outage) the request ends up here as a 500. Without overriding the header,
+// the browser/CDN would cache that 500 for up to a year and keep serving it even after S3 recovers.
+app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (!res.headersSent) {
+        res.setHeader("Cache-Control", "no-store");
+    }
+    next(err);
+});
 
 app.listen(3000, () => {
     console.info(`[${new Date().toISOString()}] Application is running on port 3000`);

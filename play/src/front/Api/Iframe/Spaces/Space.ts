@@ -1,8 +1,9 @@
-import { BehaviorSubject, Observable, Subject, Subscriber, Subscription } from "rxjs";
-import { merge } from "lodash";
-import { CheckedIframeMessagePort } from "../CheckedIframeMessagePort";
-import { NewSpaceUserEvent } from "../../Events/NewSpaceUserEvent";
-import { SpaceUser, ReactiveSpaceUser } from "./SpaceUser";
+import type { Subscriber, Subscription } from "rxjs";
+import { BehaviorSubject, Observable, Subject } from "rxjs";
+import { deepmergeInto } from "deepmerge-ts";
+import type { CheckedIframeMessagePort } from "../CheckedIframeMessagePort";
+import type { NewSpaceUserEvent } from "../../Events/NewSpaceUserEvent";
+import type { SpaceUser, ReactiveSpaceUser } from "./SpaceUser";
 
 export class Space {
     private watchCount = 0;
@@ -35,7 +36,10 @@ export class Space {
                     break;
                 }
                 case "onDeleteUser": {
-                    this._userLeftSubscriber?.next(this.users.get(event.data.data.spaceUserId));
+                    const user = this.users.get(event.data.data.spaceUserId);
+                    if (user !== undefined) {
+                        this._userLeftSubscriber?.next(user);
+                    }
                     this.users.delete(event.data.data.spaceUserId);
                     break;
                 }
@@ -46,7 +50,7 @@ export class Space {
                     }
 
                     // Update the user with the changes
-                    merge(user, event.data.data.changes);
+                    deepmergeInto(user, event.data.data.changes);
 
                     for (const key in event.data.data.changes) {
                         // We allow ourselves a not 100% exact type cast here.
@@ -112,7 +116,7 @@ export class Space {
         return new Proxy(
             {
                 spaceUserId: user.spaceUserId,
-            } as unknown as ReactiveSpaceUser,
+            },
             {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 get(target: any, property: PropertyKey, receiver: unknown) {
@@ -132,7 +136,7 @@ export class Space {
                         }
                     }
                 },
-            }
+            },
         );
     }
 

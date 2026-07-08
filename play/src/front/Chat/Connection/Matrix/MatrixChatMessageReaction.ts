@@ -1,8 +1,12 @@
-import { EventType, MatrixEvent, RelationType, Room } from "matrix-js-sdk";
+import type { MatrixEvent, Room } from "matrix-js-sdk";
+import { EventType, RelationType } from "matrix-js-sdk";
 import { MapStore } from "@workadventure/store-utils";
-import { get, writable, Writable } from "svelte/store";
-import { ChatMessageReaction, ChatUser } from "../ChatConnection";
-import { chatUserFactory } from "./MatrixChatUser";
+import type { Writable } from "svelte/store";
+import { get, writable } from "svelte/store";
+import type { ChatMessageReaction, ChatUser } from "../ChatConnection";
+import type { WorkAdventureComponent, WorkAdventureComponentProps } from "../../../../types/component";
+import ReactionIcon from "../../Components/Room/ReactionIcon.svelte";
+import { chatUserFactoryFromRoom } from "./MatrixChatUser";
 
 type EventId = string;
 type ChatUserWithEventId = ChatUser & { eventId: EventId };
@@ -13,7 +17,10 @@ export class MatrixChatMessageReaction implements ChatMessageReaction {
     users: MapStore<string, ChatUserWithEventId>;
     reacted: Writable<boolean>;
 
-    constructor(private matrixRoom: Room, event: MatrixEvent) {
+    constructor(
+        private matrixRoom: Room,
+        event: MatrixEvent,
+    ) {
         const relation = event.getRelation();
         if (relation === null || relation.rel_type !== "m.annotation") {
             throw Error("Wrong matrix event object for MessageReaction");
@@ -39,10 +46,10 @@ export class MatrixChatMessageReaction implements ChatMessageReaction {
         if (this.users.get(userId) !== undefined) {
             return;
         }
-        const user = this.matrixRoom.client.getUser(userId);
+        const user = chatUserFactoryFromRoom(this.matrixRoom, userId);
         if (user) {
-            this.users.set(user.userId, {
-                ...chatUserFactory(user, this.matrixRoom.client),
+            this.users.set(user.chatId, {
+                ...user,
                 eventId: userReactionEventId,
             });
             this.reacted.set(this.users.get(this.matrixRoom.myUserId) !== undefined);
@@ -80,8 +87,22 @@ export class MatrixChatMessageReaction implements ChatMessageReaction {
             await this.matrixRoom.client
                 .redactEvent(this.matrixRoom.roomId, myReactionEventId)
                 .catch((error) => console.error(error));
+            this.removeUser(this.matrixRoom.myUserId);
         } catch (error) {
             console.error(error);
         }
+    }
+
+    public get component(): {
+        component: WorkAdventureComponent;
+        props: WorkAdventureComponentProps;
+    } {
+        return {
+            component: ReactionIcon,
+            props: {
+                key: this.key,
+                matrixClient: this.matrixRoom.client,
+            },
+        };
     }
 }

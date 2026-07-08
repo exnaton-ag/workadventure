@@ -1,9 +1,10 @@
-import { Subscription } from "rxjs";
-import { Deferred } from "ts-deferred";
-import { get, Readable, Unsubscriber } from "svelte/store";
+import type { Subscription } from "rxjs";
+import { Deferred } from "@workadventure/shared-utils";
+import type { Readable, Unsubscriber } from "svelte/store";
+import { get } from "svelte/store";
 import { iframeListener } from "../../Api/IframeListener";
 import { videoStreamElementsStore } from "../../Stores/PeerStore";
-import { SpaceInterface } from "../../Space/SpaceInterface";
+import type { SpaceInterface } from "../../Space/SpaceInterface";
 import { InputPCMStreamer } from "./InputPCMStreamer";
 
 /**
@@ -15,6 +16,7 @@ export class ScriptingInputAudioStreamManager {
     private pcmStreamerResolved = false;
     private pcmStreamerResolving = false;
     private isListening = false;
+    private currentMeetingId: string | undefined;
     private streams: Map<Readable<MediaStream | undefined>, Unsubscriber> = new Map();
     private videoPeerAddedUnsubscriber: Subscription;
     private videoPeerRemovedUnsubscriber: Subscription;
@@ -37,12 +39,13 @@ export class ScriptingInputAudioStreamManager {
         });
     }
 
-    public async startListeningToAudioStream(sampleRate: number): Promise<void> {
+    public async startListeningToAudioStream(sampleRate: number, meetingId?: string): Promise<void> {
         if (this.isListening) {
             throw new Error("Already listening");
         }
 
         this.isListening = true;
+        this.currentMeetingId = meetingId;
 
         // Start listening to the stream
         if (this.pcmStreamerResolved || this.pcmStreamerResolving) {
@@ -56,13 +59,23 @@ export class ScriptingInputAudioStreamManager {
         this.pcmStreamerDeferred.resolve(pcmStreamer);
 
         this.appendPCMDataStreamUnsubscriber = pcmStreamer.pcmDataStream.subscribe((data) => {
-            iframeListener.postMessage(
-                {
-                    type: "appendPCMData",
-                    data: { data: data as Float32Array<ArrayBuffer> },
-                },
-                undefined /*, [data.buffer]*/
-            );
+            if (this.currentMeetingId !== undefined) {
+                iframeListener.postMessage(
+                    {
+                        type: "appendMeetingPCMData",
+                        data: { meetingId: this.currentMeetingId, data: data as Float32Array<ArrayBuffer> },
+                    },
+                    undefined /*, [data.buffer]*/,
+                );
+            } else {
+                iframeListener.postMessage(
+                    {
+                        type: "appendPCMData",
+                        data: { data: data as Float32Array<ArrayBuffer> },
+                    },
+                    undefined /*, [data.buffer]*/,
+                );
+            }
             // Note: if we try to transfer the buffer, we get the following error:
             //      ArrayBuffer already detached.
             // It looks like a bug in the browser to me (the ArrayBuffer was detached from the worklet process
@@ -80,6 +93,7 @@ export class ScriptingInputAudioStreamManager {
 
     public stopListeningToAudioStream(): void {
         this.isListening = false;
+        this.currentMeetingId = undefined;
 
         this.appendPCMDataStreamUnsubscriber?.unsubscribe();
         this.appendPCMDataStreamUnsubscriber = undefined;

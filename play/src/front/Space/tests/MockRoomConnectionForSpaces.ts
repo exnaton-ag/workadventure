@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 
-import {
+import type {
     AddSpaceUserMessage,
     UpdateSpaceUserPusherToFrontMessage,
     RemoveSpaceUserPusherToFrontMessage,
@@ -11,7 +11,7 @@ import {
     InitSpaceUsersMessage,
 } from "@workadventure/messages";
 import { Subject } from "rxjs";
-import { RoomConnectionForSpacesInterface } from "../SpaceRegistry/SpaceRegistry";
+import type { RoomConnectionForSpacesInterface } from "../SpaceRegistry/SpaceRegistry";
 
 export class MockRoomConnectionForSpaces implements RoomConnectionForSpacesInterface {
     public closed = false;
@@ -30,7 +30,10 @@ export class MockRoomConnectionForSpaces implements RoomConnectionForSpacesInter
     public emitUpdateSpaceFilter = vi.fn();
     public emitLeaveSpace = vi.fn();
     public emitJoinSpace = vi.fn();
+    public startRecording = vi.fn();
+    public stopRecording = vi.fn();
     public emitUpdateSpaceMetadata = vi.fn();
     public emitUpdateSpaceUserMessage = vi.fn();
-    public emitRequestFullSync = vi.fn();
+    public emitBackEvent = vi.fn();
+    public emitVideoQualityReport = vi.fn();
 }

@@ -1,10 +1,10 @@
 import * as Sentry from "@sentry/svelte";
-import { openModal } from "svelte-modals";
 import { get } from "svelte/store";
+import type { MatrixClient } from "matrix-js-sdk";
 import { analyticsClient } from "../Administration/AnalyticsClient";
 import { iframeListener } from "../Api/IframeListener";
 import { connectionManager } from "../Connection/ConnectionManager";
-import { CoWebsite } from "../WebRtc/CoWebsite/CoWebsite";
+import type { CoWebsite } from "../WebRtc/CoWebsite/CoWebsite";
 import { SimpleCoWebsite } from "../WebRtc/CoWebsite/SimpleCoWebsite";
 import { coWebsites } from "../Stores/CoWebsiteStore";
 import { scriptUtils } from "../Api/ScriptUtils";
@@ -13,9 +13,11 @@ import { userIsConnected } from "../Stores/MenuStore";
 import { chatVisibilityStore } from "../Stores/ChatStore";
 import { warningMessageStore } from "../Stores/ErrorStore";
 import { LL } from "../../i18n/i18n-svelte";
+import { hasMatrixChatCapabilities } from "./Connection/ChatConnection";
 import { navChat } from "./Stores/ChatStore";
 import { selectedRoomStore } from "./Stores/SelectRoomStore";
 import RequiresLoginForChatModal from "./Components/RequiresLoginForChatModal.svelte";
+import { modals } from "@wa-modals";
 
 export type OpenCoWebsiteObject = {
     url: string;
@@ -29,7 +31,7 @@ export type OpenCoWebsiteObject = {
 //enlever les events lié au chat dans iframelistener
 export const openCoWebSite = (
     { url, allowApi, allowPolicy, widthPercent, closable }: OpenCoWebsiteObject,
-    source: MessageEventSource | null
+    source: MessageEventSource | null,
 ) => {
     if (!url || !source) {
         throw new Error("Unknown query source");
@@ -40,7 +42,7 @@ export const openCoWebSite = (
         allowApi,
         allowPolicy,
         widthPercent,
-        closable
+        closable,
     );
 
     return openSimpleCowebsite(coWebsite);
@@ -72,7 +74,7 @@ export const openTab = (url: string) => {
 export const openDirectChatRoom = async (chatID: string) => {
     try {
         if (!get(userIsConnected)) {
-            openModal(RequiresLoginForChatModal);
+            modals.open(RequiresLoginForChatModal);
             return;
         }
         const chatConnection = await gameManager.getChatConnection();
@@ -98,7 +100,7 @@ export const openDirectChatRoom = async (chatID: string) => {
 export const openChatRoom = async (roomId: string) => {
     try {
         if (!get(userIsConnected)) {
-            openModal(RequiresLoginForChatModal);
+            modals.open(RequiresLoginForChatModal);
             return;
         }
         const chatConnection = await gameManager.getChatConnection();
@@ -134,7 +136,7 @@ export const openCoWebSiteWithoutSource = ({
         allowPolicy,
         widthPercent,
         closable,
-        hideUrl
+        hideUrl,
     );
 
     return openSimpleCowebsite(coWebsite);
@@ -158,3 +160,16 @@ export const closeCoWebsite = (coWebsiteId: string) => {
 
     coWebsites.remove(coWebsite);
 };
+
+/** Matrix client for chat tint resolution; undefined if Matrix chat is not active. */
+export function getMatrixClientForChatTint(): MatrixClient | undefined {
+    try {
+        const c = gameManager.chatConnection;
+        if (hasMatrixChatCapabilities(c)) {
+            return c.getMatrixClient();
+        }
+    } catch {
+        /* game scene not ready */
+    }
+    return undefined;
+}

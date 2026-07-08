@@ -1,6 +1,7 @@
 import path from "path";
-import { AreaDataProperty, fileUploadSupportedFormatForMapStorage } from "@workadventure/map-editor";
-import { UploadFileMessage } from "@workadventure/messages";
+import type { AreaDataProperty } from "@workadventure/map-editor";
+import { fileUploadSupportedFormatForMapStorage } from "@workadventure/map-editor";
+import type { UploadFileMessage } from "@workadventure/messages";
 import { fileSystem } from "../fileSystem";
 import { mapPathUsingDomainWithPrefix } from "./PathMapper";
 
@@ -23,7 +24,7 @@ export class CustomFileService {
 
         const mapPath = mapPathUsingDomainWithPrefix(
             `/private/files/${filename}-${uploadFileMessage.propertyId}${fileExtension}`,
-            this.hostname
+            this.hostname,
         );
         console.info("Uploading file to: ", mapPath);
         await fileSystem.writeByteArrayAsFile(mapPath, file);
@@ -43,7 +44,7 @@ export class CustomFileService {
 
         const mapPath = mapPathUsingDomainWithPrefix(
             `/private/files/${filename}-${property.id}${fileExtension}`,
-            this.hostname
+            this.hostname,
         );
 
         await fileSystem.deleteFiles(mapPath);

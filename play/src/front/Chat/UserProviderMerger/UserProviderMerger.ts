@@ -1,7 +1,8 @@
 import { AvailabilityStatus } from "@workadventure/messages";
-import { derived, Readable, writable } from "svelte/store";
-import { UserProviderInterface } from "../UserProvider/UserProviderInterface";
-import { AnyKindOfUser, ChatId, ChatUser, PartialAnyKindOfUser, UserUuid } from "../Connection/ChatConnection";
+import type { Readable } from "svelte/store";
+import { derived, writable } from "svelte/store";
+import type { UserProviderInterface } from "../UserProvider/UserProviderInterface";
+import type { AnyKindOfUser, ChatId, ChatUser, PartialAnyKindOfUser, UserUuid } from "../Connection/ChatConnection";
 
 /**
  * Merges several UserProviders into one store that sorts users by room.
@@ -80,7 +81,7 @@ export class UserProviderMerger {
 
                     mergedUsers.set(
                         (mergedUser.chatId as ChatId | undefined) ?? (mergedUser.uuid as UserUuid),
-                        fullUser
+                        fullUser,
                     );
                 }
 
@@ -107,7 +108,7 @@ export class UserProviderMerger {
 
                 return usersByRoom;
             },
-            new Map()
+            new Map(),
         );
     }
 

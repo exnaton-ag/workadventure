@@ -13,15 +13,56 @@ const camera: BaseTranslation = {
     },
     help: {
         title: "Camera / Microphone access needed",
+        cameraTitle: "Camera access needed",
+        microphoneTitle: "Microphone access needed",
         permissionDenied: "Permission denied",
+        cameraPermissionDenied: "Camera permission denied",
+        microphonePermissionDenied: "Microphone permission denied",
+        cameraMicrophonePermissionDenied: "Camera and microphone permissions denied",
         content: "You must allow camera and microphone access in your browser.",
+        cameraContent: "You must allow camera access in your browser.",
+        microphoneContent: "You must allow microphone access in your browser.",
         firefoxContent:
             'Please click the "Remember this decision" checkbox, if you don\'t want Firefox to keep asking you the authorization.',
         allow: "Allow webcam",
+        allowMicrophone: "Allow microphone",
+        allowCameraMicrophone: "Allow webcam and microphone",
         continue: "Continue without webcam",
+        continueWithoutMicrophone: "Continue without microphone",
+        continueCameraMicrophone: "Continue without webcam and microphone",
         screen: {
             firefox: "/resources/help-setting-camera-permission/en-US-firefox.png",
             chrome: "/resources/help-setting-camera-permission/en-US-firefox.png",
+        },
+        tooltip: {
+            permissionDeniedTitle: "Camera access blocked",
+            permissionDeniedDesc:
+                "Your browser denied camera access for this site. Allow it from the address bar (lock or camera icon) or in site settings. The illustration below matches your browser.",
+            noDeviceTitle: "No usable camera",
+            noDeviceDesc:
+                "Your browser does not see any camera you can use. Try another browser, check that a camera is connected, check your computer's settings (privacy, devices), or restart your computer if the device should work.",
+            permissionMedia: {
+                firefox: "/resources/help-setting-camera-permission/en-US-firefox.png",
+                chrome: "/resources/help-setting-camera-permission/en-US-firefox.png",
+                safari: "/resources/help-setting-camera-permission/en-US-firefox.png",
+                android: "/resources/help-setting-camera-permission/en-US-firefox.png",
+                default: "/resources/help-setting-camera-permission/en-US-firefox.png",
+            },
+        },
+        microphoneTooltip: {
+            permissionDeniedTitle: "Microphone access blocked",
+            permissionDeniedDesc:
+                "Your browser denied microphone access for this site. Allow it from the address bar (lock or microphone icon) or in site settings. The illustration below matches your browser.",
+            noDeviceTitle: "No usable microphone",
+            noDeviceDesc:
+                "Your browser does not see any microphone you can use. Try another browser, check that a microphone is connected, check your computer's settings (privacy, devices), or restart your computer if the device should work.",
+            permissionMedia: {
+                firefox: "/resources/help-setting-camera-permission/en-US-firefox.png",
+                chrome: "/resources/help-setting-camera-permission/en-US-firefox.png",
+                safari: "/resources/help-setting-camera-permission/en-US-firefox.png",
+                android: "/resources/help-setting-camera-permission/en-US-firefox.png",
+                default: "/resources/help-setting-camera-permission/en-US-firefox.png",
+            },
         },
     },
     webrtc: {
@@ -38,7 +79,7 @@ const camera: BaseTranslation = {
         preparingYouNetworkGuide: '"Preparing your network" guide',
         refresh: "Refresh",
         continue: "Continue",
-        newDeviceDetected: "New device detected {device} 🎉 Switch? [SPACE]",
+        newDeviceDetected: "New device detected {device} 🎉 Switch? [SPACE] Ignore [ESCAPE]",
     },
     my: {
         silentZone: "Silent zone",
@@ -54,9 +95,11 @@ const camera: BaseTranslation = {
         senPrivateMessage: "Send a private message (coming soon)",
         kickoffUser: "Kick off user",
         muteAudioUser: "Mute audio",
+        askToMuteAudioUser: "Ask to mute audio",
         muteAudioEveryBody: "Mute audio for everybody",
-        muteVideoUser: "Mute video",
-        muteVideoEveryBody: "Mute video for everybody",
+        muteVideoUser: "Turn off video",
+        askToMuteVideoUser: "Ask to turn off video",
+        muteVideoEveryBody: "Turn off video for everybody",
         blockOrReportUser: "Moderation",
     },
     backgroundEffects: {

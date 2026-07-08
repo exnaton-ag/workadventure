@@ -1,3 +1,4 @@
+import { deepmergeIntoCustom, type DeepMergeLeafURI } from "deepmerge-ts";
 import type {
     AreaData,
     AreaDataProperties,
@@ -5,11 +6,12 @@ import type {
     AreaDescriptionPropertyData,
     AtLeast,
 } from "@workadventure/map-editor";
-import _ from "lodash";
-import { GameObjects } from "phaser";
+import * as Phaser from "phaser";
+import { get } from "svelte/store";
+import { DEPTH_MAP_EDITOR_AREAS_INDEX } from "../../Game/DepthIndexes";
 import { GameScene } from "../../Game/GameScene";
-import { CopyAreaEventData } from "../../Game/GameMap/EntitiesManager";
 import { SpeechDomElement } from "../../Entity/SpeechDomElement";
+import LL from "../../../../i18n/i18n-svelte";
 import { SizeAlteringSquare, SizeAlteringSquareEvent, SizeAlteringSquarePosition as Edge } from "./SizeAlteringSquare";
 
 export enum AreaPreviewEvent {
@@ -24,7 +26,11 @@ export enum AreaPreviewEvent {
 }
 
 const DEFAULT_COLOR = 0x0000ff;
-const MAXIMUM_DEPTH = 100000; // we use a high depth to ensure the area preview is on top of other objects
+const DEFAULT_AREA_PREVIEW_ALPHA = 0.5;
+
+const mergeInto = deepmergeIntoCustom<unknown, { DeepMergeArraysURI: DeepMergeLeafURI }>({
+    mergeArrays: false,
+});
 
 export class AreaPreview extends Phaser.GameObjects.Rectangle {
     private squares: SizeAlteringSquare[];
@@ -38,7 +44,7 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
 
     private shiftKey?: Phaser.Input.Keyboard.Key;
     private ctrlKey?: Phaser.Input.Keyboard.Key;
-    private propertiesIcon: GameObjects.Image[] = [];
+    private propertiesIcon: Phaser.GameObjects.Image[] = [];
 
     private speechDomElement: SpeechDomElement | null = null;
 
@@ -47,7 +53,7 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
         areaData: AreaData,
         private overrideDepth = false,
         shiftKey?: Phaser.Input.Keyboard.Key,
-        ctrlKey?: Phaser.Input.Keyboard.Key
+        ctrlKey?: Phaser.Input.Keyboard.Key,
     ) {
         super(
             scene,
@@ -56,7 +62,7 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
             areaData.width,
             areaData.height,
             DEFAULT_COLOR,
-            0.5
+            0.5,
         );
 
         this.oldPosition = this.getPosition();
@@ -80,9 +86,9 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
             new SizeAlteringSquare(this.scene, this.getBottomRight(), "se-resize"),
         ];
 
-        // Set the depth of the area preview. In the map editor area tool, we want the area previews to be always on top of other objects.
+        // Set the depth of the area preview. In the map editor we want zones always above floorLayer and overlay layers.
         if (this.overrideDepth) {
-            this.setDepth(MAXIMUM_DEPTH);
+            this.setDepth(DEPTH_MAP_EDITOR_AREAS_INDEX);
         }
 
         this.squares.forEach((square) => square.setDepth(this.depth + 1));
@@ -101,15 +107,15 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
     }
 
     public get description(): string | undefined {
-        const descriptionProperty: AreaDescriptionPropertyData | undefined = this.areaData.properties.find(
-            (p) => p.type === "areaDescriptionProperties"
+        const descriptionProperty = this.areaData.properties.find(
+            (p): p is AreaDescriptionPropertyData => p.type === "areaDescriptionProperties",
         );
         return descriptionProperty?.description;
     }
 
     public get searchable(): boolean | undefined {
-        const descriptionProperty: AreaDescriptionPropertyData | undefined = this.areaData.properties.find(
-            (p) => p.type === "areaDescriptionProperties"
+        const descriptionProperty = this.areaData.properties.find(
+            (p): p is AreaDescriptionPropertyData => p.type === "areaDescriptionProperties",
         );
         return descriptionProperty?.searchable;
     }
@@ -150,7 +156,7 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
     }
 
     public updatePreview(dataToModify: AtLeast<AreaData, "id">): void {
-        _.merge(this.areaData, dataToModify);
+        mergeInto(this.areaData, dataToModify);
         this.drawAreaPreviewFromAreaData(dataToModify);
     }
 
@@ -164,17 +170,11 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
         this.emit(AreaPreviewEvent.Updated, this.areaData, oldAreaData);
     }
 
-    public updateProperty(changes: AtLeast<AreaDataProperty, "id">, removeAreaEntities?: boolean): void {
+    public updateProperty(changes: AreaDataProperty, removeAreaEntities?: boolean): void {
         const oldAreaData = structuredClone(this.areaData);
-        const property = this.areaData.properties.find((property) => property.id === changes.id);
-        if (property) {
-            _.mergeWith(property, changes, (_, targetProperty) => {
-                if (targetProperty instanceof Array) {
-                    return targetProperty;
-                }
-                return;
-            });
-        }
+        this.areaData.properties = this.areaData.properties.map((property) =>
+            property.id === changes.id ? changes : property,
+        );
         this.emit(AreaPreviewEvent.Updated, this.areaData, oldAreaData, removeAreaEntities);
     }
 
@@ -220,66 +220,70 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
     }
 
     public changeColor(color: string | number | Phaser.Types.Display.InputColorObject) {
-        this.setFillStyle(Phaser.Display.Color.ValueToColor(color).color, 0.5);
+        this.setFillStyle(Phaser.Display.Color.ValueToColor(color).color, DEFAULT_AREA_PREVIEW_ALPHA);
         this.updateSquaresPositions();
     }
 
     public resetColor() {
         if (this.areaData != undefined) {
-            this.propertiesIcon.forEach((icon: GameObjects.Image) => icon.destroy());
+            this.propertiesIcon.forEach((icon: Phaser.GameObjects.Image) => icon.destroy());
             let counter = 0;
             if (this.areaData.properties.length > 0) {
+                let color = "FFFFFF";
                 for (const property of this.areaData.properties) {
                     const iconProperties = this.getPropertyIcons(property.type);
-
-                    const icon = new GameObjects.Image(
+                    if (iconProperties.name !== "") {
+                        color = iconProperties.color;
+                    }
+                    const icon = new Phaser.GameObjects.Image(
                         this.scene,
                         (this.getTopLeft().x ?? 0) + 10 + counter * 15,
                         (this.getTopLeft().y ?? 0) + 10,
-                        `icon${iconProperties.name}`
+                        `icon${iconProperties.name}`,
                     );
                     icon.setScale(0.12);
                     icon.setDepth(this.depth + 1);
                     icon.setVisible(true);
-                    this.setFillStyle(Phaser.Display.Color.ValueToColor(iconProperties.color).color, 0.5);
                     counter++;
                 }
+                this.setFillStyle(Phaser.Display.Color.ValueToColor(color).color, DEFAULT_AREA_PREVIEW_ALPHA);
             } else {
-                this.setFillStyle(Phaser.Display.Color.ValueToColor(DEFAULT_COLOR).color, 0.5);
+                this.setFillStyle(Phaser.Display.Color.ValueToColor(DEFAULT_COLOR).color, DEFAULT_AREA_PREVIEW_ALPHA);
             }
         }
         this.updateSquaresPositions();
     }
 
     private showPropertiesIcon(value: boolean) {
-        this.propertiesIcon.forEach((icon: GameObjects.Image) => icon.setVisible(value));
+        this.propertiesIcon.forEach((icon: Phaser.GameObjects.Image) => icon.setVisible(value));
     }
 
     private drawAreaPreviewFromAreaData(areaData: AreaData | AtLeast<AreaData, "id">): void {
         if (areaData.properties !== undefined) {
             this.areaData.properties = areaData.properties;
 
-            this.propertiesIcon.forEach((icon: GameObjects.Image) => icon.destroy());
+            this.propertiesIcon.forEach((icon: Phaser.GameObjects.Image) => icon.destroy());
+            let color = "FFFFFF";
             let counter = 0;
             for (const property of this.areaData.properties) {
                 const iconProperties = this.getPropertyIcons(property.type);
-
-                const icon = new GameObjects.Image(
+                if (iconProperties.name !== "") {
+                    color = iconProperties.color;
+                }
+                const icon = new Phaser.GameObjects.Image(
                     this.scene,
                     (this.getTopLeft().x ?? 0) + 10 + counter * 15,
                     (this.getTopLeft().y ?? 0) + 10,
-                    `icon${iconProperties.name}`
+                    `icon${iconProperties.name}`,
                 );
                 icon.setScale(0.12);
                 icon.setDepth(this.depth + 1);
                 icon.setVisible(true);
                 //this.scene.add.existing(icon);
                 //this.propertiesIcon.push(icon);
-
-                this.setFillStyle(Phaser.Display.Color.ValueToColor(iconProperties.color).color, 0.75);
-
                 counter++;
             }
+            this.setFillStyle(Phaser.Display.Color.ValueToColor(color).color, DEFAULT_AREA_PREVIEW_ALPHA);
         }
         this.x = Math.floor(this.areaData.x + this.areaData.width * 0.5);
         this.y = Math.floor(this.areaData.y + this.areaData.height * 0.5);
@@ -303,7 +307,7 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
                     return;
                 }
                 this.emit(AreaPreviewEvent.Clicked);
-            }
+            },
         );
         this.on(
             Phaser.Input.Events.POINTER_UP,
@@ -312,7 +316,7 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
                     return;
                 }
                 this.emit(AreaPreviewEvent.Released);
-            }
+            },
         );
         this.on(Phaser.Input.Events.DRAG_START, () => {
             this.oldPosition = this.getPosition();
@@ -351,7 +355,7 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
                         height: this.areaData.height,
                         name: this.areaData.name,
                         properties: structuredClone(this.areaData.properties),
-                    } as CopyAreaEventData);
+                    });
                 }
                 this.updateAreaDataWithSquaresAdjustments();
                 const data: AtLeast<AreaData, "id"> = {
@@ -573,7 +577,7 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
                 this.scene,
                 x,
                 this.y - this.height / 2 - 30,
-                () => this.destroyText()
+                () => this.destroyText(),
             );
             this.scene.add.existing(this.speechDomElement);
             // Need to put the element at the top because
@@ -588,5 +592,60 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
             this.speechDomElement.destroy();
             this.speechDomElement = null;
         }
+    }
+
+    get nameFromProperties(): string {
+        if (this.areaData.properties.length === 0) return get(LL).mapEditor.properties.noProperties();
+        // Get the first property that has a label (skip areaDescriptionProperties)
+        const property = this.areaData.properties.find((p) => p.type !== "areaDescriptionProperties");
+        if (!property) return get(LL).mapEditor.properties.noProperties();
+
+        const properties = get(LL).mapEditor.properties;
+        let propertyKey = property.type as keyof typeof properties;
+        // If the property is an openWebsite and the application is not website, we need to use the application as the property key
+        if (property.type === "openWebsite" && "application" in property) {
+            const openWebsiteProperty = property as { application: string };
+            if (openWebsiteProperty.application != "website") {
+                propertyKey = openWebsiteProperty.application as keyof typeof properties;
+            }
+        }
+
+        const propertyTranslation = properties[propertyKey];
+        // Check if propertyTranslation is an object with a label method
+        if (
+            propertyTranslation != undefined &&
+            "label" in propertyTranslation &&
+            typeof (propertyTranslation as { label?: unknown }).label === "function"
+        ) {
+            return (propertyTranslation as { label: () => string }).label();
+        }
+        return get(LL).mapEditor.properties.noProperties();
+    }
+
+    get actionButtonLabel(): string {
+        if (this.areaData.properties.length === 0) return get(LL).mapEditor.explorer.details.moveToArea({ name: "" });
+        const property = this.areaData.properties.find((p) => p.type !== "areaDescriptionProperties");
+        if (!property) return get(LL).mapEditor.explorer.details.moveToArea({ name: "" });
+
+        const properties = get(LL).mapEditor.properties;
+        let propertyKey = property.type as keyof typeof properties;
+
+        // If the property is an openWebsite and the application is not website, we need to use the application as the property key
+        if (property.type === "openWebsite" && "application" in property) {
+            const openWebsiteProperty = property as { application: string };
+            if (openWebsiteProperty.application != "website") {
+                propertyKey = openWebsiteProperty.application as keyof typeof properties;
+            }
+        }
+
+        const propertyTranslation = properties[propertyKey];
+        if (
+            propertyTranslation != undefined &&
+            "actionButtonLabel" in propertyTranslation &&
+            typeof (propertyTranslation as { actionButtonLabel?: unknown }).actionButtonLabel === "function"
+        ) {
+            return (propertyTranslation as { actionButtonLabel: () => string }).actionButtonLabel();
+        }
+        return get(LL).mapEditor.explorer.details.moveToArea({ name: "" });
     }
 }

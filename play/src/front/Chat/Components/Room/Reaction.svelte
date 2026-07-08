@@ -1,20 +1,26 @@
 <script lang="ts">
-    import { ChatMessageReaction } from "../../Connection/ChatConnection";
+    import type { ChatMessageReaction } from "../../Connection/ChatConnection";
 
-    export let reaction: ChatMessageReaction;
+    interface Props {
+        reaction: ChatMessageReaction;
+    }
 
-    const { reacted, key, users } = reaction;
+    let { reaction }: Props = $props();
+
+    let { reacted, key, users, component } = $derived(reaction);
+    let ReactionComponent = $derived(component.component);
 </script>
 
 {#if $users.size > 0}
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
-        on:click={() => reaction.react()}
+        onclick={() => reaction.react()}
         class="w-[40px] reaction group flex flex-row space-x-1 py-1 px-1.5 hover:bg-white/20 text-white hover:cursor-pointer rounded-full"
         data-testid={`${key}_reactionButton`}
     >
         <div class="group-hover:scale-[2] group-hover:rotate-3 transition-all text-xs p-0 m-0 hover:cursor-pointer">
-            {key}
+            <ReactionComponent {...component.props} />
         </div>
         <div class="text-xs p-0 m-0 hover:cursor-pointer text-white" class:font-extrabold={$reacted}>
             {$users.size}

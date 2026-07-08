@@ -1,7 +1,8 @@
-import { Readable, Writable, derived, writable } from "svelte/store";
-import { PartialAdminUser } from "../Connection/ChatConnection";
-import { SpaceInterface } from "../../Space/SpaceInterface";
-import { UserProviderInterface } from "./UserProviderInterface";
+import type { Readable, Writable } from "svelte/store";
+import { derived, writable } from "svelte/store";
+import type { PartialAdminUser } from "../Connection/ChatConnection";
+import type { SpaceInterface } from "../../Space/SpaceInterface";
+import type { UserProviderInterface } from "./UserProviderInterface";
 import { mapExtendedSpaceUserToChatUser } from "./ChatUserMapper";
 
 export class WorldUserProvider implements UserProviderInterface {
@@ -17,7 +18,7 @@ export class WorldUserProvider implements UserProviderInterface {
                     .filter((user) => user.name.toLowerCase().includes(filter.toLowerCase()))
                     .map(mapExtendedSpaceUserToChatUser);
             },
-            []
+            [],
         );
         this.userCount = derived(this.users, (users) => {
             // TOOD FIXME: this is workaround for the fact that we are not using the uuid as the key in the map

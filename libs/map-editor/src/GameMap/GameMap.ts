@@ -1,32 +1,22 @@
-import {
+import type {
     ITiledMap,
     ITiledMapLayer,
     ITiledMapObject,
     ITiledMapProperty,
     Json,
-    upgradeMapToNewest,
 } from "@workadventure/tiled-map-type-guard";
-import { WAMFileFormat, GameMapProperties } from "../types";
-import type { AreaChangeCallback, AreaUpdateCallback } from "./GameMapAreas";
-import { GameMapAreas } from "./GameMapAreas";
+import { upgradeMapToNewest } from "@workadventure/tiled-map-type-guard";
+import type { WAMFileFormat } from "../types";
+import { GameMapProperties } from "../types";
 import { flattenGroupLayersMap } from "./LayersFlattener";
-import { GameMapEntities } from "./GameMapEntities";
+import { WamFile } from "./WamFile";
 
 /**
  * A wrapper around a ITiledMap interface to provide additional capabilities.
  */
 export class GameMap {
-    /**
-     * Component responsible for holding gameMap Areas related logic
-     */
-    private gameMapAreas?: GameMapAreas;
-    /**
-     * Component responsible for holding gameMap entities related logic
-     */
-    private gameMapEntities?: GameMapEntities;
-
     private readonly map: ITiledMap;
-    private readonly wam?: WAMFileFormat;
+    private readonly wamFile?: WamFile;
     private tileNameMap = new Map<string, number>();
 
     private tileSetPropertyMap: { [tile_index: number]: Array<ITiledMapProperty> } = {};
@@ -41,13 +31,9 @@ export class GameMap {
 
     public constructor(map: ITiledMap, wam?: WAMFileFormat) {
         this.map = upgradeMapToNewest(map);
-        this.wam = wam; // upgrade if necessary
+        this.wamFile = wam ? new WamFile(wam) : undefined;
         this.flatLayers = flattenGroupLayersMap(this.map);
         this.tiledObjects = GameMap.getObjectsFromLayers(this.flatLayers);
-        if (this.wam) {
-            this.gameMapAreas = new GameMapAreas(this.wam);
-            this.gameMapEntities = new GameMapEntities(this.wam);
-        }
 
         for (const tileset of this.map.tilesets) {
             if ("tiles" in tileset) {
@@ -99,8 +85,8 @@ export class GameMap {
         return this.map;
     }
 
-    public getWam(): WAMFileFormat | undefined {
-        return this.wam;
+    public getWamFile(): WamFile | undefined {
+        return this.wamFile;
     }
 
     public findLayer(layerName: string): ITiledMapLayer | undefined {
@@ -122,7 +108,7 @@ export class GameMap {
     public setTiledObjectProperty(
         holder: { properties?: ITiledMapProperty[] },
         propertyName: string,
-        propertyValue: string | number | undefined | boolean
+        propertyValue: string | number | undefined | boolean,
     ): void {
         if (holder.properties === undefined) {
             holder.properties = [];
@@ -150,14 +136,14 @@ export class GameMap {
 
     public getTiledObjectProperty(
         object: { properties?: ITiledMapProperty[] },
-        propertyName: string
+        propertyName: string,
     ): Json | undefined {
         const properties: ITiledMapProperty[] | undefined = object.properties;
         if (!properties) {
             return undefined;
         }
         const obj = properties.find(
-            (property: ITiledMapProperty) => property.name.toLowerCase() === propertyName.toLowerCase()
+            (property: ITiledMapProperty) => property.name.toLowerCase() === propertyName.toLowerCase(),
         );
         if (obj === undefined) {
             return undefined;
@@ -167,20 +153,6 @@ export class GameMap {
 
     public getObjectWithName(name: string): ITiledMapObject | undefined {
         return this.tiledObjects.find((object) => object.name === name);
-    }
-
-    /**
-     * Registers a callback called when the user moves inside another area.
-     */
-    public onEnterArea(callback: AreaChangeCallback) {
-        this.gameMapAreas?.onEnterArea(callback);
-    }
-
-    /**
-     * Registers a callback called when an area is updated.
-     */
-    public onUpdateArea(callback: AreaUpdateCallback) {
-        this.gameMapAreas?.onUpdateArea(callback);
     }
 
     public getTileProperty(index: number): Array<ITiledMapProperty> {
@@ -200,7 +172,7 @@ export class GameMap {
             console.error(
                 "The layer '" +
                     layer +
-                    "' that you want to change is not a tilelayer. Tile can only be put in tilelayer."
+                    "' that you want to change is not a tilelayer. Tile can only be put in tilelayer.",
             );
             return;
         }
@@ -228,31 +200,12 @@ export class GameMap {
         return objects;
     }
 
-    public updateLastCommandIdProperty(commandId: string): void {
-        if (!this.wam) {
-            return;
-        }
-        this.wam.lastCommandId = commandId;
-    }
-
-    public getLastCommandId(): string | undefined {
-        return this.wam?.lastCommandId;
-    }
-
     public getMapPropertyByKey(key: string): ITiledMapProperty | undefined {
         return this.map.properties?.find((property) => property.name === key);
     }
 
     public getDefaultTileSize(): number {
         return this.DEFAULT_TILE_SIZE;
-    }
-
-    public getGameMapAreas(): GameMapAreas | undefined {
-        return this.gameMapAreas;
-    }
-
-    public getGameMapEntities(): GameMapEntities | undefined {
-        return this.gameMapEntities;
     }
 
     // NOTE: Flat layers are deep copied so we cannot operate on them

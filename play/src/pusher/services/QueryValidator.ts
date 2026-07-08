@@ -1,12 +1,12 @@
 import type { z, ZodObject, ZodRawShape } from "zod";
 import type { Request, Response } from "express";
-import { HttpRequest, HttpResponse, us_socket_context_t } from "uWebSockets.js";
-import { UpgradeFailedData } from "../controllers/IoSocketController";
+import type { HttpRequest, HttpResponse, us_socket_context_t } from "uWebSockets.js";
+import type { UpgradeFailedData } from "../controllers/IoSocketController";
 
 function validateObject<T extends ZodObject<ZodRawShape>>(
     obj: unknown,
     res: Response,
-    validator: T
+    validator: T,
 ): z.infer<T> | undefined {
     const result = validator.safeParse(obj);
 
@@ -26,7 +26,7 @@ function validateObject<T extends ZodObject<ZodRawShape>>(
 export function validateQuery<T extends ZodObject<ZodRawShape>>(
     req: Request,
     res: Response,
-    validator: T
+    validator: T,
 ): z.infer<T> | undefined {
     return validateObject(req.query, res, validator);
 }
@@ -38,7 +38,7 @@ export function validateQuery<T extends ZodObject<ZodRawShape>>(
 export function validatePostQuery<T extends ZodObject<ZodRawShape>>(
     req: Request,
     res: Response,
-    validator: T
+    validator: T,
 ): z.infer<T> | undefined {
     return validateObject(req.body, res, validator);
 }
@@ -51,7 +51,7 @@ export function validateWebsocketQuery<T extends ZodObject<ZodRawShape>>(
     req: HttpRequest,
     res: HttpResponse,
     context: us_socket_context_t,
-    validator: T
+    validator: T,
 ): z.infer<T> | undefined {
     const urlSearchParams = new URLSearchParams(req.getQuery());
     const params: Record<string, string | string[]> = {};
@@ -70,25 +70,27 @@ export function validateWebsocketQuery<T extends ZodObject<ZodRawShape>>(
         const websocketProtocol = req.getHeader("sec-websocket-protocol");
         const websocketExtensions = req.getHeader("sec-websocket-extensions");
 
-        res.upgrade(
-            {
-                rejected: true,
-                reason: "error",
-                error: {
-                    status: "error",
-                    type: "error",
-                    title: "400 Bad Request",
-                    subtitle: "Something wrong happened while connecting!",
-                    image: "",
-                    code: "WS_BAD_REQUEST",
-                    details: messages.join("\n"),
-                },
-            } satisfies UpgradeFailedData,
-            websocketKey,
-            websocketProtocol,
-            websocketExtensions,
-            context
-        );
+        res.cork(() => {
+            res.upgrade(
+                {
+                    rejected: true,
+                    reason: "error",
+                    error: {
+                        status: "error",
+                        type: "error",
+                        title: "400 Bad Request",
+                        subtitle: "Something wrong happened while connecting!",
+                        image: "",
+                        code: "WS_BAD_REQUEST",
+                        details: messages.join("\n"),
+                    },
+                } satisfies UpgradeFailedData,
+                websocketKey,
+                websocketProtocol,
+                websocketExtensions,
+                context,
+            );
+        });
         return undefined;
     }
 }

@@ -1,8 +1,6 @@
 import { readable, writable } from "svelte/store";
+import type { ErrorApiErrorData, ErrorApiRetryData, ErrorApiUnauthorizedData } from "@workadventure/messages";
 import {
-    ErrorApiErrorData,
-    ErrorApiRetryData,
-    ErrorApiUnauthorizedData,
     ErrorScreenMessage,
     isErrorApiErrorData,
     isErrorApiRetryData,
@@ -109,7 +107,7 @@ function createErrorScreenStore() {
                         code: "INTERNAL_ERROR",
                         title: "An error occurred",
                         details: error.toString(),
-                    })
+                    }),
                 );
                 return;
             }
@@ -128,7 +126,7 @@ function createErrorScreenStore() {
                             " - " +
                             (error.response.data ? error.response.data : error.response.statusText),
                         details: "An error occurred while accessing URL: " + error.config?.url,
-                    })
+                    }),
                 );
                 return;
             }
@@ -142,7 +140,7 @@ function createErrorScreenStore() {
                         code: "NETWORK_ERROR",
                         title: "Network error",
                         subtitle: error.message,
-                    })
+                    }),
                 );
                 return;
             }
@@ -162,7 +160,7 @@ function createErrorScreenStore() {
                             ErrorScreenMessage.fromPartial({
                                 ...errorApiWithoutStatus,
                                 buttonTitle: errorApiWithoutStatus.buttonTitle ?? undefined,
-                            })
+                            }),
                         );
                         return;
                     }
@@ -183,7 +181,7 @@ function createErrorScreenStore() {
                         title: "An error occurred",
                         subtitle: error.name,
                         details: error.message,
-                    })
+                    }),
                 );
                 return;
             }

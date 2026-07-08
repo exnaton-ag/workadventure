@@ -1,17 +1,17 @@
 import * as Sentry from "@sentry/svelte";
-import { FilterType } from "@workadventure/messages";
-import { Subscription } from "rxjs";
+import type { FilterType } from "@workadventure/messages";
+import type { Subscription } from "rxjs";
 import { z } from "zod";
-import { debounceTime, distinctUntilChanged } from "rxjs/operators";
 import { MapStore } from "@workadventure/store-utils";
-import { derived, Readable } from "svelte/store";
-import { SpaceInterface } from "../SpaceInterface";
+import type { Readable } from "svelte/store";
+import { derived } from "svelte/store";
+import type { SpaceInterface } from "../SpaceInterface";
 import { SpaceAlreadyExistError, SpaceDoesNotExistError } from "../Errors/SpaceError";
-import { Space, VideoBox } from "../Space";
-import { RoomConnection } from "../../Connection/RoomConnection";
+import type { VideoBox } from "../VideoBox";
+import { Space } from "../Space";
+import type { RoomConnection } from "../../Connection/RoomConnection";
 import { connectionManager } from "../../Connection/ConnectionManager";
-import { throttlingDetector as globalThrottlingDetector } from "../../Utils/ThrottlingDetector";
-import { SpaceRegistryInterface } from "./SpaceRegistryInterface";
+import type { SpaceRegistryInterface } from "./SpaceRegistryInterface";
 /**
  * The subset of properties of RoomConnection that are used by the SpaceRegistry / Space / SpaceFilter class.
  * This interface has a single purpose: making the creation of test doubles easier in unit tests.
@@ -32,10 +32,13 @@ export type RoomConnectionForSpacesInterface = Pick<
     | "emitAddSpaceFilter"
     | "emitLeaveSpace"
     | "emitJoinSpace"
+    | "startRecording"
+    | "stopRecording"
     | "emitUpdateSpaceMetadata"
     | "emitUpdateSpaceUserMessage"
     | "spaceDestroyedMessage"
-    | "emitRequestFullSync"
+    | "emitBackEvent"
+    | "emitVideoQualityReport"
 >;
 
 /**
@@ -44,7 +47,9 @@ export type RoomConnectionForSpacesInterface = Pick<
  */
 export class SpaceRegistry implements SpaceRegistryInterface {
     private spaces: MapStore<string, Space> = new MapStore<string, Space>();
+    public readonly spacesEligibleForRecording: Readable<Space[]>;
     private leavingSpacesPromises: Map<string, Promise<void>> = new Map<string, Promise<void>>();
+    private joiningSpacesPromises: Map<string, Promise<Space>> = new Map<string, Promise<Space>>();
     private initSpaceUsersMessageStreamSubscription: Subscription;
     private addSpaceUserMessageStreamSubscription: Subscription;
     private updateSpaceUserMessageStreamSubscription: Subscription;
@@ -53,7 +58,6 @@ export class SpaceRegistry implements SpaceRegistryInterface {
     private proximityPublicMessageEventSubscription: Subscription;
     private proximityPrivateMessageEventSubscription: Subscription;
     private spaceDestroyedMessageSubscription: Subscription;
-    private roomConnectionStreamSubscription: Subscription;
 
     public readonly videoStreamStore: Readable<Map<string, VideoBox>> = derived(this.spaces, ($spaces, set) => {
         if ($spaces.size === 0) {
@@ -115,26 +119,33 @@ export class SpaceRegistry implements SpaceRegistryInterface {
             return () => {};
         }
 
-        const stores = Array.from($spaces.values(), (space) => space.isStreamingStore);
+        const stores = Array.from($spaces.values(), (space) => space.isStreamingVideoStore);
         return derived(stores, (list) => list.some(Boolean)).subscribe(set);
+    });
 
-        /*const spaceStores = Array.from($spaces.values()).map((space) => space.isStreamingStore);
+    public readonly isLiveStreamingAudioStore: Readable<boolean> = derived(this.spaces, ($spaces, set) => {
+        if ($spaces.size === 0) {
+            set(false);
+            return () => {};
+        }
 
-        const combinedStore = derived(spaceStores, (isStreamingList) => {
-            return isStreamingList.some((isStreaming) => isStreaming);
-        });
+        const stores = Array.from($spaces.values(), (space) => space.isStreamingAudioStore);
+        return derived(stores, (list) => list.some(Boolean)).subscribe(set);
+    });
 
-        const unsubscribe = combinedStore.subscribe((result) => {
-            set(result);
-        });
+    public readonly shouldPublishScreenShareStore: Readable<boolean> = derived(this.spaces, ($spaces, set) => {
+        if ($spaces.size === 0) {
+            set(false);
+            return () => {};
+        }
 
-        return unsubscribe;*/
+        const stores = Array.from($spaces.values(), (space) => space.shouldPublishScreenShareStore);
+        return derived(stores, (list) => list.some(Boolean)).subscribe(set);
     });
 
     constructor(
         private roomConnection: RoomConnectionForSpacesInterface,
         private connectStream = connectionManager.roomConnectionStream,
-        private throttlingDetector = globalThrottlingDetector
     ) {
         this.initSpaceUsersMessageStreamSubscription = roomConnection.initSpaceUsersMessageStream.subscribe(
             (message) => {
@@ -143,9 +154,31 @@ export class SpaceRegistry implements SpaceRegistryInterface {
                     throw new Error("initSpaceUsersMessage is missing users");
                 }
 
-                this.spaces.get(message.spaceName)?.initUsers(message.users);
-            }
+                const space = this.spaces.get(message.spaceName);
+
+                if (!space) {
+                    console.error("Space does not exist", message.spaceName);
+                    return;
+                }
+
+                space.initUsers(message.users);
+                space.initMetadata(message.metadata);
+            },
         );
+
+        this.spacesEligibleForRecording = derived(this.spaces, ($spaces, set) => {
+            const spaces = Array.from($spaces.values());
+
+            if (spaces.length === 0) {
+                set([]);
+                return () => {};
+            }
+
+            return derived(
+                spaces.map((space) => space.shouldDisplayRecordButton),
+                (eligibilityBySpace) => spaces.filter((_, index) => eligibilityBySpace[index]),
+            ).subscribe(set);
+        });
 
         this.addSpaceUserMessageStreamSubscription = roomConnection.addSpaceUserMessageStream.subscribe((message) => {
             if (!message.user) {
@@ -163,7 +196,7 @@ export class SpaceRegistry implements SpaceRegistryInterface {
                 }
 
                 this.spaces.get(message.spaceName)?.updateUserData(message.user, message.updateMask);
-            }
+            },
         );
 
         this.removeSpaceUserMessageStreamSubscription = roomConnection.removeSpaceUserMessageStream.subscribe(
@@ -173,7 +206,7 @@ export class SpaceRegistry implements SpaceRegistryInterface {
                 }
 
                 this.spaces.get(message.spaceName)?.removeUser(message.spaceUserId);
-            }
+            },
         );
 
         this.updateSpaceMetadataMessageStreamSubscription = roomConnection.updateSpaceMetadataMessageStream.subscribe(
@@ -199,14 +232,14 @@ export class SpaceRegistry implements SpaceRegistryInterface {
                 }
 
                 space.setMetadata(metadata);
-            }
+            },
         );
 
         this.proximityPublicMessageEventSubscription = roomConnection.spacePublicMessageEvent.subscribe((message) => {
             const space = this.spaces.get(message.spaceName);
             if (!space) {
                 console.warn(
-                    `Received a public message for a space that does not exist: "${message.spaceName}". This should not happen unless the space was left a few milliseconds before.`
+                    `Received a public message for a space that does not exist: "${message.spaceName}". This should not happen unless the space was left a few milliseconds before.`,
                 );
                 return;
             }
@@ -217,7 +250,7 @@ export class SpaceRegistry implements SpaceRegistryInterface {
             const space = this.spaces.get(message.spaceName);
             if (!space) {
                 console.warn(
-                    `Received a private message for a space that does not exist: "${message.spaceName}". This should not happen unless the space was left a few milliseconds before.`
+                    `Received a private message for a space that does not exist: "${message.spaceName}". This should not happen unless the space was left a few milliseconds before.`,
                 );
                 return;
             }
@@ -227,7 +260,7 @@ export class SpaceRegistry implements SpaceRegistryInterface {
         this.spaceDestroyedMessageSubscription = roomConnection.spaceDestroyedMessage.subscribe((message) => {
             console.error(`Space ${message.spaceName} destroyed. Something went wrong server-side.`);
             Sentry.captureException(
-                new Error(`Space ${message.spaceName} destroyed. Something went wrong server-side.`)
+                new Error(`Space ${message.spaceName} destroyed. Something went wrong server-side.`),
             );
 
             const space = this.spaces.get(message.spaceName);
@@ -235,12 +268,6 @@ export class SpaceRegistry implements SpaceRegistryInterface {
                 space.onDisconnect();
             }
         });
-
-        this.roomConnectionStreamSubscription = this.connectStream.subscribe((connection) => {
-            // this.reconnect(connection).catch((e) => console.error(e));
-        });
-
-        this.setupThrottlingDetection();
     }
 
     async joinSpace(
@@ -249,25 +276,50 @@ export class SpaceRegistry implements SpaceRegistryInterface {
         propertiesToSync: string[],
         signal: AbortSignal,
         options?: {
-            metadata: Map<string, unknown>;
-        }
+            metadata?: Map<string, unknown>;
+            // True if the user is allowed to start/stop recording in the space. Defaults to false.
+            canRecord?: boolean;
+        },
     ): Promise<SpaceInterface> {
         const leavingPromise = this.leavingSpacesPromises.get(spaceName);
         if (leavingPromise) {
             await leavingPromise;
         }
 
+        // A join for the same space might already be in flight. Because Space.create() awaits a
+        // server round-trip (emitJoinSpace), a naive "exist() check then create" straddles an await:
+        // two rapid join attempts (e.g. quickly re-entering a meeting room) can both pass the
+        // existence check, then the first registers the space and the second throws
+        // SpaceAlreadyExistError (or silently overwrites it, leaking the first Space and leaving
+        // remote users visible). We coalesce concurrent joins on the same name by reusing the
+        // in-flight creation promise.
+        const joiningPromise = this.joiningSpacesPromises.get(spaceName);
+        if (joiningPromise) {
+            return await joiningPromise;
+        }
+
         if (this.exist(spaceName)) throw new SpaceAlreadyExistError(spaceName);
-        const newSpace = await Space.create(
-            spaceName,
-            filterType,
-            this.roomConnection,
-            propertiesToSync,
-            signal,
-            options
-        );
-        this.spaces.set(newSpace.getName(), newSpace);
-        return newSpace;
+
+        // Reserve the space name synchronously (before the first await) so concurrent joins coalesce.
+        const creationPromise = (async () => {
+            const newSpace = await Space.create(
+                spaceName,
+                filterType,
+                this.roomConnection,
+                propertiesToSync,
+                signal,
+                options,
+            );
+            this.spaces.set(newSpace.getName(), newSpace);
+            return newSpace;
+        })();
+        this.joiningSpacesPromises.set(spaceName, creationPromise);
+
+        try {
+            return await creationPromise;
+        } finally {
+            this.joiningSpacesPromises.delete(spaceName);
+        }
     }
     exist(spaceName: string): boolean {
         return this.spaces.has(spaceName);
@@ -304,24 +356,6 @@ export class SpaceRegistry implements SpaceRegistryInterface {
         return space;
     }
 
-    /*async reconnect(connection: RoomConnectionForSpacesInterface) {
-        this.roomConnection = connection;
-        const spacesArray = Array.from(this.spaces.values());
-        await Promise.all(
-            spacesArray.map(async (space) => {
-                await this.leaveSpace(space);
-                const newSpace = await Space.create(
-                    space.getName(),
-                    space.filterType,
-                    this.roomConnection,
-                    space.getPropertiesToSync(),
-                    space.getMetadata()
-                );
-                this.spaces.set(newSpace.getName(), newSpace);
-            })
-        );
-    }*/
-
     async destroy() {
         this.initSpaceUsersMessageStreamSubscription.unsubscribe();
         this.addSpaceUserMessageStreamSubscription.unsubscribe();
@@ -331,7 +365,11 @@ export class SpaceRegistry implements SpaceRegistryInterface {
         this.proximityPublicMessageEventSubscription.unsubscribe();
         this.proximityPrivateMessageEventSubscription.unsubscribe();
         this.spaceDestroyedMessageSubscription.unsubscribe();
-        this.roomConnectionStreamSubscription.unsubscribe();
+
+        // Wait for any in-flight join to settle so it does not register a space after we have
+        // iterated this.spaces below (which would leak it). allSettled because a join may reject.
+        await Promise.allSettled(Array.from(this.joiningSpacesPromises.values()));
+        this.joiningSpacesPromises.clear();
 
         await Promise.all(Array.from(this.leavingSpacesPromises.values()));
         this.leavingSpacesPromises.clear();
@@ -344,33 +382,7 @@ export class SpaceRegistry implements SpaceRegistryInterface {
                     this.spaces.delete(space.getName());
                 }
                 console.warn(`Space "${space.getName()}" was not destroyed properly.`);
-            })
+            }),
         );
-
-        // Stop throttling detection and clean up resources
-        this.throttlingDetector.destroy();
-    }
-
-    private setupThrottlingDetection(): void {
-        const recoverySubscription = this.throttlingDetector.recoveryTriggered$
-            .pipe(debounceTime(1000), distinctUntilChanged())
-            .subscribe(() => {
-                console.info("[SpaceRegistry] 🎯 Recovery after throttling - resynchronizing Spaces");
-
-                const spaces = this.getAll();
-                spaces.forEach((space) => {
-                    console.debug(`[SpaceRegistry] Resync space: ${space.getName()}`);
-                    space.requestFullSync();
-                });
-            });
-
-        // Optionally: Subscribe to all events for debugging purposes
-        const eventsSubscription = this.throttlingDetector.events$.subscribe((event) => {
-            console.debug(`[SpaceRegistry] Throttling event: ${event.type}`, event);
-        });
-
-        // Store subscriptions for cleanup
-        this.roomConnectionStreamSubscription.add(recoverySubscription);
-        this.roomConnectionStreamSubscription.add(eventsSubscription);
     }
 }

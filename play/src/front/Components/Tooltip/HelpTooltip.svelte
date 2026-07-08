@@ -1,14 +1,31 @@
 <script lang="ts">
+    import type { Snippet } from "svelte";
     import { fly } from "svelte/transition";
+    import { LL } from "../../../i18n/i18n-svelte";
+    import { isMac } from "../../WebRtc/DeviceUtils";
     import tooltipArrow from "../images/arrow-top.svg";
-    export let helpMedia: string | null = null;
-    export let hasImage = true;
-    export let hasDesc = true;
-    export let title = "Find people and navigate to them";
-    export let desc =
-        "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.";
-    export let delayBeforeAppear = 500;
-    export let shortcuts: string[] = [];
+
+    interface Props {
+        helpMedia?: string | null;
+        hasImage?: boolean;
+        hasDesc?: boolean;
+        title?: string;
+        desc?: string;
+        delayBeforeAppear?: number;
+        shortcuts?: string[];
+        children?: Snippet;
+    }
+
+    let {
+        helpMedia = null,
+        hasImage = true,
+        hasDesc = true,
+        title = "Find people and navigate to them",
+        desc = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.",
+        delayBeforeAppear = 500,
+        shortcuts = [],
+        children,
+    }: Props = $props();
 </script>
 
 <link rel="preload" as="image" href={tooltipArrow} />
@@ -30,7 +47,7 @@
             {#if helpMedia.endsWith(".mp4")}
                 <video autoplay muted loop class="w-full rounded-md">
                     <source src={helpMedia} type="video/mp4" />
-                    Your browser does not support the video tag.
+                    {$LL.actionbar.help.videoNotSupported()}
                 </video>
             {:else}
                 <img alt="Help GIF" src={helpMedia} class="w-full rounded-md" loading="lazy" draggable="false" />
@@ -50,7 +67,7 @@
                                     ? ' aspect-square'
                                     : ''}"
                             >
-                                {shortcut}
+                                {isMac() ? shortcut.replace(/\bctrl\b/gi, "cmd") : shortcut}
                             </div>
                             {#if index < shortcuts.length - 1}
                                 <span class="text-sm font-bold"> + </span>
@@ -66,4 +83,5 @@
             {/if}
         </div>
     </div>
+    {@render children?.()}
 </div>

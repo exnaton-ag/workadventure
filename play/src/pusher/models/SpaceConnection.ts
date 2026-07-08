@@ -1,20 +1,19 @@
 import * as Sentry from "@sentry/node";
 import Debug from "debug";
-import { BackToPusherSpaceMessage } from "@workadventure/messages";
-import { SpaceManagerClient } from "@workadventure/messages/src/ts-proto-generated/services";
+import type { BackToPusherSpaceMessage } from "@workadventure/messages";
+import type { SpaceManagerClient } from "@workadventure/messages/src/ts-proto-generated/services";
 import { GRPC_MAX_MESSAGE_SIZE } from "../enums/EnvironmentVariable";
 import { apiClientRepository } from "../services/ApiClientRepository";
-import { SpaceForSpaceConnectionInterface, SpaceInterface } from "./Space";
-import { BackSpaceConnection } from "./Websocket/SocketData";
+import type { SpaceForSpaceConnectionInterface, SpaceInterface } from "./Space";
+import type { BackSpaceConnection } from "./Websocket/SocketData";
 const debug = Debug("spaceConnection");
 
 /**
  * The SpaceConnection class is responsible for managing the connection to the back server.
- * It is used to create a new connection to the back server if there is no connection for this backId for a space and to join the space to the back server.
+ * It is used to create a new connection to the back server if there is no connection for this backId and to join the space to the back server.
  * It is also responsible for retrying the connection to the back server if it is lost.
  * It is also responsible for closing the connection to the back server if there are no more spaces that need it.
  */
-
 export interface SpaceConnectionInterface {
     getSpaceStreamToBackPromise(space: SpaceForSpaceConnectionInterface): Promise<BackSpaceConnection>;
     removeSpace(space: SpaceInterface): void;
@@ -40,14 +39,25 @@ export class SpaceConnection implements SpaceConnectionInterface {
 
     constructor(
         private _apiClientRepository = apiClientRepository,
-        private _GRPC_MAX_MESSAGE_SIZE = GRPC_MAX_MESSAGE_SIZE
+        private _GRPC_MAX_MESSAGE_SIZE = GRPC_MAX_MESSAGE_SIZE,
     ) {}
 
+    /**
+     * If there is no connection to the back server for this backId, create a new one.
+     * If there is already a connection, return the existing one.
+     *
+     * In addition, register the space in the spacePerBackId map AND send a joinSpaceMessage to the back server.
+     */
     async getSpaceStreamToBackPromise(space: SpaceForSpaceConnectionInterface): Promise<BackSpaceConnection> {
         const backId = this._apiClientRepository.getIndex(space.name);
 
-        if (this.spacePerBackId.has(backId)) {
-            this.spacePerBackId.get(backId)?.set(space.name, space);
+        const existingSpacesMap = this.spacePerBackId.get(backId);
+        if (existingSpacesMap) {
+            if (existingSpacesMap.has(space.name)) {
+                console.warn(`Space ${space.name} is already registered for backId ${backId}`);
+                Sentry.captureMessage(`Space ${space.name} is already registered for backId ${backId}`);
+            }
+            existingSpacesMap.set(space.name, space);
         } else {
             this.spacePerBackId.set(backId, new Map<string, SpaceForSpaceConnectionInterface>([[space.name, space]]));
         }
@@ -68,7 +78,7 @@ export class SpaceConnection implements SpaceConnectionInterface {
         try {
             const apiSpaceClient = await this._apiClientRepository.getSpaceClient(
                 space.name,
-                this._GRPC_MAX_MESSAGE_SIZE
+                this._GRPC_MAX_MESSAGE_SIZE,
             );
             const spaceStreamToBack = apiSpaceClient.watchSpace() as BackSpaceConnection;
             this.registerEventsOnConnection(spaceStreamToBack, backId, apiSpaceClient);
@@ -160,13 +170,13 @@ export class SpaceConnection implements SpaceConnectionInterface {
     private onErrorListener(
         spaceStreamToBack: BackSpaceConnection,
         backId: number,
-        apiSpaceClient: SpaceManagerClient
+        apiSpaceClient: SpaceManagerClient,
     ) {
         return (err: Error) => {
             if (spaceStreamToBack.pingTimeout) clearTimeout(spaceStreamToBack.pingTimeout);
             console.error(
                 "Error in connection to back server for watchSpace '" + apiSpaceClient.getChannel().getTarget(),
-                err
+                err,
             );
             Sentry.captureException(err);
             this.removeListeners(spaceStreamToBack, backId);
@@ -182,13 +192,24 @@ export class SpaceConnection implements SpaceConnectionInterface {
             spaceStreamToBack.off("end", listeners.endListener);
             spaceStreamToBack.off("error", listeners.errorListener);
             this.listenersPerBackId.delete(backId);
+
+            // We add another "error" handler. This is because if somehow an error arrives late on this stream,
+            // if there is no "error" handler, the application will crash.
+            // eslint-disable-next-line listeners/matching-remove-event-listener,listeners/no-inline-function-event-listener
+            spaceStreamToBack.on("error", (err) => {
+                console.error(
+                    "Error received on spaceStreamToBack after listeners were removed for backId " + backId,
+                    err,
+                );
+                Sentry.captureException(err);
+            });
         }
     }
 
     private registerEventsOnConnection(
         spaceStreamToBack: BackSpaceConnection,
         backId: number,
-        apiSpaceClient: SpaceManagerClient
+        apiSpaceClient: SpaceManagerClient,
     ) {
         const dataListener = this.onDataListener(spaceStreamToBack, backId);
         const endListener = this.onEndListener(spaceStreamToBack, backId);
@@ -204,11 +225,7 @@ export class SpaceConnection implements SpaceConnectionInterface {
         });
     }
 
-    private joinSpace(
-        spaceStreamToBackPromise: Promise<BackSpaceConnection>,
-        space: SpaceForSpaceConnectionInterface,
-        isRetry: boolean = false
-    ) {
+    private joinSpace(spaceStreamToBackPromise: Promise<BackSpaceConnection>, space: SpaceForSpaceConnectionInterface) {
         spaceStreamToBackPromise
             .then((spaceStreamToBack) => {
                 spaceStreamToBack.write({
@@ -217,7 +234,6 @@ export class SpaceConnection implements SpaceConnectionInterface {
                         joinSpaceMessage: {
                             spaceName: space.name,
                             filterType: space.filterType,
-                            isRetry,
                             propertiesToSync: space.getPropertiesToSync(),
                             world: space.world,
                         },

@@ -1,24 +1,27 @@
 import { z } from "zod";
 import * as Sentry from "@sentry/svelte";
-import { Subscriber, Unsubscriber, Writable } from "svelte/store";
+import type { Subscriber, Unsubscriber, Writable } from "svelte/store";
 import { statusChanger } from "../Components/ActionBar/AvailabilityStatus/statusChanger";
 import { localUserStore } from "../Connection/LocalUserStore";
-import { ChatRoom } from "../Chat/Connection/ChatConnection";
+import type { ChatConversation, ChatRoom } from "../Chat/Connection/ChatConnection";
 import { gameManager } from "../Phaser/Game/GameManager";
 import { selectedRoomStore } from "../Chat/Stores/SelectRoomStore";
 import { proximityMeetingStore } from "../Stores/MyMediaStore";
 import { chatVisibilityStore } from "../Stores/ChatStore";
-import { NotificationWA } from "./Notification";
+import type { NotificationWA } from "./Notification";
 
 type SelectedRoomStore = {
-    subscribe: (this: void, run: Subscriber<ChatRoom | undefined>) => Unsubscriber;
-    set: (value: ChatRoom | undefined) => void;
+    subscribe: (this: void, run: Subscriber<ChatConversation | undefined>) => Unsubscriber;
+    set: (value: ChatConversation | undefined) => void;
 };
 
 class NotificationManager {
     private channels: Map<string, BroadcastChannel> = new Map();
 
-    constructor(private proximityMeetingStore: Writable<boolean>, private selectedRoomStore: SelectedRoomStore) {
+    constructor(
+        private proximityMeetingStore: Writable<boolean>,
+        private selectedRoomStore: SelectedRoomStore,
+    ) {
         this.createNotificationMessageChannel();
     }
 
@@ -65,9 +68,9 @@ class NotificationManager {
     private async handleMessageNotification(chatRoomId: string) {
         chatVisibilityStore.set(true);
         let room: ChatRoom | undefined;
-        if (chatRoomId === "proximity") {
+        if (chatRoomId.startsWith("proximity:")) {
             this.proximityMeetingStore.set(true);
-            room = gameManager.getCurrentGameScene().proximityChatRoom;
+            room = gameManager.getCurrentGameScene().proximityChatRoomManager.getRoomById(chatRoomId);
         } else {
             const chatConnection = await gameManager.getChatConnection();
             room = chatConnection.getRoomByID(chatRoomId);

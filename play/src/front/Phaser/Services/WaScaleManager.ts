@@ -1,5 +1,4 @@
 import { coWebsiteManager } from "../../Stores/CoWebsiteStore";
-import { HtmlUtils } from "../../WebRtc/HtmlUtils";
 import type { Game } from "../Game/Game";
 import { ResizableScene } from "../Login/ResizableScene";
 import { HdpiManager } from "./HdpiManager";
@@ -7,6 +6,7 @@ import ScaleManager = Phaser.Scale.ScaleManager;
 
 export enum WaScaleManagerEvent {
     RefreshFocusOnTarget = "wa-scale-manager:refresh-focus-on-target",
+    ZoomChanged = "wa-scale-manager:zoom-changed",
 }
 
 export type WaScaleManagerFocusTarget = { x: number; y: number; width?: number; height?: number };
@@ -17,19 +17,40 @@ export class WaScaleManager {
     private game!: Game;
     private actualZoom = 1;
     private _saveZoom = 1;
+    private lastEmittedZoomModifier: number | undefined;
+    private lastEmittedActualZoom: number | undefined;
 
     private focusTarget?: WaScaleManagerFocusTarget;
 
-    public constructor(private minGamePixelsNumber: number, private absoluteMinPixelNumber: number) {
+    public constructor(
+        private minGamePixelsNumber: number,
+        private absoluteMinPixelNumber: number,
+    ) {
         this.hdpiManager = new HdpiManager(minGamePixelsNumber, absoluteMinPixelNumber);
+    }
+
+    private emitZoomChangedIfNeeded(): void {
+        const zoomModifier = this.hdpiManager.zoomModifier;
+        // We emit on actualZoom changes too, not only zoomModifier: DOM overlays whose CSS scale
+        // compensates for the parent's on-screen zoom (e.g. the Woka username) depend on actualZoom,
+        // which changes on resize or when the window moves to a screen with a different device pixel
+        // ratio while zoomModifier stays constant.
+        if (this.lastEmittedZoomModifier === zoomModifier && this.lastEmittedActualZoom === this.actualZoom) {
+            return;
+        }
+
+        this.lastEmittedZoomModifier = zoomModifier;
+        this.lastEmittedActualZoom = this.actualZoom;
+        this.game.events.emit(WaScaleManagerEvent.ZoomChanged, zoomModifier);
     }
 
     public setGame(game: Game): void {
         this.scaleManager = game.scale;
         this.game = game;
+        this.lastEmittedZoomModifier = this.hdpiManager.zoomModifier;
     }
 
-    public applyNewSize(camera?: Phaser.Cameras.Scene2D.Camera) {
+    public applyNewSize(camera?: Phaser.Cameras.Scene2D.Camera, animating = false): void {
         if (this.scaleManager === undefined) {
             return;
         }
@@ -44,10 +65,15 @@ export class WaScaleManager {
             this.actualZoom = realSize.width / gameSize.width / devicePixelRatio;
         }
 
-        // The performance shows us that resizing the game size outside its real size causes many lags and bad game performance.
-        //      So we apply this condition: if the game size is greater than the real size, we don't zoom through the canvas.
-        //      To zoom in and out, we use the camera. This is used in the Explorer mode. The zoom is calculated using the optimal zoom level.
-        if (gameSize.width <= realSize.width && gameSize.height <= realSize.height) {
+        // The performance shows us that having a game size bigger than its real size causes many lags and bad game performance.
+        // So we apply this condition: if the game size is greater than the real size, we don't zoom through the canvas.
+        // To zoom in and out, we use the camera. The zoom is calculated using the optimal zoom level.
+        // If the game size is smaller than the real size, we set the Phaser zoom level to 1 and we resize the canvas pixel size.
+        // It's more efficient to keep the canvas as small as possible.
+        // One exception: during camera zoom animations. The this.scaleManager.resize costs a lot of resources. So we don't
+        // want to do this in a loop when zooming. If we are in the middle of an animation, we scale the canvas number of pixels
+        // to the browser viewport and we use the Phaser camera zoom.
+        if (gameSize.width <= realSize.width && gameSize.height <= realSize.height && !animating) {
             this.scaleManager.resize(gameSize.width, gameSize.height);
             this.scaleManager.setZoom(this.actualZoom);
             camera?.setZoom(1);
@@ -58,33 +84,11 @@ export class WaScaleManager {
 
             const zoom =
                 this.hdpiManager.zoomModifier * this.hdpiManager.getOptimalZoomLevel(realSize.width * realSize.height);
-            this.scaleManager.setZoom(this.actualZoom);
+            // In the camera-zoom branch, keep the DOM and canvas layers on the same display scale.
+            // The scale manager only compensates for DPR here; the gameplay zoom is fully handled by the camera.
+            this.scaleManager.setZoom(1 / devicePixelRatio);
             camera?.setZoom(zoom);
         }
-
-        // Override bug in canvas resizing in Phaser. Let's resize the canvas ourselves
-        const style = this.scaleManager.canvas.style;
-        style.width = Math.ceil(realSize.width !== 0 ? realSize.width / devicePixelRatio : 0) + "px";
-        style.height = Math.ceil(realSize.height !== 0 ? realSize.height / devicePixelRatio : 0) + "px";
-
-        // Resize the game element at the same size at the canvas
-        const gameStyle = HtmlUtils.getElementByIdOrFail<HTMLDivElement>("game").style;
-        gameStyle.width = style.width;
-        gameStyle.height = style.height;
-
-        // Resize the game element at the same size at the canvas
-        // By default, the scaleManager.resize() method will change the take the zoom into account in the displaySize.
-        // This is not what we want, we want the displaySize to be the real size of the game.
-        this.scaleManager.displaySize.width = realSize.width;
-        this.scaleManager.displaySize.height = realSize.height;
-        this.scaleManager.refresh(realSize.width, realSize.height);
-
-        // Resize the game element at the same size at the canvas
-        // By default, the scaleManager.resize() method will change the take the zoom into account in the displaySize.
-        // This is not what we want, we want the displaySize to be the real size of the game.
-        this.scaleManager.displaySize.width = realSize.width;
-        this.scaleManager.displaySize.height = realSize.height;
-        this.scaleManager.refresh(realSize.width, realSize.height);
 
         // Note: onResize will be called twice (once here and once in Game.ts), but we have no better way.
         for (const scene of this.game.scene.getScenes(true)) {
@@ -94,6 +98,7 @@ export class WaScaleManager {
             }
         }
 
+        this.emitZoomChangedIfNeeded();
         this.game.markDirty();
     }
 
@@ -107,7 +112,7 @@ export class WaScaleManager {
         if (this.focusTarget.width && this.focusTarget.height) {
             this.setZoomModifier(
                 this.getTargetZoomModifierFor(this.focusTarget.width, this.focusTarget.height),
-                camera
+                camera,
             );
         }
 
@@ -147,9 +152,9 @@ export class WaScaleManager {
         this.setZoomModifier(zoomModifier, camera);
     }
 
-    public setZoomModifier(zoomModifier: number, camera?: Phaser.Cameras.Scene2D.Camera): void {
+    public setZoomModifier(zoomModifier: number, camera?: Phaser.Cameras.Scene2D.Camera, animating = false): void {
         this.hdpiManager.zoomModifier = zoomModifier;
-        this.applyNewSize(camera);
+        this.applyNewSize(camera, animating);
     }
 
     public getFocusTarget(): WaScaleManagerFocusTarget | undefined {

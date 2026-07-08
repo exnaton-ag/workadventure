@@ -11,14 +11,14 @@ export class OpenIdProfileController extends BaseHttpController {
     routes(): void {
         this.app.get("/profile", async (req, res) => {
             debug(
-                `OpenIdProfileController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`
+                `OpenIdProfileController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`,
             );
             const query = validateQuery(
                 req,
                 res,
                 z.object({
                     accessToken: z.string(),
-                })
+                }),
             );
             if (query === undefined) {
                 return;
@@ -34,8 +34,8 @@ export class OpenIdProfileController extends BaseHttpController {
                     email as string | undefined,
                     name as string | undefined,
                     profile as string | undefined,
-                    tags as string[] | undefined
-                )
+                    tags as string[] | undefined,
+                ),
             );
             return;
         });
@@ -52,7 +52,6 @@ export class OpenIdProfileController extends BaseHttpController {
                             }
                             body{
                                 text-align: center;
-                                color: white;
                             }
                             section{
                                 margin: 20px;
@@ -69,18 +68,21 @@ export class OpenIdProfileController extends BaseHttpController {
                             </section>
                             <section>
                                 ${
-                                    email != undefined &&
-                                    `<p style="margin: 0;font-size: 12px;">Your email or application id:</p><p style="margin: 0 0 5px 0;font-weight: bold;">${email}</p>`
+                                    email != undefined
+                                        ? `<p style="margin: 0;font-size: 12px;">Your email or application id:</p><p style="margin: 0 0 5px 0;font-weight: bold;">${email}</p>`
+                                        : ""
                                 }
                                 ${
-                                    name != undefined &&
-                                    `<p style="margin: 0;font-size: 12px;">Your name:</p><p style="margin: 0 0 5px 0;font-weight: bold;">${name}</p>`
+                                    name != undefined
+                                        ? `<p style="margin: 0;font-size: 12px;">Your name:</p><p style="margin: 0 0 5px 0;font-weight: bold;">${name}</p>`
+                                        : ""
                                 }
                                 ${
-                                    tags != undefined &&
-                                    `<p style="margin: 0;font-size: 12px;">Your access right:</p><p style="margin: 0 0 5px 0;font-weight: bold;">${tags?.join(
-                                        ", "
-                                    )}</p>`
+                                    tags != undefined
+                                        ? `<p style="margin: 0;font-size: 12px;">Your access right:</p><p style="margin: 0 0 5px 0;font-weight: bold;">${tags?.join(
+                                              ", ",
+                                          )}</p>`
+                                        : ""
                                 }
                                 ${
                                     email == undefined && name == undefined && tags == undefined

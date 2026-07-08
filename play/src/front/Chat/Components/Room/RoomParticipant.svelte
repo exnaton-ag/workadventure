@@ -1,22 +1,26 @@
 <script lang="ts">
+    import { defaultColor } from "@workadventure/shared-utils";
     import LL from "../../../../i18n/i18n-svelte";
-    import {
-        ChatRoomMember,
-        ChatRoomMembership,
-        ChatRoomModeration,
-        ChatPermissionLevel,
-    } from "../../Connection/ChatConnection";
+    import { localUserStore } from "../../../Connection/LocalUserStore";
+    import type { ChatRoomMember, ChatRoomMembership, ChatRoomModeration } from "../../Connection/ChatConnection";
+    import { ChatPermissionLevel } from "../../Connection/ChatConnection";
+    import Select from "../../../Components/Input/Select.svelte";
+    import Avatar from "../Avatar.svelte";
     import { IconLoader, IconCheck, IconForbid, IconClock, IconPoint, IconMail, IconDoorExit } from "@wa-icons";
-    export let member: ChatRoomMember;
-    export let room: ChatRoomModeration;
+    interface Props {
+        member: ChatRoomMember;
+        room: ChatRoomModeration;
+    }
 
-    let banInProgress = false;
-    let kickInProgress = false;
-    let unbanInProgress = false;
-    let inviteInProgress = false;
-    let disableModerationButton = banInProgress || kickInProgress || unbanInProgress || inviteInProgress;
+    let { member, room }: Props = $props();
 
-    $: ({ name, membership, id, permissionLevel } = member);
+    let banInProgress = $state(false);
+    let kickInProgress = $state(false);
+    let unbanInProgress = $state(false);
+    let inviteInProgress = $state(false);
+    let disableModerationButton = $derived(banInProgress || kickInProgress || unbanInProgress || inviteInProgress);
+
+    let { name, membership, id, permissionLevel } = $derived(member);
 
     function getTranslatedMembership(membership: ChatRoomMembership) {
         switch (membership) {
@@ -115,59 +119,80 @@
         room.changePermissionLevelFor(member, target.value as ChatPermissionLevel).catch((e) => console.error(e));
     }
 
-    const hasPermissionToInvite = room.hasPermissionTo("invite", member);
-    const hasPermissionToKick = room.hasPermissionTo("kick", member);
-    const hasPermissionToBan = room.hasPermissionTo("ban", member);
+    let isRoomAdmin = $derived(room.isCurrentUserRoomAdmin);
+    let hasPermissionToInvite = $derived(room.hasPermissionTo("invite", member));
+    let hasPermissionToKick = $derived(room.hasPermissionTo("kick", member));
+    let hasPermissionToBan = $derived(room.hasPermissionTo("ban", member));
 
-    $: availableRoles = room.canModifyRoleOf($permissionLevel) ? room.getAllowedRolesToAssign() : [];
+    let availableRoles = $derived(room.canModifyRoleOf($permissionLevel) ? room.getAllowedRolesToAssign() : []);
+    let permissionLevelOptions = $derived(
+        availableRoles.length > 0
+            ? availableRoles.map((permissionLevelOption) => ({
+                  value: permissionLevelOption,
+                  label: getTranslatedPermissionLevel(permissionLevelOption),
+              }))
+            : [{ value: $permissionLevel, label: getTranslatedPermissionLevel($permissionLevel) }],
+    );
+
+    let memberAvatarColorStore = $derived(member.avatarFallbackColor);
+
+    let isCurrentUser = $derived(id === localUserStore.getChatId());
+    let displayName = $derived(isCurrentUser ? $LL.chat.you() : $name || "?");
+
+    const MembershipIcon = $derived(getIconForMembership($membership));
 </script>
 
-<tr data-testid={`${id}-participant`}>
-    <td><p class="m-0 p-0 text-center text-ellipsis overflow-hidden max-w-[10rem]">{$name}</p></td>
-    <td>
-        <div class="flex gap-2 content-center justify-center">
-            <p
-                class="max-h-min m-0 ml-1 px-2 py-1 rounded-3xl min-w-[6rem] text-center content-center flex items-center justify-center border border-solid
-                {$membership === 'join' ? 'bg-success-900/20 border-success-900/30' : ''}
-                {$membership === 'invite' ? 'bg-warning-900/20 border-warning-900/30' : ''}
-                {$membership === 'ban' || $membership === 'leave' ? 'bg-danger-900/20 border-danger-900/30' : ''}"
-                data-testid={`${id}-membership`}
-            >
-                <svelte:component this={getIconForMembership($membership)} />
-                {getTranslatedMembership($membership)}
-            </p>
-        </div></td
-    >
-    <td>
-        <div class="flex items-center justify-center h-full w-full">
-            <select
-                value={$permissionLevel}
-                on:change={onPermissionLevelChange}
-                name="permissionLevel"
-                id="permissionLevel"
-                disabled={availableRoles.length === 0 || $membership !== "join"}
-                data-testid={`${id}-permissionLevel`}
-                class="border-light-purple border border-solid rounded-xl mb-0 w-full"
-            >
-                {#if availableRoles.length > 0}
-                    {#each availableRoles as permissionLevelOption (permissionLevelOption)}
-                        <option value={permissionLevelOption}
-                            >{getTranslatedPermissionLevel(permissionLevelOption)}
-                        </option>
-                    {/each}
-                {:else}
-                    <option value={$permissionLevel}>{getTranslatedPermissionLevel($permissionLevel)}</option>
-                {/if}
-            </select>
+<div
+    class="wa-chat-item group/chatItem relative mb-[1px] flex flex-col gap-3 px-2 py-2 text-md transition-all hover:bg-white/10 hover:rounded sm:flex-row sm:items-center sm:gap-4"
+    data-testid={`${id}-participant`}
+>
+    <div class="flex min-w-0 flex-1 items-center gap-3">
+        <Avatar
+            compact
+            pictureStore={member.pictureStore}
+            fallbackName={displayName}
+            color={$memberAvatarColorStore ?? defaultColor}
+        />
+        <div class="min-w-0 flex-1">
+            <p class="m-0 truncate text-sm font-medium leading-tight text-white/95">{displayName}</p>
+            <div class="mt-1.5 flex flex-wrap items-center gap-2">
+                <span
+                    class="inline-flex max-h-min items-center gap-1.5 rounded-full border border-solid px-2.5 py-0.5 text-xs font-medium
+                    {$membership === 'join' ? 'border-success-900/30 bg-success-900/20 text-white/95' : ''}
+                    {$membership === 'invite' ? 'border-warning-900/30 bg-warning-900/20 text-white/95' : ''}
+                    {$membership === 'ban' || $membership === 'leave'
+                        ? 'border-danger-900/30 bg-danger-900/20 text-white/95'
+                        : ''}"
+                    data-testid={`${id}-membership`}
+                >
+                    <MembershipIcon class="h-3.5 w-3.5 shrink-0 opacity-90" />
+                    {getTranslatedMembership($membership)}
+                </span>
+            </div>
         </div>
-    </td>
-    <td>
-        <div class="flex gap-2 content-center justify-center">
-            {#if $hasPermissionToInvite && $membership === "leave"}
+    </div>
+
+    <div
+        class="flex w-full flex-col gap-2 sm:w-auto sm:min-w-0 sm:flex-shrink-0 sm:flex-row sm:items-center sm:justify-end sm:gap-2"
+    >
+        <div class="w-full min-w-[10rem] sm:w-40">
+            <Select
+                options={permissionLevelOptions}
+                value={$permissionLevel}
+                onchange={onPermissionLevelChange}
+                dataTestId={`${id}-permissionLevel`}
+                disabled={!$isRoomAdmin || availableRoles.length === 0 || $membership !== "join"}
+                outerClass="mb-0 w-full"
+                extraSelectClass="border-white/20 bg-black/20 text-sm"
+            />
+        </div>
+        <div class="flex flex-wrap justify-end gap-1.5">
+            {#if $isRoomAdmin && $hasPermissionToInvite && $membership === "leave"}
                 <button
-                    class="max-h-min m-0 p-2 py-1 bg-success-900/20 hover:bg-success-900/50 rounded-sm"
+                    type="button"
+                    class="rounded-lg bg-success-900/25 px-2.5 py-1.5 text-xs font-medium text-white/95 transition hover:bg-success-900/45 disabled:opacity-50"
                     disabled={disableModerationButton}
-                    on:click={inviteUser}
+                    onclick={inviteUser}
                     data-testid={`${id}-inviteButton`}
                 >
                     {#if inviteInProgress}
@@ -177,12 +202,13 @@
                     {/if}
                 </button>
             {/if}
-            {#if $hasPermissionToKick && $membership !== "leave" && $membership !== "ban"}
+            {#if $isRoomAdmin && $hasPermissionToKick && $membership !== "leave" && $membership !== "ban"}
                 <button
-                    class="max-h-min m-0 p-2 py-1 bg-warning-900/20 hover:bg-warning-900/50 rounded-sm"
+                    type="button"
+                    class="rounded-lg bg-warning-900/25 px-2.5 py-1.5 text-xs font-medium text-white/95 transition hover:bg-warning-900/45 disabled:opacity-50"
                     disabled={disableModerationButton}
                     data-testid={`${id}-kickButton`}
-                    on:click={kickUser}
+                    onclick={kickUser}
                 >
                     {#if kickInProgress}
                         <IconLoader class="animate-spin" />
@@ -191,13 +217,14 @@
                     {/if}
                 </button>
             {/if}
-            {#if $hasPermissionToBan}
+            {#if $isRoomAdmin && $hasPermissionToBan}
                 {#if $membership === "ban"}
                     <button
+                        type="button"
                         disabled={disableModerationButton}
-                        class="max-h-min m-0 p-2 py-1 bg-success-900/20 hover:bg-success-900/50 rounded-sm"
+                        class="rounded-lg bg-success-900/25 px-2.5 py-1.5 text-xs font-medium text-white/95 transition hover:bg-success-900/45 disabled:opacity-50"
                         data-testid={`${id}-unbanButton`}
-                        on:click={unbanUser}
+                        onclick={unbanUser}
                     >
                         {#if unbanInProgress}
                             <IconLoader class="animate-spin" />
@@ -207,9 +234,10 @@
                     </button>
                 {:else}
                     <button
-                        class="max-h-min m-0 p-2 py-1 bg-danger-900/20 hover:bg-danger-900/50 rounded-sm"
+                        type="button"
+                        class="rounded-lg bg-danger-900/25 px-2.5 py-1.5 text-xs font-medium text-white/95 transition hover:bg-danger-900/45 disabled:opacity-50"
                         disabled={disableModerationButton}
-                        on:click={banUser}
+                        onclick={banUser}
                         data-testid={`${id}-banButton`}
                     >
                         {#if banInProgress}
@@ -221,5 +249,5 @@
                 {/if}
             {/if}
         </div>
-    </td>
-</tr>
+    </div>
+</div>

@@ -6,12 +6,11 @@
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { connectionManager } from "../../Connection/ConnectionManager";
     import { selectCharacterSceneVisibleStore } from "../../Stores/SelectCharacterStore";
-    import { EnableCameraSceneName } from "../../Phaser/Login/EnableCameraScene";
     import WokaSelectScene from "./WokaSelectScene.svelte";
     import WokaCustomizeScene from "./WokaCustomizeScene.svelte";
 
-    let buildOwnWoka = false;
-    let error: string | null = null;
+    let buildOwnWoka = $state(false);
+    let error: string | null = $state(null);
 
     async function saveAndContinue(texturesId: string[]) {
         error = null; // Reset error message
@@ -26,7 +25,7 @@
             await connectionManager.saveTextures(texturesId);
             selectCharacterSceneVisibleStore.set(false);
             gameManager.tryToStopScene(SelectCharacterSceneName);
-            gameManager.tryResumingGame(EnableCameraSceneName);
+            gameManager.goToNextScene(SelectCharacterSceneName);
         } catch (err) {
             console.error("Error saving textures:", err);
             error = "Failed to save character customization";
@@ -41,7 +40,7 @@
         }
     }
 
-    let mounted = false;
+    let mounted = $state(false);
 
     onMount(() => {
         mounted = true;
@@ -72,5 +71,5 @@
 {/if}
 
 {#if error}
-    <p class="text-center text-danger-500 p-0 m-0">{error}</p>
+    <p class="text-center text-danger-800 p-0 m-0">{error}</p>
 {/if}
