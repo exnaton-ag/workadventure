@@ -1861,6 +1861,12 @@
             "name": "accessory_trophy",
             "url": "resources/customisation/character_accessories/trophy.png",
             "position": 34
+          },
+          {
+            "id": "accessory_blue_lightsaber",
+            "name": "accessory_blue_lightsaber",
+            "url": "resources/customisation/character_accessories/blue_lightsaber.png",
+            "position": 35
           }
         ]
       }
