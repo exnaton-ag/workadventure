@@ -1456,6 +1456,12 @@
                         "name": "clothes_engelbert",
                         "url": "resources/customisation/character_clothes/engelbert.png",
                         "position": 73
+                    },
+                    {
+                        "id": "clothes_beige_tunic",
+                        "name": "clothes_beige_tunic",
+                        "url": "resources/customisation/character_clothes/beige_tunic.png",
+                        "position": 74
                     }
                 ]
             }
@@ -1628,6 +1634,18 @@
                         "name": "tinfoil_hat1",
                         "url": "resources/customisation/character_hats/tinfoil_hat1.png",
                         "position": 26
+                    },
+                    {
+                        "id": "hat_santa_red",
+                        "name": "hat_santa_red",
+                        "url": "resources/customisation/character_hats/santa_hat_red.png",
+                        "position": 27
+                    },
+                    {
+                        "id": "hat_brain",
+                        "name": "hat_brain",
+                        "url": "resources/customisation/character_hats/brain_hat.png",
+                        "position": 28
                     }
                 ]
             }
@@ -1843,6 +1861,18 @@
                         "name": "accessory_mask",
                         "url": "resources/customisation/character_accessories/mask.png",
                         "position": 33
+                    },
+                    {
+                        "id": "accessory_trophy",
+                        "name": "accessory_trophy",
+                        "url": "resources/customisation/character_accessories/trophy.png",
+                        "position": 34
+                    },
+                    {
+                        "id": "accessory_blue_lightsaber",
+                        "name": "accessory_blue_lightsaber",
+                        "url": "resources/customisation/character_accessories/blue_lightsaber.png",
+                        "position": 35
                     }
                 ]
             }
