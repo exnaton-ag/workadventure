@@ -1456,6 +1456,12 @@
             "name": "clothes_engelbert",
             "url": "resources/customisation/character_clothes/engelbert.png",
             "position": 73
+          },
+          {
+            "id": "clothes_beige_tunic",
+            "name": "clothes_beige_tunic",
+            "url": "resources/customisation/character_clothes/beige_tunic.png",
+            "position": 74
           }
         ]
       }
