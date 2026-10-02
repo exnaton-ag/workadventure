@@ -75,6 +75,10 @@ If you have configured a static auth secret for TURN, you can use the script
 [`compute_turn_credentials.sh`](https://github.com/workadventure/workadventure/tree/develop/contrib/tools/compute_turn_credentials.sh)
 to compute a timeboxed username and password.
 
+Only advertise TURN endpoints that are reachable using the configured scheme and transport.
+ICE candidate gathering can time out even when the peer has already established a working connection.
+An established call must remain connected after a gathering timeout; genuine connection failures still enter the error state.
+
 Enabling TURN-related debug messages might also help: In a Chromium-like
 browser, enter the following in the JavaScript console and reload
 Workadventure:
