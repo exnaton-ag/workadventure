@@ -154,6 +154,10 @@ export class RemotePeer extends Peer implements Streamable {
     };
 
     private readonly iceTimeoutHandler = () => {
+        // Candidate gathering can time out even after media and the data channel have connected.
+        if (this.connected) {
+            return;
+        }
         this._statusStore.set("error");
     };
 

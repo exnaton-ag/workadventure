@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Subject } from "rxjs";
 import { writable } from "svelte/store";
+import type * as SvelteStores from "svelte/store";
 
 // A controllable RemotePeer double: records the onDestroy callback and the connectionId,
 // and faithfully replays destroy() -> onDestroy(intentionalClose) so the retry wiring is exercised.
@@ -42,38 +43,10 @@ vi.mock("../../../src/front/WebRtc/RemotePeer", () => ({ RemotePeer: RemotePeerM
 vi.mock("../../../src/front/WebRtc/IceServersManager", () => ({
     iceServersManager: { getIceServersConfig: vi.fn().mockResolvedValue([]) },
 }));
-// Cut the heavy media/store import chain pulled in transitively by SimplePeer (MediaStore ->
-// MediaManager -> ScreenSharingStore), which runs top-level derived() calls that need a full app runtime.
-vi.mock("../../../src/front/WebRtc/MediaManager", () => ({ mediaManager: {}, MediaManager: vi.fn() }));
-vi.mock("../../../src/front/Stores/ScreenSharingStore", async () => {
-    const { writable } = await import("svelte/store");
-    return {
-        requestedScreenSharingState: writable(false),
-        screenSharingLocalStreamStore: writable({ type: "success", stream: undefined }),
-        screenShareQualityStore: writable("recommended"),
-        screenSharingAvailableStore: writable(false),
-    };
-});
-vi.mock("../../../src/front/Stores/MegaphoneStore", async () => {
-    const { writable } = await import("svelte/store");
-    return {
-        liveStreamingEnabledStore: writable(false),
-        requestedMegaphoneStore: writable(false),
-        megaphoneSpaceStore: writable(undefined),
-        megaphoneCanBeUsedStore: writable(false),
-    };
-});
-vi.mock("../../../src/front/Stores/NoMicrophoneSoundWarningVisibleStore", async () => {
-    const { writable } = await import("svelte/store");
-    return { noMicrophoneSoundWarningVisibleStore: writable(false) };
-});
-vi.mock("../../../src/front/Stores/OrderedStreamableCollectionStore", async () => {
-    const { writable } = await import("svelte/store");
-    return { triggerReorderStore: writable(0) };
-});
-vi.mock("../../../src/front/Stores/StreamableCollectionStore", async () => {
-    const { writable } = await import("svelte/store");
-    return { streamableCollectionStore: writable([]) };
+// Keep peer lifecycle tests independent of browser media and local-storage initialization.
+vi.mock("../../../src/front/Stores/MediaStore", async () => {
+    const { writable } = await vi.importActual<typeof SvelteStores>("svelte/store");
+    return { localStreamStoreForPublishing: writable(undefined) };
 });
 
 import { SimplePeer } from "../../../src/front/WebRtc/SimplePeer";
@@ -162,16 +135,14 @@ describe("SimplePeer connectionId replacement", () => {
         emitWebRtcStart("conn-2", false);
         await vi.waitFor(() => expect(remotePeerInstances).toHaveLength(2));
 
-        // The superseded peer is torn down as an intentional close (Copilot's fix)...
+        // The superseded peer is torn down intentionally...
         expect(firstPeer.markAsIntentionalClose).toHaveBeenCalled();
         expect(firstPeer.destroy).toHaveBeenCalled();
         // ...so the internal replacement never enters the retry flow, and no stale restart / analytics is produced.
         expect(handleConnectionFailureSpy).not.toHaveBeenCalled();
         expect(analyticsClient.retryConnectionWebRtc).not.toHaveBeenCalled();
         expect(
-            emitBackEvent.mock.calls.some(
-                (call) => call[0]?.event?.$case === "meetingConnectionRestartMessage",
-            ),
+            emitBackEvent.mock.calls.some((call) => call[0]?.event?.$case === "meetingConnectionRestartMessage"),
         ).toBe(false);
 
         // The replacement peer is created with the new connectionId.
